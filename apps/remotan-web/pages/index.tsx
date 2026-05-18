@@ -388,32 +388,9 @@ export default function RemotanWeb() {
         <meta name="description" content="Subscription operational execution system for monitoring remote teams." />
       </Head>
 
-      {/* Switch Portal Top Ribbon */}
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: '40px',
-        background: '#040b12',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 24px',
-        zIndex: 999,
-        fontSize: '12px'
-      }}>
-        <div style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>KONGILA + REMOTAN PORTAL ROUTER</div>
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <a href="http://localhost:3000" style={{ color: '#888', textDecoration: 'none' }} onMouseEnter={e=>e.currentTarget.style.color='#fff'} onMouseLeave={e=>e.currentTarget.style.color='#888'}>Kongila Talent (3000)</a>
-          <a style={{ color: 'var(--accent-cyan)', fontWeight: 700, textDecoration: 'none', borderBottom: '2px solid var(--accent-cyan)' }}>Remotan Work OS</a>
-          <a href="http://localhost:3002" style={{ color: '#888', textDecoration: 'none' }} onMouseEnter={e=>e.currentTarget.style.color='#fff'} onMouseLeave={e=>e.currentTarget.style.color='#888'}>Admin Command (3002)</a>
-        </div>
-      </div>
 
       {/* Sidebar */}
-      <div className="sidebar" style={{ paddingTop: '64px' }}>
+      <div className="sidebar">
         <div className="sidebar-logo">
           <span>◆</span> Remotan OS
         </div>
@@ -455,7 +432,7 @@ export default function RemotanWeb() {
       </div>
 
       {/* Main Content */}
-      <div className="main-content" style={{ paddingTop: '80px' }}>
+      <div className="main-content">
         {/* Floating alerts */}
         {alertMessage && (
           <div className="floating-alert">

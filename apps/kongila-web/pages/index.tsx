@@ -925,29 +925,6 @@ export default function KongilaWeb() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      {/* Switch Portal Top Ribbon */}
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: '40px',
-        background: '#040b12',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 24px',
-        zIndex: 999,
-        fontSize: '12px'
-      }}>
-        <div style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>KONGILA + REMOTAN PORTAL ROUTER</div>
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <a style={{ color: 'var(--accent-cyan)', fontWeight: 700, textDecoration: 'none', borderBottom: '2px solid var(--accent-cyan)' }}>Kongila Talent</a>
-          <a href="http://localhost:3001" style={{ color: '#888', textDecoration: 'none' }} onMouseEnter={e=>e.currentTarget.style.color='#fff'} onMouseLeave={e=>e.currentTarget.style.color='#888'}>Remotan Work OS (3001)</a>
-          <a href="http://localhost:3002" style={{ color: '#888', textDecoration: 'none' }} onMouseEnter={e=>e.currentTarget.style.color='#fff'} onMouseLeave={e=>e.currentTarget.style.color='#888'}>Admin Command (3002)</a>
-        </div>
-      </div>
 
       {/* Floating Banners */}
       {bannerMessage && (
@@ -970,7 +947,7 @@ export default function KongilaWeb() {
 
       {/* Sidebar navigation (Dashboard view only) */}
       {currentUser && !authView && !clientIntakeActive && (
-        <div className="sidebar" style={{ paddingTop: '64px' }}>
+        <div className="sidebar">
           <div className="sidebar-logo">
             <span style={{
               background: '#0047CC', 
@@ -1034,7 +1011,6 @@ export default function KongilaWeb() {
 
       {/* Main Content Area */}
       <div className="main-content" style={{ 
-        paddingTop: '80px', 
         marginLeft: (currentUser && !authView && !clientIntakeActive) ? '240px' : '0', 
         maxWidth: (currentUser && !authView && !clientIntakeActive) ? '1200px' : '900px',
         transition: 'var(--transition-smooth)'
