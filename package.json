@@ -1,0 +1,21 @@
+{
+  "name": "kongila-system",
+  "private": true,
+  "scripts": {
+    "dev": "npx --yes kill-port 3000 3001 3002 && turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "clean": "rm -rf node_modules .turbo apps/*/node_modules apps/*/.next packages/*/node_modules packages/*/dist"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.1.2"
+}

@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "paths": {
+      "@/*": ["./*"],
+      "@kongila/shared-types": ["../../packages/shared-types"],
+      "@kongila/database": ["../../packages/database"],
+      "@kongila/auth": ["../../packages/auth"],
+      "@kongila/workflows": ["../../packages/workflows"],
+      "@kongila/matching-engine": ["../../packages/matching-engine"],
+      "@kongila/contracts": ["../../packages/contracts"],
+      "@kongila/notifications": ["../../packages/notifications"],
+      "@kongila/analytics": ["../../packages/analytics"],
+      "@kongila/utils": ["../../packages/utils"],
+      "@kongila/ui": ["../../packages/ui"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,249 @@
+{
+  "talents": [
+    {
+      "id": "talent_chidi",
+      "name": "Chidi Anya",
+      "email": "chidi.anya@kongila.dev",
+      "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Full-Stack Engineer",
+      "skills": [
+        "React",
+        "Node.js",
+        "TypeScript",
+        "PostgreSQL",
+        "GraphQL",
+        "Next.js"
+      ],
+      "timezone": "GMT+1 (Lagos)",
+      "salaryExpectation": 4500,
+      "experienceYears": 6,
+      "availability": 100,
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 94,
+        "behavioral": 88,
+        "personality": 90,
+        "remoteReadiness": 95,
+        "workSimulation": 92,
+        "communication": 90,
+        "experience": 85
+      },
+      "grade": "A+",
+      "tags": [
+        "Highly Reliable",
+        "Strong Communicator",
+        "Independent Worker"
+      ],
+      "bio": "Elite developer specializing in React and distributed Node.js backends. Passionate about writing scalable, clean code."
+    },
+    {
+      "id": "talent_fatoumata",
+      "name": "Fatoumata Diallo",
+      "email": "fatoumata.diallo@kongila.dev",
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Product Designer",
+      "skills": [
+        "Figma",
+        "UI Design",
+        "User Research",
+        "Design Systems",
+        "Mobile UX"
+      ],
+      "timezone": "GMT (Dakar)",
+      "salaryExpectation": 3800,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 90,
+        "behavioral": 92,
+        "personality": 85,
+        "remoteReadiness": 90,
+        "workSimulation": 88,
+        "communication": 95,
+        "experience": 80
+      },
+      "grade": "A",
+      "tags": [
+        "Strong Communicator",
+        "Attention to Detail"
+      ],
+      "bio": "Visual designer dedicated to creating beautiful, human-centered web and mobile experiences."
+    },
+    {
+      "id": "talent_kofi",
+      "name": "Kofi Mensah",
+      "email": "kofi.mensah@kongila.dev",
+      "avatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
+      "title": "Lead DevOps Engineer",
+      "skills": [
+        "AWS",
+        "Docker",
+        "Kubernetes",
+        "Terraform",
+        "CI/CD",
+        "Linux"
+      ],
+      "timezone": "GMT (Accra)",
+      "salaryExpectation": 5200,
+      "experienceYears": 8,
+      "availability": 90,
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 96,
+        "behavioral": 85,
+        "personality": 80,
+        "remoteReadiness": 95,
+        "workSimulation": 95,
+        "communication": 80,
+        "experience": 95
+      },
+      "grade": "A+",
+      "tags": [
+        "Highly Reliable",
+        "Independent Worker"
+      ],
+      "bio": "Infrastructure specialist with deep expertise in cloud architectures, container orchestration, and secure automation pipelines."
+    },
+    {
+      "id": "talent_zola",
+      "name": "Zola Ndlovu",
+      "email": "zola.ndlovu@kongila.dev",
+      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
+      "title": "Technical Product Manager",
+      "skills": [
+        "Product Strategy",
+        "Agile",
+        "Scrum",
+        "Jira",
+        "User Research",
+        "Product Analytics"
+      ],
+      "timezone": "GMT+2 (Johannesburg)",
+      "salaryExpectation": 4800,
+      "experienceYears": 7,
+      "availability": 100,
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 88,
+        "behavioral": 95,
+        "personality": 92,
+        "remoteReadiness": 90,
+        "workSimulation": 90,
+        "communication": 98,
+        "experience": 85
+      },
+      "grade": "A",
+      "tags": [
+        "Independent Worker",
+        "Strong Communicator"
+      ],
+      "bio": "Experienced PM skilled in bridging engineering and business goals to deliver exceptional user-facing features."
+    },
+    {
+      "id": "talent_amina",
+      "name": "Amina Osei",
+      "email": "amina.osei@kongila.dev",
+      "avatar": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=200",
+      "title": "Frontend Engineer",
+      "skills": [
+        "React",
+        "CSS",
+        "JavaScript",
+        "HTML5",
+        "TailwindCSS"
+      ],
+      "timezone": "GMT+3 (Nairobi)",
+      "salaryExpectation": 2500,
+      "experienceYears": 2,
+      "availability": 100,
+      "vettingStage": "Skill Assessment",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 72,
+        "workSimulation": 100,
+        "behavioral": 100,
+        "communication": 88,
+        "personality": 78,
+        "remoteReadiness": 100,
+        "experience": 50
+      },
+      "grade": "A+",
+      "tags": [
+        "Needs Supervision",
+        "Strong Learner"
+      ],
+      "bio": "Motivated React developer eager to learn and grow in a fast-paced remote product team."
+    },
+    {
+      "id": "talent_1779109177083",
+      "name": "Benita Eze",
+      "email": "benita.dva@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Full-Stack Engineer",
+      "skills": [
+        "React",
+        "Node.js",
+        "TypeScript",
+        "PostgreSQL"
+      ],
+      "timezone": "GMT+1",
+      "salaryExpectation": 4500,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
+      "vettingScores": {
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
+      },
+      "grade": "B",
+      "tags": [
+        "Progressive Entry",
+        "Assessment Pending"
+      ],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
+    }
+  ],
+  "clientRequests": [],
+  "matches": [],
+  "tasks": [],
+  "contracts": [],
+  "notifications": [
+    {
+      "id": "notif_1779109177083",
+      "userId": "talent_1779109177083",
+      "title": "Application Intake Submitted",
+      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
+      "read": false,
+      "createdAt": "2026-05-18T12:59:37.083Z"
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "audit_1779109177083",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Full-Stack Engineer. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-18T12:59:37.083Z"
+    }
+  ],
+  "agentLogs": [
+    {
+      "id": "alog_talent_1779109177083",
+      "agentName": "Compliance Agent",
+      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
+      "timestamp": "13:59:37",
+      "type": "info"
+    }
+  ]
+}
