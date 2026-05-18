@@ -3,35 +3,43 @@
 :root {
   /* --- KONGILA DESIGN BIBLE STYLE TOKENS --- */
   
-  /* Background Colors */
-  --bg-primary: #FAFAFA;     /* App Background */
-  --bg-secondary: #FFFFFF;   /* Card / Workspace Background */
-  --bg-tertiary: #F5F7FA;    /* Soft Surface Background */
+  /* Brand Theme Colors (Kongila Brand Bible) */
+  --kongila-blue: #0047CC;     /* Primary brand colour */
+  --kongila-blue-glow: rgba(0, 71, 204, 0.08);
+  --kongila-dark-navy: #002B7F; /* Dark navy for headings & footers */
+  --kongila-near-black: #1A2340; /* High-contrast body text */
   
-  /* Brand Theme Colors */
-  --accent-purple: #0F766E;  /* Recommended Brand Primary Color: Deep Elegant Teal */
-  --accent-purple-glow: rgba(15, 118, 110, 0.1);
-  --accent-cyan: #0B6E99;    /* Muted Blue-Teal Alternative */
-  --accent-cyan-glow: rgba(11, 110, 153, 0.1);
+  /* Background Colors */
+  --bg-primary: #F5F7FA;     /* Light Grey (60% Neutral space) */
+  --bg-secondary: #FFFFFF;   /* White card surface */
+  --bg-tertiary: #F5F7FA;    /* Light Grey soft surface */
+  
+  /* Remapped Accent Theme Tokens for full compatibility */
+  --accent-purple: var(--kongila-blue);
+  --accent-purple-glow: var(--kongila-blue-glow);
+  --accent-cyan: #3D7FFF;    /* Sky Blue accent highlight */
+  --accent-cyan-glow: rgba(61, 127, 255, 0.1);
+  --accent-teal: #0ABFBC;    /* Teal Accent for Remotan OS */
+  --accent-teal-glow: rgba(10, 191, 188, 0.1);
   
   /* Text Color Hierarchy */
-  --text-primary: #111827;   /* Primary Text */
-  --text-secondary: #4B5563; /* Secondary Text */
-  --text-muted: #6B7280;     /* Tertiary Text */
-  --text-placeholder: #9CA3AF; /* Muted Caption Text */
+  --text-primary: var(--kongila-near-black);
+  --text-secondary: #6B7A99; /* Dark Grey captions & secondary labels */
+  --text-muted: #6B7A99;     /* Dark Grey body text fallbacks */
+  --text-placeholder: #6B7A99;
   
   /* Borders and Dividers */
-  --border-glass: #E5E7EB;   /* Border Color */
-  --border-focus: #0F766E;   /* Focus Teal State */
+  --border-glass: #DDE2EC;   /* Mid Grey border color */
+  --border-focus: var(--kongila-blue);
   
   /* Semantic Status Colors */
-  --accent-green: #16A34A;   /* Success */
-  --accent-green-glow: rgba(22, 163, 74, 0.1);
-  --accent-gold: #D97706;    /* Warning */
-  --accent-gold-glow: rgba(217, 119, 6, 0.1);
-  --accent-magenta: #DC2626; /* Error */
-  --accent-magenta-glow: rgba(220, 38, 38, 0.1);
-  --accent-info: #2563EB;    /* Info */
+  --accent-green: #38A169;   /* Success Green */
+  --accent-green-glow: rgba(56, 161, 105, 0.1);
+  --accent-gold: #F59E0B;    /* Warning Amber */
+  --accent-gold-glow: rgba(245, 158, 11, 0.1);
+  --accent-magenta: #E53E3E; /* Error Red */
+  --accent-magenta-glow: rgba(229, 62, 62, 0.1);
+  --accent-info: #3D7FFF;    /* Sky Blue info */
   
   /* Fonts and Animation durations */
   --font-display: 'Inter', sans-serif;

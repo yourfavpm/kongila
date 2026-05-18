@@ -3,35 +3,43 @@
 :root {
   /* --- KONGILA DESIGN BIBLE STYLE TOKENS --- */
   
-  /* Background Colors */
-  --bg-primary: #FAFAFA;     /* App Background */
-  --bg-secondary: #FFFFFF;   /* Card / Workspace Background */
-  --bg-tertiary: #F5F7FA;    /* Soft Surface Background */
+  /* Brand Theme Colors (Kongila Brand Bible) */
+  --kongila-blue: #0047CC;     /* Primary brand colour */
+  --kongila-blue-glow: rgba(0, 71, 204, 0.08);
+  --kongila-dark-navy: #002B7F; /* Dark navy for headings & footers */
+  --kongila-near-black: #1A2340; /* High-contrast body text */
   
-  /* Brand Theme Colors */
-  --accent-purple: #0F766E;  /* Recommended Brand Primary Color: Deep Elegant Teal */
-  --accent-purple-glow: rgba(15, 118, 110, 0.1);
-  --accent-cyan: #0B6E99;    /* Muted Blue-Teal Alternative */
-  --accent-cyan-glow: rgba(11, 110, 153, 0.1);
+  /* Background Colors */
+  --bg-primary: #F5F7FA;     /* Light Grey (60% Neutral space) */
+  --bg-secondary: #FFFFFF;   /* White card surface */
+  --bg-tertiary: #F5F7FA;    /* Light Grey soft surface */
+  
+  /* Remapped Accent Theme Tokens for full compatibility */
+  --accent-purple: var(--kongila-blue);
+  --accent-purple-glow: var(--kongila-blue-glow);
+  --accent-cyan: #3D7FFF;    /* Sky Blue accent highlight */
+  --accent-cyan-glow: rgba(61, 127, 255, 0.1);
+  --accent-teal: #0ABFBC;    /* Teal Accent for Remotan OS */
+  --accent-teal-glow: rgba(10, 191, 188, 0.1);
   
   /* Text Color Hierarchy */
-  --text-primary: #111827;   /* Primary Text */
-  --text-secondary: #4B5563; /* Secondary Text */
-  --text-muted: #6B7280;     /* Tertiary Text */
-  --text-placeholder: #9CA3AF; /* Muted Caption Text */
+  --text-primary: var(--kongila-near-black);
+  --text-secondary: #6B7A99; /* Dark Grey captions & secondary labels */
+  --text-muted: #6B7A99;     /* Dark Grey body text fallbacks */
+  --text-placeholder: #6B7A99;
   
   /* Borders and Dividers */
-  --border-glass: #E5E7EB;   /* Border Color */
-  --border-focus: #0F766E;   /* Focus Teal State */
+  --border-glass: #DDE2EC;   /* Mid Grey border color */
+  --border-focus: var(--kongila-blue);
   
   /* Semantic Status Colors */
-  --accent-green: #16A34A;   /* Success */
-  --accent-green-glow: rgba(22, 163, 74, 0.1);
-  --accent-gold: #D97706;    /* Warning */
-  --accent-gold-glow: rgba(217, 119, 6, 0.1);
-  --accent-magenta: #DC2626; /* Error */
-  --accent-magenta-glow: rgba(220, 38, 38, 0.1);
-  --accent-info: #2563EB;    /* Info */
+  --accent-green: #38A169;   /* Success Green */
+  --accent-green-glow: rgba(56, 161, 105, 0.1);
+  --accent-gold: #F59E0B;    /* Warning Amber */
+  --accent-gold-glow: rgba(245, 158, 11, 0.1);
+  --accent-magenta: #E53E3E; /* Error Red */
+  --accent-magenta-glow: rgba(229, 62, 62, 0.1);
+  --accent-info: #3D7FFF;    /* Sky Blue info */
   
   /* Fonts and Animation durations */
   --font-display: 'Inter', sans-serif;
@@ -74,10 +82,10 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .glass-panel:hover {
-  border-color: #0F766E;
+  border-color: var(--accent-purple);
   box-shadow: 
-    0px 1px 4px rgba(15, 118, 110, 0.02), 
-    0px 6px 16px rgba(15, 118, 110, 0.05);
+    0px 1px 4px rgba(0, 71, 204, 0.02), 
+    0px 6px 16px rgba(0, 71, 204, 0.05);
 }
 
 /* 11. Navigation System */
@@ -102,7 +110,7 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 600;
-  color: #0F766E; /* Brand Primary Teal */
+  color: var(--accent-purple); /* Brand Primary Blue */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -138,9 +146,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .menu-item.active {
-  background: rgba(15, 118, 110, 0.06); /* Soft background */
-  color: #0F766E; /* Subtle accent indicator */
-  border-color: rgba(15, 118, 110, 0.1);
+  background: var(--accent-purple-glow); /* Soft background */
+  color: var(--accent-purple); /* Subtle accent indicator */
+  border-color: rgba(0, 71, 204, 0.1);
   font-weight: 600;
 }
 
@@ -213,8 +221,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .form-input:focus, .form-select:focus, .form-textarea:focus {
-  border-color: #0F766E;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1); /* Soft teal ring */
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px var(--accent-purple-glow); /* Soft brand ring */
 }
 
 /* Service intake service card configurations */
@@ -237,25 +245,25 @@ h1, h2, h3, h4, h5, h6 {
 
 .service-card:hover {
   transform: translateY(-2px);
-  border-color: #0F766E;
+  border-color: var(--accent-purple);
   box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.02);
 }
 
 .service-card.selected {
-  background: rgba(15, 118, 110, 0.02);
-  border-color: #0F766E;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.05);
+  background: rgba(0, 71, 204, 0.02);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px rgba(0, 71, 204, 0.05);
 }
 
 .service-icon {
   font-size: 28px;
   margin-bottom: 12px;
-  color: #0F766E;
+  color: var(--accent-purple);
 }
 
 /* 8. Button System */
 .btn-primary {
-  background: #0F766E; /* Brand color */
+  background: var(--accent-purple); /* Brand color */
   color: #FFFFFF;
   border-radius: 12px; /* Radius: 12px */
   height: 48px; /* Height: 44px-48px */
@@ -270,7 +278,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-primary:hover {
-  background: #0D665F; /* Slight darkening */
+  background: var(--kongila-dark-navy); /* Slight navy darkening */
 }
 
 .btn-secondary {
@@ -347,8 +355,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .status-chip.applied {
-  background: rgba(15, 118, 110, 0.08);
-  color: #0F766E;
+  background: var(--accent-purple-glow);
+  color: var(--accent-purple);
 }
 
 .status-chip.review {
@@ -426,7 +434,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .task-card:hover {
   transform: translateY(-2px);
-  border-color: #0F766E;
+  border-color: var(--accent-purple);
   box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.03);
 }
 
@@ -444,7 +452,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .priority-high { color: var(--accent-magenta); }
 .priority-medium { color: var(--accent-gold); }
-.priority-low { color: #0F766E; }
+.priority-low { color: var(--accent-purple); }
 
 /* Vetting framework timeline details */
 .vetting-pipeline {
@@ -465,8 +473,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .vetting-step.active {
-  border-color: #0F766E;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.05);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px rgba(0, 71, 204, 0.05);
 }
 
 .vetting-step.completed {
@@ -490,9 +498,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .vetting-step.active .step-num {
-  border-color: #0F766E;
-  background: rgba(15, 118, 110, 0.08);
-  color: #0F766E;
+  border-color: var(--accent-purple);
+  background: var(--accent-purple-glow);
+  color: var(--accent-purple);
 }
 
 .vetting-step.completed .step-num {

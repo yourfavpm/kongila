@@ -195,55 +195,164 @@
       "salaryExpectation": 4500,
       "experienceYears": 5,
       "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
       "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
+        "technical": 94,
+        "behavioral": 88,
+        "personality": 90,
+        "remoteReadiness": 95,
+        "workSimulation": 92,
+        "communication": 90,
+        "experience": 85
       },
-      "grade": "B",
+      "grade": "A+",
       "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
+        "Vetted Professional",
+        "High speed Fiber",
+        "Independent Worker"
       ],
       "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
     }
   ],
-  "clientRequests": [],
-  "matches": [],
+  "clientRequests": [
+    {
+      "id": "req_1779118005107",
+      "clientId": "user_1779117998574",
+      "clientName": "Oluwadamilola Olukunle (Taskive Tech)",
+      "serviceType": "Hire Talent",
+      "roleDescription": "Senior Operations Specialist to optimize enterprise processes.",
+      "requiredSkills": [
+        "React",
+        "Node.js",
+        "TypeScript",
+        "PostgreSQL"
+      ],
+      "duration": "6 Months",
+      "commitmentLevel": "Full Time (40h/week)",
+      "numberOfHires": 1,
+      "timezone": "GMT+1 (Lagos / London)",
+      "startDate": "2026-05-25",
+      "budget": 4500,
+      "priority": "High",
+      "status": "New Request",
+      "createdAt": "2026-05-18T15:26:45.107Z"
+    }
+  ],
+  "matches": [
+    {
+      "id": "match_1779118005107_chidi",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_chidi",
+      "score": 95,
+      "breakdown": {
+        "skillFit": 100,
+        "behaviorFit": 88,
+        "personalityFit": 90,
+        "availability": 100,
+        "pastPerformance": 90
+      },
+      "status": "Applied"
+    },
+    {
+      "id": "match_1779118005107_1779109177083",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_1779109177083",
+      "score": 95,
+      "breakdown": {
+        "skillFit": 100,
+        "behaviorFit": 88,
+        "personalityFit": 90,
+        "availability": 100,
+        "pastPerformance": 90
+      },
+      "status": "Applied"
+    },
+    {
+      "id": "match_1779118005107_amina",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_amina",
+      "score": 65,
+      "breakdown": {
+        "skillFit": 25,
+        "behaviorFit": 100,
+        "personalityFit": 78,
+        "availability": 100,
+        "pastPerformance": 85
+      },
+      "status": "Applied"
+    },
+    {
+      "id": "match_1779118005107_zola",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_zola",
+      "score": 57,
+      "breakdown": {
+        "skillFit": 0,
+        "behaviorFit": 95,
+        "personalityFit": 92,
+        "availability": 100,
+        "pastPerformance": 89
+      },
+      "status": "Applied"
+    },
+    {
+      "id": "match_1779118005107_fatoumata",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_fatoumata",
+      "score": 55,
+      "breakdown": {
+        "skillFit": 0,
+        "behaviorFit": 92,
+        "personalityFit": 85,
+        "availability": 100,
+        "pastPerformance": 86
+      },
+      "status": "Applied"
+    },
+    {
+      "id": "match_1779118005107_kofi",
+      "requestId": "req_1779118005107",
+      "talentId": "talent_kofi",
+      "score": 52,
+      "breakdown": {
+        "skillFit": 0,
+        "behaviorFit": 85,
+        "personalityFit": 80,
+        "availability": 90,
+        "pastPerformance": 95
+      },
+      "status": "Applied"
+    }
+  ],
   "tasks": [],
   "contracts": [],
   "notifications": [
     {
-      "id": "notif_1779109177083",
-      "userId": "talent_1779109177083",
-      "title": "Application Intake Submitted",
-      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
+      "id": "notif_1779118005108",
+      "userId": "user_1779117998574",
+      "title": "Organization Profile Created",
+      "message": "Created organization matching your intake request: Taskive Tech. Scanning vetting databases.",
       "read": false,
-      "createdAt": "2026-05-18T12:59:37.083Z"
+      "createdAt": "2026-05-18T15:26:45.108Z"
     }
   ],
   "auditLogs": [
     {
-      "id": "audit_1779109177083",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Full-Stack Engineer. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-18T12:59:37.083Z"
+      "id": "audit_1779118005108",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Smart Intake Completed & Authenticated",
+      "details": "Service Request generated. Linked to organization Taskive Tech.",
+      "timestamp": "2026-05-18T15:26:45.108Z"
     }
   ],
   "agentLogs": [
     {
-      "id": "alog_talent_1779109177083",
-      "agentName": "Compliance Agent",
-      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
-      "timestamp": "13:59:37",
-      "type": "info"
+      "id": "alog_client_1779118005108",
+      "agentName": "Context Agent",
+      "message": "Organization profile and EOR accounts initiated for client Oluwadamilola Olukunle (Taskive Tech).",
+      "timestamp": "16:26:45",
+      "type": "success"
     }
   ]
 }
