@@ -7,6 +7,8 @@ import { generateNDATemplate, generateContractTemplate } from '@kongila/contract
 import { 
   TalentProfile, ServiceRequest, Match, Contract, ServiceType
 } from '@kongila/shared-types';
+import { supabase } from '../lib/supabaseClient';
+import TalentDashboard from '../components/TalentDashboard';
 
 // Custom Reusable High-Fidelity SVG Brand Logo component
 const KongilaLogo = ({ size = 32, showText = true, textColor = '#1A2340' }) => (
@@ -199,6 +201,18 @@ export default function KongilaWeb() {
       createdAt: new Date().toISOString()
     };
 
+    // Parallel save to Supabase Postgres backend
+    try {
+      const { error } = await supabase.from('talent_requests').insert([{
+        client_id: currentUser?.id || 'anon_client',
+        service_type: formData.serviceType,
+        payload: newReq
+      }]);
+      if (error) console.error("Supabase storage error:", error);
+    } catch (err) {
+      console.warn("Supabase not fully configured yet, falling back to local DB", err);
+    }
+
     // Calculate matches instantly
     const calculatedMatches = generateMatchesForRequest(newReq, talents);
 
@@ -262,76 +276,93 @@ export default function KongilaWeb() {
   };
 
   // Auth Submissions
-  const handleSignUpSubmit = (e: React.FormEvent) => {
+  const handleSignUpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailInput || !passwordInput || !nameInput) {
       triggerBanner('Please fill in all credentials fields.', 'error');
       return;
     }
 
-    const newUser = {
-      id: `user_${Date.now()}`,
-      name: nameInput,
-      email: emailInput,
-      role: authRole,
-      onboardingStatus: 'incomplete',
-      emailVerified: false,
-      companyName: authRole === 'client' ? companyInput : undefined,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      setLoading(true);
+      const { data, error } = await supabase.auth.signUp({
+        email: emailInput,
+        password: passwordInput,
+        options: {
+          data: {
+            full_name: nameInput,
+            role: authRole,
+            company_name: authRole === 'client' ? companyInput : undefined,
+          }
+        }
+      });
 
-    setCurrentUser(newUser);
-    setAuthView('verify');
-    triggerBanner('Account created! Supabase email verification sent.', 'info');
+      if (error) throw error;
+
+      const newUser = {
+        id: data.user?.id || `user_${Date.now()}`,
+        name: nameInput,
+        email: emailInput,
+        role: authRole,
+        onboardingStatus: 'incomplete',
+        emailVerified: false,
+        companyName: authRole === 'client' ? companyInput : undefined,
+        createdAt: new Date().toISOString()
+      };
+
+      setCurrentUser(newUser);
+      setAuthView('verify');
+      triggerBanner('Account created! Supabase email verification sent.', 'info');
+    } catch (error: any) {
+      triggerBanner(`Sign up failed: ${error.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailInput || !passwordInput) {
       triggerBanner('Please provide your email and password.', 'error');
       return;
     }
 
-    // Check if client or admin
-    let matchedRole: 'talent' | 'client' | 'admin' = 'talent';
-    let onboardingState: any = 'incomplete';
-    let verifiedState = true;
+    try {
+      setLoading(true);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailInput,
+        password: passwordInput,
+      });
 
-    if (emailInput.toLowerCase().includes('client') || emailInput.toLowerCase().includes('alex')) {
-      matchedRole = 'client';
-      onboardingState = 'complete';
-    } else if (emailInput.toLowerCase().includes('admin')) {
-      matchedRole = 'admin';
-      onboardingState = 'complete';
-    } else {
-      matchedRole = 'talent';
-      // Look up in database if talent exists
-      const foundTalent = talents.find(t => t.email.toLowerCase() === emailInput.toLowerCase());
-      if (foundTalent) {
-        onboardingState = foundTalent.vettingStatus === 'Vetted' || foundTalent.vettingStatus === 'Deployed' ? 'complete' : 'incomplete';
+      if (error) throw error;
+
+      const role = data.user?.user_metadata?.role || 'talent';
+      
+      const loggedInUser = {
+        id: data.user?.id || `user_${Date.now()}`,
+        name: data.user?.user_metadata?.full_name || 'Authenticated User',
+        email: emailInput,
+        role: role,
+        onboardingStatus: 'incomplete',
+        emailVerified: true,
+        companyName: data.user?.user_metadata?.company_name,
+        createdAt: new Date().toISOString()
+      };
+
+      setCurrentUser(loggedInUser);
+      setAuthView(null);
+
+      if (role === 'talent') {
+        setActiveTab('talent');
+      } else {
+        setActiveTab('client');
       }
+      triggerBanner(`Logged in successfully!`, 'success');
+    } catch (error: any) {
+      triggerBanner(`Login failed: ${error.message}`, 'error');
+    } finally {
+      setLoading(false);
     }
-
-    const loggedInUser = {
-      id: `user_${Date.now()}`,
-      name: nameInput || (matchedRole === 'client' ? 'Alex Mercer' : 'Chidi Anya'),
-      email: emailInput,
-      role: matchedRole,
-      onboardingStatus: onboardingState,
-      emailVerified: verifiedState,
-      companyName: matchedRole === 'client' ? 'Vanguard Corp' : undefined,
-      createdAt: new Date().toISOString()
-    };
-
-    setCurrentUser(loggedInUser);
-    setAuthView(null);
-
-    if (matchedRole === 'talent') {
-      setActiveTab('talent');
-    } else {
-      setActiveTab('client');
-    }
-    triggerBanner(`Logged in successfully as ${loggedInUser.name}!`, 'success');
   };
 
   const simulateGoogleLogin = (role: 'talent' | 'client') => {
@@ -942,7 +973,12 @@ export default function KongilaWeb() {
     return talents.find(t => t.email.toLowerCase() === currentUser.email.toLowerCase());
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("Sign out error", e);
+    }
     setCurrentUser(null);
     setAuthView(null);
     setClientIntakeActive(false);
@@ -2358,14 +2394,59 @@ export default function KongilaWeb() {
           <div style={{
             minHeight: '100vh',
             width: '100%',
-            backgroundColor: 'var(--bg-primary, #F5F7FA)',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '40px max(24px, 4%)',
-            boxSizing: 'border-box'
+            backgroundColor: 'var(--bg-secondary, #FFFFFF)'
           }}>
-            <GlassCard style={{ maxWidth: '450px', width: '100%', padding: '32px' }}>
+            {/* Left Brand Panel */}
+            <div className="auth-brand-panel" style={{
+              flex: 1,
+              backgroundColor: 'var(--kongila-dark-navy)',
+              color: '#FFFFFF',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              padding: '60px',
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+               <div style={{ zIndex: 2, position: 'relative' }}>
+                 <KongilaLogo size={48} />
+                 <h1 style={{ marginTop: '40px', fontSize: '32px', fontWeight: 800, lineHeight: 1.2 }}>
+                   The premium infrastructure for global workforce operations.
+                 </h1>
+                 <p style={{ marginTop: '16px', fontSize: '16px', color: 'rgba(255,255,255,0.7)', maxWidth: '400px' }}>
+                   Securely hire, manage, and deploy top-tier operational talent around the world, completely compliance-free.
+                 </p>
+               </div>
+               
+               <div style={{ zIndex: 2, position: 'relative' }}>
+                 <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>© {new Date().getFullYear()} Kongila Global Inc.</p>
+               </div>
+               
+               {/* Abstract background elements */}
+               <div style={{
+                 position: 'absolute',
+                 bottom: '-10%',
+                 right: '-10%',
+                 width: '400px',
+                 height: '400px',
+                 background: 'var(--accent-purple)',
+                 filter: 'blur(100px)',
+                 opacity: 0.4,
+                 borderRadius: '50%',
+                 zIndex: 1
+               }} />
+            </div>
+
+            {/* Right Form Panel */}
+            <div style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '40px',
+              backgroundColor: 'var(--bg-secondary, #FFFFFF)'
+            }}>
+              <div style={{ maxWidth: '400px', width: '100%' }}>
             
             {/* View: Auth Role Selector or Signup */}
             {authView === 'signup' && (
@@ -2643,7 +2724,8 @@ export default function KongilaWeb() {
               </div>
             )}
 
-          </GlassCard>
+              </div>
+            </div>
           </div>
         )}
 
@@ -3324,81 +3406,15 @@ export default function KongilaWeb() {
         )}
 
         {/* ====================================================================== */}
-        {/* FULL PORTALS: ACTIVE TALENT WORKSPACE (Vetted & Deployed Talents only) */}
+        {/* FULL PORTALS: ACTIVE TALENT WORKSPACE                                  */}
         {/* ====================================================================== */}
-        {currentUser && currentUser.role === 'talent' && !authView && !clientIntakeActive && activeTab === 'talent' && (getCurrentTalentProfile()?.vettingStatus === 'Vetted' || getCurrentTalentProfile()?.vettingStatus === 'Deployed') && (
-          <div>
-            <div className="page-header">
-              <div>
-                <h1 className="page-title">Talent Workspace Console</h1>
-                <p className="page-subtitle">Review vetting statuses, active contracts, and EOR payroll details.</p>
-              </div>
-              <div>
-                <Badge text="Vetting Status: Vetted & Deployable" status="Vetted" />
-              </div>
-            </div>
-
-            <div className="dashboard-grid">
-              
-              <div className="vetting-pipeline">
-                <h2 style={{ fontSize: '18px', marginBottom: '16px' }}>Vetting Progress: Verified Grade A+ Elite</h2>
-                
-                <div className="vetting-step completed">
-                  <div className="step-num">✓</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Application Screening (Cleared)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Progressive profile info verified successfully.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step completed">
-                  <div className="step-num">✓</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Specialized Assessment (94%)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Workload optimization sandbox strategy successfully cleared.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step completed">
-                  <div className="step-num">✓</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Behavioral Vetting (88%)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Evaluated on self-organization, remote time tracking backups, and communication.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step completed">
-                  <div className="step-num">✓</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Remote Uptime check (Fiber backup verified)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>UPS and inverter backups validated under continuous loads.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <GlassCard style={{ marginBottom: '24px' }}>
-                  <h3 style={{ fontSize: '16px', marginBottom: '12px' }}>Employment Details</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    <div><strong>Target Role:</strong> {getCurrentTalentProfile()?.title}</div>
-                    <div><strong>Salary Expectations:</strong> ${getCurrentTalentProfile()?.salaryExpectation} / month</div>
-                    <div><strong>Timezone Match:</strong> {getCurrentTalentProfile()?.timezone}</div>
-                    <div><strong>Availability:</strong> Full Time (100% active)</div>
-                  </div>
-                </GlassCard>
-
-                <GlassCard>
-                  <h3 style={{ fontSize: '16px', marginBottom: '12px' }}>Contract Status</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    <div><strong>NDA signed:</strong> Yes</div>
-                    <div><strong>EOR Master payroll:</strong> Configured</div>
-                    <div><strong>Status:</strong> {getCurrentTalentProfile()?.vettingStatus}</div>
-                  </div>
-                </GlassCard>
-              </div>
-
-            </div>
-          </div>
+        {currentUser && currentUser.role === 'talent' && !authView && !clientIntakeActive && activeTab === 'talent' && (
+          <TalentDashboard
+            currentUser={currentUser}
+            talentProfile={getCurrentTalentProfile()}
+            contracts={contracts}
+            matches={matches}
+          />
         )}
 
         {/* ====================================================================== */}
