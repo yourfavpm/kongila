@@ -691,7 +691,7 @@ const OnboardingSection = ({ profile }: { profile: any }) => {
 
 // ─── Main Dashboard Shell ─────────────────────────────────────────────────────
 export default function TalentDashboard({ currentUser, talentProfile, contracts, matches }: TalentDashboardProps) {
-  const [activeSection, setActiveSection] = useState<Section>('profile');
+  const [activeSection, setActiveSection] = useState<Section>('onboarding');
 
   const renderSection = () => {
     switch (activeSection) {

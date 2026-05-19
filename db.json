@@ -213,6 +213,40 @@
         "Independent Worker"
       ],
       "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
+    },
+    {
+      "id": "talent_1779126674506",
+      "name": "Benita Eze",
+      "email": "benita.dva@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [
+        "Operations Management",
+        "Logistics",
+        "Team Leadership",
+        "Process Optimization"
+      ],
+      "timezone": "GMT+1",
+      "salaryExpectation": 4500,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
+      "vettingScores": {
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
+      },
+      "grade": "B",
+      "tags": [
+        "Progressive Entry",
+        "Assessment Pending"
+      ],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
     }
   ],
   "clientRequests": [
@@ -329,30 +363,30 @@
   "contracts": [],
   "notifications": [
     {
-      "id": "notif_1779118005108",
-      "userId": "user_1779117998574",
-      "title": "Organization Profile Created",
-      "message": "Created organization matching your intake request: Taskive Tech. Scanning vetting databases.",
+      "id": "notif_1779126674506",
+      "userId": "talent_1779126674506",
+      "title": "Application Intake Submitted",
+      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
       "read": false,
-      "createdAt": "2026-05-18T15:26:45.108Z"
+      "createdAt": "2026-05-18T17:51:14.506Z"
     }
   ],
   "auditLogs": [
     {
-      "id": "audit_1779118005108",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Smart Intake Completed & Authenticated",
-      "details": "Service Request generated. Linked to organization Taskive Tech.",
-      "timestamp": "2026-05-18T15:26:45.108Z"
+      "id": "audit_1779126674506",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-18T17:51:14.506Z"
     }
   ],
   "agentLogs": [
     {
-      "id": "alog_client_1779118005108",
-      "agentName": "Context Agent",
-      "message": "Organization profile and EOR accounts initiated for client Oluwadamilola Olukunle (Taskive Tech).",
-      "timestamp": "16:26:45",
-      "type": "success"
+      "id": "alog_talent_1779126674506",
+      "agentName": "Compliance Agent",
+      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
+      "timestamp": "18:51:14",
+      "type": "info"
     }
   ]
 }

@@ -311,8 +311,14 @@ export default function KongilaWeb() {
       };
 
       setCurrentUser(newUser);
-      setAuthView('verify');
-      triggerBanner('Account created! Supabase email verification sent.', 'info');
+      // Bypass email verification temporarily
+      if (authRole === 'talent') {
+        setAuthView('onboarding');
+      } else {
+        setAuthView(null);
+        setActiveTab('client');
+      }
+      triggerBanner('Account created successfully! Welcome to Kongila.', 'success');
     } catch (error: any) {
       triggerBanner(`Sign up failed: ${error.message}`, 'error');
     } finally {
@@ -995,27 +1001,41 @@ export default function KongilaWeb() {
       </Head>
 
 
-      {/* Floating Banners */}
+      {/* Clean Toast Notification (replaces dark system alert) */}
       {bannerMessage && (
-        <div className="floating-alert" style={{
-          borderLeft: `4px solid ${bannerType === 'success' ? 'var(--accent-green)' : bannerType === 'error' ? 'var(--accent-magenta)' : 'var(--accent-cyan)'}`,
-          background: 'rgba(5, 12, 20, 0.9)',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)'
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 9999,
+          background: '#FFFFFF',
+          border: '1px solid #DDE2EC',
+          borderLeft: `4px solid ${
+            bannerType === 'success' ? '#0ABFBC' :
+            bannerType === 'error'   ? '#E53E3E' : '#0047CC'
+          }`,
+          borderRadius: '10px',
+          padding: '14px 20px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.10)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          minWidth: '280px',
+          maxWidth: '380px',
+          animation: 'slideInRight 0.25s ease'
         }}>
-          <div className="alert-icon" style={{
-            color: bannerType === 'success' ? 'var(--accent-green)' : bannerType === 'error' ? 'var(--accent-magenta)' : 'var(--accent-cyan)'
-          }}>
-            {bannerType === 'success' ? '✓' : bannerType === 'error' ? '⚠' : 'ℹ'}
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '13px', color: '#fff' }}>SYSTEM ALERT</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{bannerMessage}</div>
-          </div>
+          <div style={{
+            width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+            background: bannerType === 'success' ? '#0ABFBC' : bannerType === 'error' ? '#E53E3E' : '#0047CC'
+          }} />
+          <span style={{ fontSize: '13px', color: '#1A2340', fontWeight: 500, lineHeight: 1.4 }}>
+            {bannerMessage}
+          </span>
         </div>
       )}
 
-      {/* Sidebar navigation (Dashboard view only) */}
-      {currentUser && !authView && !clientIntakeActive && (
+      {/* Sidebar navigation: shown only for non-talent users, or when on non-talent tabs */}
+      {currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent') && (
         <div className="sidebar">
           <div className="sidebar-logo">
             <KongilaLogo size={28} textColor="#0047CC" />
@@ -1071,11 +1091,11 @@ export default function KongilaWeb() {
 
       {/* Main Content Area */}
       <div className="main-content" style={{ 
-        marginLeft: (currentUser && !authView && !clientIntakeActive) ? '250px' : 'auto', 
-        marginRight: (currentUser && !authView && !clientIntakeActive) ? '0' : 'auto', 
-        maxWidth: (currentUser && !authView && !clientIntakeActive) ? '1200px' : '100%',
-        width: (currentUser && !authView && !clientIntakeActive) ? 'calc(100% - 250px)' : '100%',
-        padding: (currentUser && !authView && !clientIntakeActive) ? '40px 48px' : '0px',
+        marginLeft: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '250px' : 'auto',
+        marginRight: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '0' : 'auto',
+        maxWidth: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '1200px' : '100%',
+        width: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? 'calc(100% - 250px)' : '100%',
+        padding: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '40px 48px' : '0px',
         transition: 'var(--transition-smooth)'
       }}>
         
@@ -2390,7 +2410,8 @@ export default function KongilaWeb() {
         {/* ====================================================================== */}
         {/* UNIFIED AUTHENTICATION VIEWS (Sign-Up / Sign-In / Verification Modal) */}
         {/* ====================================================================== */}
-        {authView && !clientIntakeActive && (
+        {/* Auth two-panel: only login / signup / verify — NOT onboarding */}
+        {(authView === 'login' || authView === 'signup' || authView === 'verify') && !clientIntakeActive && (
           <div style={{
             minHeight: '100vh',
             width: '100%',
@@ -2598,22 +2619,35 @@ export default function KongilaWeb() {
                     />
                   </div>
 
-                  <button 
-                    type="submit" 
+                  <button
+                    type="submit"
+                    disabled={loading}
                     style={{
-                      width: '100%', 
-                      background: '#0047CC', 
-                      color: '#fff', 
-                      border: 'none', 
-                      borderRadius: '8px', 
-                      height: '42px', 
-                      fontSize: '14px', 
-                      fontWeight: 600, 
-                      cursor: 'pointer',
-                      marginTop: '16px'
+                      width: '100%',
+                      background: loading ? '#7BA8E8' : '#0047CC',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      height: '42px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      marginTop: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
                     }}
                   >
-                    Create Account
+                    {loading ? (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
+                          <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" strokeWidth="3" />
+                          <path d="M12 2a10 10 0 0 1 10 10" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
+                        </svg>
+                        Creating Account...
+                      </>
+                    ) : 'Create Account'}
                   </button>
                 </form>
 
@@ -2656,22 +2690,35 @@ export default function KongilaWeb() {
                     />
                   </div>
 
-                  <button 
-                    type="submit" 
+                  <button
+                    type="submit"
+                    disabled={loading}
                     style={{
-                      width: '100%', 
-                      background: '#0047CC', 
-                      color: '#fff', 
-                      border: 'none', 
-                      borderRadius: '8px', 
-                      height: '42px', 
-                      fontSize: '14px', 
-                      fontWeight: 600, 
-                      cursor: 'pointer',
-                      marginTop: '16px'
+                      width: '100%',
+                      background: loading ? '#7BA8E8' : '#0047CC',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      height: '42px',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      marginTop: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
                     }}
                   >
-                    Sign In
+                    {loading ? (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
+                          <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" strokeWidth="3" />
+                          <path d="M12 2a10 10 0 0 1 10 10" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
+                        </svg>
+                        Signing In...
+                      </>
+                    ) : 'Sign In'}
                   </button>
                 </form>
 
@@ -2717,12 +2764,8 @@ export default function KongilaWeb() {
               </div>
             )}
 
-            {/* View: Onboarding Portal (Progressive Talent Wizard) */}
-            {authView === 'onboarding' && (
-              <div style={{ display: 'none' }}>
-                {/* Handled by full screen wizard rendering below */}
-              </div>
-            )}
+
+
 
               </div>
             </div>
