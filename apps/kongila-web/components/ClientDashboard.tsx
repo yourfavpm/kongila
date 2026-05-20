@@ -56,6 +56,8 @@ interface ClientDashboardProps {
   signingContractId: string | null;
   selectedRequest: any;
   setSelectedRequest: (request: any) => void;
+  setRequests?: (requests: any[]) => void;
+  setMatches?: (matches: any[]) => void;
   setInvoices?: (invoices: any[]) => void;
   setMessages?: (messages: any[]) => void;
   setNotifications?: (notifications: any[]) => void;
@@ -168,7 +170,60 @@ export default function ClientDashboard({
   // Talent Matching Premium States
   const [selectedMatchingRequestId, setSelectedMatchingRequestId] = useState('sb9421');
   const [matchingShortlistedState, setMatchingShortlistedState] = useState<Record<string, boolean>>({ mk: true });
-  
+  const [detailsViewRequestId, setDetailsViewRequestId] = useState<string | null>(null);
+  const [interviewRequests, setInterviewRequests] = useState<Record<string, string[]>>({});
+
+  const handleShortlistToggle = async (candId: string, candName: string, requestId?: string) => {
+    const isShortlistedNow = !matchingShortlistedState[candId];
+    setMatchingShortlistedState(prev => ({
+      ...prev,
+      [candId]: isShortlistedNow
+    }));
+
+    if (setNotifications) {
+      setNotifications([...(notifications || []), {
+        id: `notif_${Date.now()}`,
+        userId: currentUser?.id || 'client_unknown',
+        title: isShortlistedNow ? 'Candidate Shortlisted' : 'Candidate Removed',
+        message: `${candName} has been ${isShortlistedNow ? 'shortlisted' : 'removed'} from your matching pipeline.`,
+        read: false,
+        createdAt: new Date().toISOString()
+      }]);
+    }
+
+    alert(`${candName} has been ${isShortlistedNow ? 'shortlisted successfully' : 'removed from shortlists'}.`);
+  };
+
+  const handleRequestInterview = async (candName: string, requestId?: string) => {
+    const requestKey = requestId || detailsViewRequestId;
+    if (requestKey) {
+      setInterviewRequests(prev => ({
+        ...prev,
+        [requestKey]: [...(prev[requestKey] || []), candName]
+      }));
+    }
+
+    if (setNotifications) {
+      setNotifications([...(notifications || []), {
+        id: `notif_${Date.now()}`,
+        userId: currentUser?.id || 'client_unknown',
+        title: 'Interview Request Sent',
+        message: `Interview request dispatched to ${candName}${requestKey ? ` for request ${requestKey}` : ''}.`,
+        read: false,
+        createdAt: new Date().toISOString()
+      }]);
+    }
+
+    await supabase.from('notifications').insert({
+      user_id: currentUser?.id,
+      title: 'Interview Proposal Dispatched',
+      content: `Interview request successfully sent to ${candName}.`,
+      read_status: false
+    }).catch(() => {});
+
+    alert(`Interview proposal dispatched to ${candName}. Candidate has been notified to choose available slot.`);
+  };
+
   // Dynamic stats calculation from real backend telemetry
   const activeHiresCount = contracts.filter(c => c.clientId === currentUser?.id && c.status?.toLowerCase() === 'signed').length;
   const pendingMatchesCount = matches.filter(m => {
@@ -479,6 +534,10 @@ export default function ClientDashboard({
       return matchesSearch && matchesStatus && matchesType;
     });
 
+    if (detailsViewRequestId) {
+      return renderRequestDetail();
+    }
+
     const totalIntakeCount = clientRequests.length;
 
     return (
@@ -727,10 +786,13 @@ export default function ClientDashboard({
                       {/* Actions dropdown */}
                       <td style={{ padding: '18px 24px', textAlign: 'right' }}>
                         <button 
-                          onClick={() => alert(`Managing Service Request Intake: #${req.id.substring(0,8)}`)}
-                          style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '18px', cursor: 'pointer', padding: '4px' }}
+                          onClick={() => {
+                            setSelectedRequest(req);
+                            setDetailsViewRequestId(req.id);
+                          }}
+                          style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '14px', cursor: 'pointer', padding: '4px' }}
                         >
-                          ⋮
+                          View Details
                         </button>
                       </td>
 
@@ -760,6 +822,176 @@ export default function ClientDashboard({
 
         </Card>
 
+      </div>
+    );
+  };
+
+  const renderRequestDetail = () => {
+    const request = clientRequests.find(req => req.id === detailsViewRequestId) || selectedRequest;
+    if (!request) return null;
+
+    const requestMatches = matches.filter((m: any) => m.requestId === request.id);
+    const shortlistedCount = requestMatches.filter((m: any) => matchingShortlistedState[m.talentId]).length;
+    const interviewCount = interviewRequests[request.id]?.length || 0;
+    const timeline = [
+      { label: 'New Request', active: request.status === 'New Request' || request.status === 'Reviewing' || request.status === 'Matching' || request.status === 'Interview' || request.status === 'Completed' },
+      { label: 'Reviewing', active: request.status === 'Reviewing' || request.status === 'Matching' || request.status === 'Interview' || request.status === 'Completed' },
+      { label: 'Matching', active: request.status === 'Matching' || request.status === 'Interview' || request.status === 'Completed' },
+      { label: 'Interview', active: request.status === 'Interview' || request.status === 'Completed' },
+      { label: 'Completed', active: request.status === 'Completed' }
+    ];
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <button
+              onClick={() => setDetailsViewRequestId(null)}
+              style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              ← Back to service requests
+            </button>
+            <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', margin: '16px 0 8px 0' }}>{request.roleTitle || request.serviceType}</h1>
+            <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>View full request details, shortlist activity, interview history and intake status.</p>
+          </div>
+          <div style={{ display: 'grid', gap: '12px', minWidth: '220px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Current Status</span>
+            <span style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>{request.status || 'New Request'}</span>
+            <span style={{ fontSize: '13px', color: '#64748B' }}>{request.createdAt ? new Date(request.createdAt).toLocaleDateString() : 'Recently created'}</span>
+          </div>
+        </div>
+
+        <Card style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '24px' }}>
+          <div style={{ display: 'grid', gap: '24px' }}>
+            <section>
+              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', marginBottom: '12px' }}>Intake Details</h3>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ padding: '18px', borderRadius: '12px', background: '#F8FAFC' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Service Type</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>{request.serviceType}</div>
+                  </div>
+                  <div style={{ padding: '18px', borderRadius: '12px', background: '#F8FAFC' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Budget</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>${request.budget?.toLocaleString() || '0'} / mo</div>
+                  </div>
+                </div>
+                <div style={{ padding: '18px', borderRadius: '12px', background: '#F8FAFC' }}>
+                  <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Role Description</div>
+                  <div style={{ fontSize: '14px', color: '#1E293B', lineHeight: 1.7 }}>{request.roleDescription || 'No role description provided.'}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ padding: '18px', borderRadius: '12px', background: '#F8FAFC' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Required Skills</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {(request.requiredSkills || []).map((skill: string) => (
+                        <span key={skill} style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#475569' }}>{skill}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ padding: '18px', borderRadius: '12px', background: '#F8FAFC' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Hiring Needs</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>{request.numberOfHires || 1} hire(s)</div>
+                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '6px' }}>{request.commitmentLevel || 'Full Time'}</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', marginBottom: '12px' }}>Candidate Pipeline</h3>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div style={{ padding: '16px', borderRadius: '12px', background: '#F8FAFC' }}>
+                  <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '6px', textTransform: 'uppercase' }}>Shortlisted</div>
+                  <div style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>{shortlistedCount}</div>
+                </div>
+                <div style={{ padding: '16px', borderRadius: '12px', background: '#F8FAFC' }}>
+                  <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '6px', textTransform: 'uppercase' }}>Interviews Requested</div>
+                  <div style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>{interviewCount}</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <Card style={{ background: '#F8FAFC' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A', marginBottom: '12px' }}>Status Timeline</h4>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {timeline.map(stage => (
+                  <div key={stage.label} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: stage.active ? '#2563EB' : '#CBD5E1' }} />
+                    <span style={{ color: stage.active ? '#0F172A' : '#64748B', fontWeight: stage.active ? 700 : 500, fontSize: '13px' }}>{stage.label}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card style={{ background: '#FFFFFF' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <span style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>Interview Activity</span>
+                <span style={{ fontSize: '12px', color: '#64748B' }}>{interviewCount} actions</span>
+              </div>
+              {interviewCount > 0 ? (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {(interviewRequests[request.id] || []).map((candidateName: string, index: number) => (
+                    <div key={index} style={{ padding: '12px', borderRadius: '12px', background: '#F8FAFC' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>{candidateName}</div>
+                      <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>Interview requested</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: '#64748B' }}>No interviews have been requested for this request yet.</div>
+              )}
+            </Card>
+          </aside>
+        </Card>
+
+        <Card style={{ display: 'grid', gap: '24px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A' }}>Matched candidates for this request</h3>
+          {requestMatches.length > 0 ? (
+            requestMatches.map((match: any) => {
+              const talent = talents.find((t: any) => t.id === match.talentId) || { name: match.talentId, title: 'Candidate', avatar: '', location: 'Remote' };
+              const isShortlisted = !!matchingShortlistedState[match.talentId];
+              const requestedInterviews = interviewRequests[request.id] || [];
+              const interviewRequested = requestedInterviews.includes(talent.name);
+              return (
+                <Card key={match.id} style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <img src={talent.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80'} alt="" style={{ width: '56px', height: '56px', borderRadius: '18px', objectFit: 'cover' }} />
+                    <div>
+                      <div style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>{talent.name}</div>
+                      <div style={{ fontSize: '12px', color: '#64748B' }}>{talent.title || 'Matched talent profile'}</div>
+                    </div>
+                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                      <div style={{ fontSize: '12px', color: '#64748B' }}>Match score</div>
+                      <div style={{ fontSize: '18px', fontWeight: 800, color: '#2563EB' }}>{match.score}%</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleShortlistToggle(match.talentId, talent.name, request.id)}
+                      style={{ padding: '10px 16px', borderRadius: '10px', border: isShortlisted ? '1px solid #2563EB' : '1px solid #E2E8F0', background: isShortlisted ? '#EFF6FF' : '#FFFFFF', color: isShortlisted ? '#2563EB' : '#475569', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      {isShortlisted ? '✓ Shortlisted' : 'Shortlist'}
+                    </button>
+                    <button
+                      onClick={() => handleRequestInterview(talent.name, request.id)}
+                      style={{ padding: '10px 16px', borderRadius: '10px', border: '1px solid #E2E8F0', background: interviewRequested ? '#ECFDF5' : '#FFFFFF', color: interviewRequested ? '#047857' : '#475569', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      {interviewRequested ? 'Interview Requested' : 'Request Interview'}
+                    </button>
+                    <span style={{ alignSelf: 'center', fontSize: '12px', color: '#64748B' }}>{talent.location}</span>
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <div style={{ padding: '22px', borderRadius: '14px', background: '#F8FAFC', color: '#64748B' }}>
+              There is no matched candidate data for this request yet. Shortlist candidates from the Talent Matching page to populate your pipeline.
+            </div>
+          )}
+        </Card>
       </div>
     );
   };
@@ -834,35 +1066,6 @@ export default function ClientDashboard({
 
     const activeRequest = openRequests.find(r => r.id === selectedMatchingRequestId) || openRequests[0];
 
-    const handleShortlistToggle = async (candId: string, candName: string) => {
-      const isShortlistedNow = !matchingShortlistedState[candId];
-      setMatchingShortlistedState({
-        ...matchingShortlistedState,
-        [candId]: isShortlistedNow
-      });
-
-      // Synchronize back to Postgres notifications table
-      await supabase.from('notifications').insert({
-        user_id: currentUser?.id,
-        title: isShortlistedNow ? 'Candidate Shortlisted' : 'Candidate Removed',
-        content: `${candName} has been ${isShortlistedNow ? 'shortlisted' : 'removed'} from your matching pipeline.`,
-        read_status: false
-      });
-
-      alert(`${candName} has been ${isShortlistedNow ? 'shortlisted successfully' : 'removed from shortlists'}.`);
-    };
-
-    const handleRequestInterview = async (candName: string) => {
-      // Dispatch database scheduling record
-      await supabase.from('notifications').insert({
-        user_id: currentUser?.id,
-        title: 'Interview Proposal Dispatched',
-        content: `Interview request successfully sent to ${candName} for role ${activeRequest.title}.`,
-        read_status: false
-      });
-
-      alert(`Interview proposal dispatched to ${candName}. Candidate has been notified to choose available slot.`);
-    };
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -1038,7 +1241,7 @@ export default function ClientDashboard({
                         {/* Actions footer */}
                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '16px' }}>
                           <button 
-                            onClick={() => handleRequestInterview(cand.name)}
+                            onClick={() => handleRequestInterview(cand.name, activeRequest.id)}
                             style={{
                               background: '#FFFFFF', border: '1px solid #E2E8F0',
                               borderRadius: '8px', padding: '8px 16px', color: '#475569',
@@ -1049,7 +1252,7 @@ export default function ClientDashboard({
                           </button>
                           
                           <button 
-                            onClick={() => handleShortlistToggle(cand.id, cand.name)}
+                            onClick={() => handleShortlistToggle(cand.id, cand.name, activeRequest.id)}
                             style={{
                               background: isShortlisted ? '#EFF6FF' : '#FFFFFF',
                               border: isShortlisted ? '1px solid #3B82F6' : '1px solid #E2E8F0',
