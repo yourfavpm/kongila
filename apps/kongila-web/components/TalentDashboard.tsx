@@ -171,7 +171,7 @@ const ProfileSection = ({ user, profile, contracts, setActiveSection }: { user: 
       </Card>
 
       {/* Two Column Widget Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '28px' }}>
+      <div className="db-grid-split-12" style={{}}>
         
         {/* Left Column widgets */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
@@ -209,7 +209,7 @@ const ProfileSection = ({ user, profile, contracts, setActiveSection }: { user: 
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', borderTop: '1px solid #F1F5F9', paddingTop: '20px' }}>
+            <div className="db-grid-2" style={{ borderTop: '1px solid #F1F5F9', paddingTop: '20px' }}>
               <div>
                 <span style={{ fontSize: '11px', color: '#6B7A99', display: 'block' }}>ROLE PREFERENCE</span>
                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#1A2340', marginTop: '4px', display: 'block' }}>
@@ -240,7 +240,7 @@ const ProfileSection = ({ user, profile, contracts, setActiveSection }: { user: 
           {/* Document Vault */}
           <Card>
             <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#1A2340', marginBottom: '20px', margin: 0 }}>Document Vault</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+            <div className="db-grid-3" style={{}}>
               {[
                 { title: 'Curriculum Vitae', desc: 'Updated 2 days ago', icon: '📄' },
                 { title: 'Portfolio PDF', desc: 'Case studies (14MB)', icon: '🌐' },
@@ -411,7 +411,7 @@ const ProfessionalSection = ({ profile }: { profile: any }) => {
   return (
     <div>
       <SectionHeader title="Professional Details" subtitle="Your skills, role preferences, and availability." />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div className="db-grid-2" style={{}}>
         <Card>
           <h3 style={{ fontWeight: 700, fontSize: '15px', color: '#1A2340', marginBottom: '16px' }}>Skills</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -622,7 +622,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
       </div>
 
       {/* Main layout (left filter sidebar & middle documents panel) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '24px', alignItems: 'flex-start' }}>
+      <div className="db-grid-split-250" style={{ alignItems: 'flex-start' }}>
         
         {/* Left filter panel */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -699,7 +699,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
           </div>
 
           {/* Recent documents grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+          <div className="db-grid-3" style={{}}>
             {filteredDocs.map((doc: any, i: number) => {
               // Status Pill details
               let pillBg = '#F1F5F9';
@@ -766,7 +766,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
             })}
 
             {filteredDocs.length === 0 && (
-              <div style={{ gridColumn: 'span 3', padding: '32px 0', textAlign: 'center', color: '#6B7A99', fontSize: '13px' }}>
+              <div className="grid-span-full" style={{ padding: '32px 0', textAlign: 'center', color: '#6B7A99', fontSize: '13px' }}>
                 No documents found in this category.
               </div>
             )}
@@ -781,7 +781,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+            <div className="db-grid-4" style={{}}>
               {certDocs.map((cert: any, i: number) => (
                 <Card key={cert.id || i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '20px 12px' }}>
                   <div style={{
@@ -839,7 +839,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
           zIndex: 999
         }}>
           <div style={{
-            background: '#FFFFFF', borderRadius: '12px', width: '480px',
+            background: '#FFFFFF', borderRadius: '12px', width: '90%', maxWidth: '480px',
             padding: '28px', border: '1px solid #E2E8F0', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
           }}>
             {/* Header */}
@@ -1129,7 +1129,7 @@ const ContractSection = ({ contracts, profile }: { contracts: any[]; profile: an
       </Card>
 
       {/* THREE WIDGETS ROW */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: '24px' }}>
+      <div className="db-grid-3" style={{}}>
         
         {/* Earnings Overview */}
         <Card style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px' }}>
@@ -1215,7 +1215,7 @@ const ContractSection = ({ contracts, profile }: { contracts: any[]; profile: an
       </div>
 
       {/* TEAM AND DOCUMENTS ROW */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '24px' }}>
+      <div className="db-grid-split-12-20" style={{}}>
         
         {/* Engagement Team */}
         <Card style={{ padding: '24px' }}>
@@ -1250,7 +1250,7 @@ const ContractSection = ({ contracts, profile }: { contracts: any[]; profile: an
         {/* Contract Documents */}
         <Card style={{ padding: '24px' }}>
           <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340', margin: '0 0 20px 0' }}>CONTRACT DOCUMENTS</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div className="db-grid-2" style={{}}>
             {[
               { name: 'Master Talent Agreement', type: 'PDF • Signed' },
               { name: 'Mutual NDA (Fintech)', type: 'PDF • Signed' },
@@ -2267,7 +2267,7 @@ const OnboardingSection = ({ profile }: { profile: any }) => {
   return (
     <div>
       <SectionHeader title="Onboarding Experience" subtitle="Your journey from signup to full deployment." />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div className="db-grid-2" style={{}}>
         {/* Welcome video placeholder */}
         <Card style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{
@@ -2617,7 +2617,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
     }
 
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
+      <div className="db-grid-split-300" style={{ fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
         
         {/* Left Column: Conversation Thread */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -2931,7 +2931,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
       </div>
 
       {/* Grid of Categories */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+      <div className="db-grid-4" style={{}}>
         {[
           { label: 'Payment Issues', desc: 'Invoicing, direct deposits, and billing queries.', icon: '💳' },
           { label: 'Technical Support', desc: 'Platform bugs, API issues, and integrations.', icon: '⚙️' },
@@ -2964,7 +2964,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
       </div>
 
       {/* Split layout (Tickets table & Live Chat pane) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '24px', alignItems: 'flex-start' }}>
+      <div className="db-grid-split-320" style={{ alignItems: 'flex-start' }}>
         
         {/* Left Card: My Recent Tickets */}
         <Card style={{ padding: '24px' }}>
@@ -3114,7 +3114,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
           zIndex: 999
         }}>
           <div style={{
-            background: '#FFFFFF', borderRadius: '12px', width: '520px',
+            background: '#FFFFFF', borderRadius: '12px', width: '90%', maxWidth: '520px',
             padding: '28px', border: '1px solid #E2E8F0', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
           }}>
             {/* Header */}
@@ -3284,6 +3284,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
 };
 export default function TalentDashboard({ currentUser, talentProfile, contracts, matches, onSignOut, onUpdateProfile }: TalentDashboardProps) {
   const [activeSection, setActiveSection] = useState<Section>('profile');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Notifications and messages state
   const [notifications, setNotifications] = useState([
@@ -3335,12 +3336,89 @@ export default function TalentDashboard({ currentUser, talentProfile, contracts,
           <div style={{ width: '24px', height: '24px', background: '#0047CC', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
           Kongila
         </div>
-        <button className="mobile-hamburger" onClick={() => {
-          // simple inline toggle logic can go here or just rely on bottom nav for mobile
-        }}>
+        <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}>
           <span></span><span></span><span></span>
         </button>
       </div>
+
+      {/* ── Mobile Sidebar Drawer ── */}
+      {mobileSidebarOpen && (
+        <>
+          <div 
+            onClick={() => setMobileSidebarOpen(false)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.4)', zIndex: 299, backdropFilter: 'blur(4px)'
+            }} 
+          />
+          <aside className="mobile-sidebar-drawer open" style={{
+            position: 'fixed', top: 0, bottom: 0, left: 0, width: '280px',
+            background: '#FFFFFF', borderRight: '1px solid #DDE2EC',
+            display: 'flex', flexDirection: 'column', padding: '24px 16px',
+            zIndex: 300, overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '32px', height: '32px', borderRadius: '8px', background: '#0047CC',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 900
+                }}>K</div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Talent Portal</div>
+              </div>
+              <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+            </div>
+            
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+              {NAV_ITEMS.map(item => {
+                const isActive = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveSection(item.id);
+                      setMobileSidebarOpen(false);
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px', borderRadius: '8px', border: 'none',
+                      background: isActive ? '#EEF3FF' : 'transparent',
+                      color: isActive ? '#0047CC' : '#6B7A99',
+                      fontWeight: isActive ? 700 : 500,
+                      fontSize: '14px', cursor: 'pointer', textAlign: 'left',
+                      width: '100%'
+                    }}
+                  >
+                    <span style={{ fontSize: '16px' }}>{item.icon}</span>
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', borderTop: '1px solid #F5F7FA', paddingTop: '16px' }}>
+              <button 
+                onClick={() => { setActiveSection('settings'); setMobileSidebarOpen(false); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  background: activeSection === 'settings' ? '#EEF3FF' : 'transparent',
+                  border: 'none', color: activeSection === 'settings' ? '#0047CC' : '#6B7A99',
+                  fontSize: '14px', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                  padding: '8px', borderRadius: '8px', width: '100%'
+                }}
+              >
+                ⚙️ Settings
+              </button>
+              <button onClick={() => { onSignOut?.(); setMobileSidebarOpen(false); }} style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                background: 'transparent', border: 'none', color: '#EF4444',
+                fontSize: '14px', fontWeight: 600, cursor: 'pointer', textAlign: 'left', padding: '8px',
+                width: '100%'
+              }}>
+                🚪 Logout
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
 
       {/* ── Desktop Sidebar ── */}
       <aside className="desktop-sidebar" style={{
@@ -3445,7 +3523,7 @@ export default function TalentDashboard({ currentUser, talentProfile, contracts,
       <div className="dashboard-content-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         
         {/* ── Top Bar ── */}
-        <header style={{
+        <header className="desktop-header" style={{
           height: '70px', background: '#FFFFFF', borderBottom: '1px solid #DDE2EC',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '0 48px', flexShrink: 0, position: 'relative', zIndex: 10
@@ -3595,7 +3673,7 @@ export default function TalentDashboard({ currentUser, talentProfile, contracts,
         </header>
 
         {/* ── Main Scroll View ── */}
-        <main style={{ flex: 1, padding: '40px 48px', overflowY: 'auto', background: '#F5F7FA' }}>
+        <main className="dashboard-main-content" style={{ background: '#F5F7FA' }}>
           {renderSection()}
         </main>
 

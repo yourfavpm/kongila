@@ -128,6 +128,7 @@ export default function ClientDashboard({
 }: ClientDashboardProps) {
 
   const [activeSection, setActiveSection] = useState<ClientSection>('dashboard');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   
   // Filter States
@@ -278,7 +279,7 @@ export default function ClientDashboard({
       </div>
 
       {/* Modern Curated Stats Cards (Row of 4) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '24px' }}>
+      <div className="stats-card-grid" style={{ gap: '24px' }}>
         
         <Card style={{ borderLeft: '4px solid #3B82F6' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -327,7 +328,7 @@ export default function ClientDashboard({
       </div>
 
       {/* Main Body Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '32px', alignItems: 'start' }}>
+      <div className="db-grid-split-21" style={{ alignItems: 'start' }}>
         
         {/* Left Column: Matching Progress & Performers */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -504,7 +505,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Dynamic Telemetry & AI Cards Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '32px', alignItems: 'stretch' }}>
+        <div className="db-grid-split-21" style={{ alignItems: 'stretch' }}>
           
           {/* Performance & Request Stats Widget (Left Card) */}
           <Card style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -879,7 +880,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Workspace Split */}
-        <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '32px', alignItems: 'start' }}>
+        <div className="db-grid-split-300-left" style={{ alignItems: 'start' }}>
           
           {/* Left Column: Open Requests Sidebar */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1014,7 +1015,7 @@ export default function ClientDashboard({
                         </div>
 
                         {/* Telemetry specs grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', marginBottom: '16px' }}>
+                        <div className="db-grid-2" style={{ gap: '12px', background: '#F8FAFC', padding: '12px 16px', borderRadius: '10px', marginBottom: '16px' }}>
                           <div>
                             <span style={{ fontSize: '10px', color: '#94A3B8', display: 'block', textTransform: 'uppercase' }}>Experience Level</span>
                             <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>{cand.experience}</span>
@@ -1092,7 +1093,7 @@ export default function ClientDashboard({
 
             {/* Mockup Interview Advisor Popup Banner */}
             <div style={{ 
-              display: 'grid', gridTemplateColumns: '1fr auto', 
+              display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'space-between', alignItems: 'center',
               background: '#FFFFFF', border: '1px solid #E2E8F0', 
               borderRadius: '16px', padding: '20px', marginTop: '12px',
               boxShadow: '0 4px 16px rgba(0,0,0,0.02)', position: 'relative'
@@ -1185,7 +1186,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Grid Workspace */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 1fr', gap: '32px', alignItems: 'start' }}>
+        <div className="db-grid-split-21" style={{ alignItems: 'start' }}>
           
           {/* Left Column: Active Hires & Ended Contracts */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -1555,7 +1556,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Stats Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+        <div className="db-grid-3" style={{ gap: '20px' }}>
           
           {/* Card 1 */}
           <Card style={{ padding: '24px' }}>
@@ -1602,7 +1603,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Split Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '32px', alignItems: 'start' }}>
+        <div className="db-grid-split-320" style={{ alignItems: 'start' }}>
           
           {/* Left Panel: Invoice History */}
           <Card style={{ padding: '0px', overflow: 'hidden' }}>
@@ -1933,15 +1934,10 @@ export default function ClientDashboard({
         </div>
 
         {/* 3-Panel Hub Container */}
-        <div style={{ 
-          display: 'grid', gridTemplateColumns: '320px 1fr 280px', 
-          height: '650px', background: '#FFFFFF', 
-          border: '1px solid #E2E8F0', borderRadius: '16px', 
-          overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' 
-        }}>
+        <div className="messaging-hub-container" style={{}}>
           
           {/* PANEL A: Message List Column (Left) */}
-          <div style={{ borderRight: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', background: '#FFFFFF' }}>
+          <div className="messaging-thread-list" style={{}}>
             
             {/* Search across communication */}
             <div style={{ padding: '18px', borderBottom: '1px solid #E2E8F0', position: 'relative' }}>
@@ -2234,7 +2230,7 @@ export default function ClientDashboard({
           </div>
 
           {/* PANEL C: Profile Summary Sidebar (Right) */}
-          <div style={{ display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderLeft: '1px solid #E2E8F0', padding: '24px' }}>
+          <div className="messaging-details-panel" style={{}}>
             
             {/* Avatar & name */}
             <div style={{ textAlign: 'center', borderBottom: '1px solid #F1F5F9', paddingBottom: '20px', marginBottom: '20px' }}>
@@ -2364,7 +2360,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Workspace Split */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '32px', alignItems: 'start' }}>
+        <div className="db-grid-split-320" style={{ alignItems: 'start' }}>
           
           {/* Left Column: Calendar Component Grid */}
           <Card style={{ padding: '24px' }}>
@@ -2706,7 +2702,7 @@ export default function ClientDashboard({
         </div>
 
         {/* Two-Column split workspace */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '32px', alignItems: 'start' }}>
+        <div className="db-grid-split-12-20" style={{ alignItems: 'start', gap: '32px' }}>
           
           {/* Left Column: Awaiting & Historical */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -3000,7 +2996,7 @@ export default function ClientDashboard({
       <p style={{ fontSize: '13px', color: '#64748B', marginBottom: '24px' }}>Update company credentials and operations details.</p>
 
       <form onSubmit={e => { e.preventDefault(); alert('Profile credentials updated!'); }} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
+        <div className="db-grid-2" style={{ gap: '20px' }}>
           <div>
             <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
               Company Name
@@ -3063,6 +3059,89 @@ export default function ClientDashboard({
   return (
     <div className="dashboard-shell" style={{ display: 'flex', minHeight: '100vh', background: '#F8FAFC', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
       
+      {/* ── Mobile Top Nav ── */}
+      <div className="mobile-nav-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '60px', background: '#0F172A', borderBottom: '1px solid #1E293B' }}>
+        <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)} style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
+          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
+          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#2563EB', fontSize: '18px', margin: '0 auto 0 12px' }}>
+          <div style={{ width: '24px', height: '24px', background: '#2563EB', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
+          <span style={{ color: '#FFFFFF' }}>Kongila</span>
+        </div>
+      </div>
+
+      {/* ── Mobile Sidebar Drawer ── */}
+      {mobileSidebarOpen && (
+        <>
+          <div 
+            onClick={() => setMobileSidebarOpen(false)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.4)', zIndex: 299, backdropFilter: 'blur(4px)'
+            }} 
+          />
+          <aside className="mobile-sidebar-drawer open" style={{
+            position: 'fixed', top: 0, bottom: 0, left: 0, width: '280px',
+            background: '#0F172A', borderRight: '1px solid #1E293B',
+            display: 'flex', flexDirection: 'column', padding: '24px 16px',
+            zIndex: 300, overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #1E293B' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '32px', height: '32px', borderRadius: '8px', background: '#2563EB',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 900
+                }}>K</div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>Client Portal</div>
+              </div>
+              <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+            </div>
+            
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+              {NAV_ITEMS.map(item => {
+                const isActive = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveSection(item.id);
+                      if (item.id === 'radar' && !selectedRequest && requests.length > 0) {
+                        setSelectedRequest(requests[0]);
+                      }
+                      setMobileSidebarOpen(false);
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '12px 16px', borderRadius: '12px', border: 'none',
+                      background: isActive ? '#2563EB' : 'transparent',
+                      color: isActive ? '#FFFFFF' : '#94A3B8',
+                      fontWeight: 700, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
+                      width: '100%'
+                    }}
+                  >
+                    <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', borderTop: '1px solid #1E293B', paddingTop: '16px' }}>
+              <button onClick={() => { onSignOut(); setMobileSidebarOpen(false); }} style={{
+                display: 'flex', alignItems: 'center', gap: '12px',
+                background: 'transparent', border: 'none', color: '#EF4444',
+                fontSize: '14px', fontWeight: 800, cursor: 'pointer', textAlign: 'left', padding: '12px 16px',
+                width: '100%'
+              }}>
+                <span>🚪</span>
+                Sign Out
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
+
       {/* ── Desktop Sidebar Modeled After Stitch Mockup ── */}
       <aside className="desktop-sidebar" style={{
         width: '260px', flexShrink: 0,
@@ -3090,21 +3169,7 @@ export default function ClientDashboard({
 
         {/* Navigation Sidebar List */}
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-          {setActiveTab && (
-            <button
-              onClick={() => setActiveTab('home')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '12px',
-                padding: '12px', borderRadius: '12px', border: 'none',
-                background: 'transparent', color: '#94A3B8',
-                fontWeight: 700, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
-                marginBottom: '16px', borderBottom: '1px solid #1E293B', transition: 'color 0.2s'
-              }}
-            >
-              <span>🏠</span>
-              Overview Hub
-            </button>
-          )}
+          
           
           {NAV_ITEMS.map(item => {
             const isActive = activeSection === item.id;
@@ -3153,7 +3218,7 @@ export default function ClientDashboard({
       <div className="dashboard-content-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         
         {/* ── Top Header Bar ── */}
-        <header style={{
+        <header className="desktop-header" style={{
           height: '80px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '0 48px', flexShrink: 0, position: 'relative', zIndex: 10
@@ -3195,7 +3260,7 @@ export default function ClientDashboard({
         </header>
 
         {/* ── Main Dashboard Panel Scroll view ── */}
-        <main style={{ flex: 1, padding: '48px', overflowY: 'auto', background: '#F8FAFC' }}>
+        <main className="dashboard-main-content" style={{ flex: 1, overflowY: 'auto', background: '#F8FAFC' }}>
           {renderSection()}
         </main>
 
@@ -3393,7 +3458,7 @@ export default function ClientDashboard({
                 <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '6px' }}>Define Logistical Parameters</h3>
                 <p style={{ color: '#64748B', fontSize: '13px', marginBottom: '20px' }}>Finalize operational metrics for vetting and match creation.</p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                <div className="db-grid-2" style={{ gap: '16px', marginBottom: '24px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Timezone Focus</label>
                     <select 
