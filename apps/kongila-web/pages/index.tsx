@@ -1241,7 +1241,7 @@ export default function KongilaWeb() {
               </div>
 
               {/* Navigation Links */}
-              <nav style={{ display: 'flex', gap: '32px' }} className="hidden-mobile">
+              <nav style={{ display: 'flex', gap: '32px' }} className="hide-mobile">
                 {['Solutions', 'Talent', 'Enterprise', 'How It Works', 'Pricing', 'Resources'].map((item) => (
                   <span key={item} style={{
                     fontSize: '14px',
@@ -1377,14 +1377,10 @@ export default function KongilaWeb() {
             </header>
 
             {/* 2. HERO SECTION */}
-            <section style={{
+            <section className="hero-grid" style={{
               maxWidth: '1280px',
               margin: '0 auto',
-              padding: '80px 24px 100px 24px',
-              display: 'grid',
-              gridTemplateColumns: '1.1fr 0.9fr',
-              gap: '64px',
-              alignItems: 'center'
+              padding: '80px 24px 100px 24px'
             }}>
               {/* Left Side: Content */}
               <div>
@@ -1577,7 +1573,7 @@ export default function KongilaWeb() {
                 </p>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+              <div className="overview-grid" style={{}}>
                 {[
                   {
                     title: 'Managed Workforce',
@@ -1642,7 +1638,7 @@ export default function KongilaWeb() {
                 </div>
 
                 {/* Timeline Grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '32px', position: 'relative' }}>
+                <div className="timeline-grid" style={{ position: 'relative' }}>
                   {[
                     { step: '01', title: 'Submit Requirements', desc: 'Define your professional needs, target timezone preferences, and service models in under 3 minutes.' },
                     { step: '02', title: 'Get Matched', desc: 'Our matching engine evaluates skill fit, timezone availability, and remote readiness to align you with top A+ talent.' },
@@ -1687,7 +1683,7 @@ export default function KongilaWeb() {
             </section>
 
             {/* 6. TALENT EXPERIENCE SECTION */}
-            <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '64px', alignItems: 'center' }}>
+            <section className="experience-grid-1" style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
               {/* Left Side: Copy */}
               <div>
                 <span style={{ fontSize: '11px', fontWeight: 600, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '12px' }}>Built For Global Professional Talent</span>
@@ -1782,7 +1778,7 @@ export default function KongilaWeb() {
 
             {/* 7. CLIENT EXPERIENCE SECTION */}
             <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '100px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'grid', gridTemplateColumns: '0.92fr 1.08fr', gap: '64px', alignItems: 'center' }}>
+              <div className="experience-grid-2" style={{ maxWidth: '1280px', margin: '0 auto' }}>
                 
                 {/* Left Side: Client Console Mockup */}
                 <div className="glass-panel" style={{
@@ -1878,7 +1874,7 @@ export default function KongilaWeb() {
                 </h2>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px' }}>
+              <div className="excellence-grid" style={{}}>
                 {[
                   { title: 'Regulatory Compliance', icon: '⚖️', desc: 'Full adherence to local labor laws, employment contracts, automatic taxes processing, and complete IP protection across all hiring jurisdictions.' },
                   { title: 'Consolidated Global Payroll', icon: '💳', desc: 'Support for multiple currencies. Process paychecks, benefits, bonuses, and contractor reimbursements in a single click.' },
@@ -1916,7 +1912,7 @@ export default function KongilaWeb() {
                   </p>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px' }}>
+                <div className="all-features-grid" style={{}}>
                   {[
                     { title: 'Smart Matching Engine', desc: 'Uses skill, timezone, and behavior compatibility scores out of 100.' },
                     { title: '7-Stage Vetting Sandbox', desc: 'Calculates specialized test, work simulation, and communication weights.' },
@@ -1982,7 +1978,7 @@ export default function KongilaWeb() {
                       <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>{step.title}</span>
                     </div>
                     {idx < 6 && (
-                      <span style={{ fontSize: '16px', color: '#9CA3AF' }} className="hidden-mobile">➔</span>
+                      <span style={{ fontSize: '16px', color: '#9CA3AF' }} className="hide-mobile">➔</span>
                     )}
                   </React.Fragment>
                 ))}
@@ -1998,7 +1994,7 @@ export default function KongilaWeb() {
                   </h2>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                <div className="testimonial-grid" style={{}}>
                   {/* Testimonial 1 */}
                   <div className="glass-panel" style={{
                     padding: '32px',
@@ -2048,18 +2044,17 @@ export default function KongilaWeb() {
 
             {/* 12. FINAL CTA SECTION */}
             <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              <div style={{
+              <div className="final-cta-container" style={{
                 background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.05) 0%, rgba(11, 110, 153, 0.05) 100%)',
                 border: '1px solid rgba(0, 71, 204, 0.15)',
                 borderRadius: '24px',
-                padding: '80px 48px',
                 textAlign: 'center',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: '24px'
               }}>
-                <h2 style={{ fontSize: '40px', fontWeight: 600, color: '#111827', letterSpacing: '-0.03em', maxWidth: '640px', lineHeight: '1.15' }}>
+                <h2 style={{ fontSize: 'clamp(24px, 4vw, 40px)', fontWeight: 600, color: '#111827', letterSpacing: '-0.03em', maxWidth: '640px', lineHeight: '1.15' }}>
                   Build Your Global Workforce with Complete Confidence
                 </h2>
                 
@@ -2089,7 +2084,7 @@ export default function KongilaWeb() {
             {/* 13. FOOTER */}
             <footer style={{ backgroundColor: '#FFFFFF', borderTop: '1px solid var(--border-glass)', padding: '80px 24px 40px 24px' }}>
               <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(4, 1fr)', gap: '48px', marginBottom: '64px' }} className="footer-grid">
+                <div className="footer-grid" style={{ marginBottom: '64px' }}>
                   
                   {/* Left Column: Brand */}
                   <div>
@@ -2171,17 +2166,16 @@ export default function KongilaWeb() {
         {/* CLIENT SMART INTAKE FLOW (Smart Intake FIRST) */}
         {/* ====================================================================== */}
         {clientIntakeActive && (
-          <div style={{
+          <div className="intake-container" style={{
             minHeight: '100vh',
             width: '100%',
             backgroundColor: 'var(--bg-primary, #F5F7FA)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '40px max(24px, 4%)',
             boxSizing: 'border-box'
           }}>
-            <GlassCard style={{ maxWidth: '650px', width: '100%', padding: '32px' }}>
+            <GlassCard className="intake-card" style={{ maxWidth: '650px', width: '100%' }}>
             {/* Header step counter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2532,9 +2526,10 @@ export default function KongilaWeb() {
             display: 'flex',
             backgroundColor: 'var(--bg-secondary, #FFFFFF)'
           }}>
-            {/* Left Brand Panel */}
-            <div className="auth-brand-panel" style={{
+            {/* Left Brand Panel — hidden on mobile */}
+            <div className="auth-brand-panel hide-mobile" style={{
               flex: 1,
+              display: 'flex',
               backgroundColor: 'var(--kongila-dark-navy)',
               color: '#FFFFFF',
               flexDirection: 'column',
@@ -2573,12 +2568,11 @@ export default function KongilaWeb() {
             </div>
 
             {/* Right Form Panel */}
-            <div style={{
+            <div className="auth-form-panel" style={{
               flex: 1,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '40px',
               backgroundColor: 'var(--bg-secondary, #FFFFFF)'
             }}>
               <div style={{ maxWidth: '400px', width: '100%' }}>

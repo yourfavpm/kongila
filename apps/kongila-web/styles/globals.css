@@ -932,3 +932,141 @@ img { max-width: 100%; height: auto; }
   .hide-mobile { display: none !important; }
   .show-mobile { display: flex !important; }
 }
+
+/* ============================================================
+   RESPONSIVE GRIDS & LAYOUT CLASSES
+   ============================================================ */
+.hero-grid {
+  display: grid !important;
+  grid-template-columns: 1.1fr 0.9fr !important;
+  gap: 64px !important;
+  align-items: center !important;
+}
+
+.overview-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 32px !important;
+}
+
+.timeline-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: 32px !important;
+}
+
+.experience-grid-1 {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 64px !important;
+  align-items: center !important;
+}
+
+.experience-grid-2 {
+  display: grid !important;
+  grid-template-columns: 0.92fr 1.08fr !important;
+  gap: 64px !important;
+  align-items: center !important;
+}
+
+.excellence-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 32px !important;
+}
+
+.all-features-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: 24px !important;
+}
+
+.testimonial-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 32px !important;
+}
+
+.final-cta-container {
+  padding: 80px 48px !important;
+}
+
+.auth-form-panel {
+  padding: 40px !important;
+}
+
+.intake-container {
+  padding: 40px max(24px, 4%) !important;
+}
+
+.intake-card {
+  padding: 32px !important;
+}
+
+/* Tablet Overrides */
+@media (max-width: 1024px) {
+  .hero-grid {
+    grid-template-columns: 1fr !important;
+    gap: 40px !important;
+  }
+  .timeline-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 24px !important;
+  }
+  .excellence-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 24px !important;
+  }
+  .all-features-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 20px !important;
+  }
+}
+
+/* Mobile Overrides */
+@media (max-width: 768px) {
+  .hero-grid, .overview-grid, .timeline-grid, .experience-grid-1, .experience-grid-2, .excellence-grid, .all-features-grid, .testimonial-grid {
+    grid-template-columns: 1fr !important;
+    gap: 24px !important;
+  }
+  .timeline-grid .hidden-tablet {
+    display: none !important;
+  }
+  .final-cta-container {
+    padding: 40px 20px !important;
+  }
+  .auth-form-panel {
+    padding: 24px 16px !important;
+  }
+  .intake-container {
+    padding: 0 !important;
+  }
+  .intake-card {
+    padding: 24px 16px !important;
+    border-radius: 0 !important;
+    border: none !important;
+    min-height: 100vh !important;
+    box-shadow: none !important;
+  }
+}
+
+/* Footer responsive grid */
+.footer-grid {
+  display: grid;
+  grid-template-columns: 1.5fr repeat(4, 1fr);
+  gap: 48px;
+}
+
+@media (max-width: 1024px) {
+  .footer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+  }
+}
+
+@media (max-width: 768px) {
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
