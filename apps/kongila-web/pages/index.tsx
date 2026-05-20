@@ -9,6 +9,7 @@ import {
 } from '@kongila/shared-types';
 import { supabase } from '../lib/supabaseClient';
 import TalentDashboard from '../components/TalentDashboard';
+import ClientDashboard from '../components/ClientDashboard';
 
 // Custom Reusable High-Fidelity SVG Brand Logo component
 const KongilaLogo = ({ size = 32, showText = true, textColor = '#1A2340' }) => (
@@ -45,6 +46,9 @@ export default function KongilaWeb() {
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Identity & Unified Auth Progressive States
@@ -151,6 +155,9 @@ export default function KongilaWeb() {
         setRequests(dbData.clientRequests || []);
         setMatches(dbData.matches || []);
         setContracts(dbData.contracts || []);
+        setInvoices(dbData.invoices || []);
+        setMessages(dbData.messages || []);
+        setNotifications(dbData.notifications || []);
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
@@ -172,11 +179,56 @@ export default function KongilaWeb() {
   };
 
   useEffect(() => {
-    syncFromDb();
-    // Poll DB every 3 seconds to get instant updates from Admin/Remotan actions
-    const interval = setInterval(syncFromDb, 3000);
-    return () => clearInterval(interval);
+    // Restore session on page load
+    const initSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const authUser = session.user;
+        // Fetch role from public.users table
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', authUser.email)
+          .single();
+
+        const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
+        const restoredUser = {
+          id: dbUser?.id || authUser.id,
+          name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
+          email: authUser.email || '',
+          role,
+          onboardingStatus: 'complete',
+          emailVerified: true,
+          companyName: authUser.user_metadata?.company_name,
+          createdAt: authUser.created_at
+        };
+        setCurrentUser(restoredUser);
+        setAuthView(null);
+        if (role === 'talent') setActiveTab('talent');
+        else setActiveTab('client');
+      }
+      await syncFromDb();
+    };
+
+    initSession();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        setAuthView('login');
+        setActiveTab('home');
+      }
+    });
+
+    // Poll DB every 5 seconds for updates
+    const interval = setInterval(syncFromDb, 5000);
+    return () => {
+      clearInterval(interval);
+      subscription.unsubscribe();
+    };
   }, []);
+
 
   // Form Submit
   const handleIntakeSubmit = async (e: React.FormEvent) => {
@@ -299,8 +351,48 @@ export default function KongilaWeb() {
 
       if (error) throw error;
 
+      const authUserId = data.user?.id || `user_${Date.now()}`;
+
+      // Write to public.users table
+      await supabase.from('users').upsert({
+        id: authUserId,
+        email: emailInput,
+        password_hash: 'auth_managed',
+        role: authRole,
+        status: 'active',
+        email_verified: false
+      });
+
+      if (authRole === 'client') {
+        // Create organization record
+        const orgId = `org_${Date.now()}`;
+        await supabase.from('organizations').upsert({
+          id: orgId,
+          name: companyInput || `${nameInput}'s Company`,
+          created_by: authUserId
+        });
+
+        // Create client profile
+        await supabase.from('client_profiles').upsert({
+          id: `clp_${Date.now()}`,
+          user_id: authUserId,
+          organization_id: orgId,
+          position: 'Admin'
+        });
+      } else {
+        // Create talent profile placeholder
+        await supabase.from('talent_profiles').upsert({
+          id: `talent_${Date.now()}`,
+          user_id: authUserId,
+          full_name: nameInput,
+          status: 'active',
+          vetting_stage: 'Application',
+          vetting_status: 'Pending'
+        });
+      }
+
       const newUser = {
-        id: data.user?.id || `user_${Date.now()}`,
+        id: authUserId,
         name: nameInput,
         email: emailInput,
         role: authRole,
@@ -311,7 +403,6 @@ export default function KongilaWeb() {
       };
 
       setCurrentUser(newUser);
-      // Bypass email verification temporarily
       if (authRole === 'talent') {
         setAuthView('onboarding');
       } else {
@@ -342,17 +433,24 @@ export default function KongilaWeb() {
 
       if (error) throw error;
 
-      const role = data.user?.user_metadata?.role || 'talent';
-      
+      // Read the user's role from the public.users table (source of truth)
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', emailInput)
+        .single();
+
+      const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
+
       const loggedInUser = {
-        id: data.user?.id || `user_${Date.now()}`,
-        name: data.user?.user_metadata?.full_name || 'Authenticated User',
+        id: dbUser?.id || data.user?.id || `user_${Date.now()}`,
+        name: data.user?.user_metadata?.full_name || emailInput,
         email: emailInput,
-        role: role,
-        onboardingStatus: 'incomplete',
+        role,
+        onboardingStatus: 'complete',
         emailVerified: true,
         companyName: data.user?.user_metadata?.company_name,
-        createdAt: new Date().toISOString()
+        createdAt: data.user?.created_at || new Date().toISOString()
       };
 
       setCurrentUser(loggedInUser);
@@ -363,7 +461,7 @@ export default function KongilaWeb() {
       } else {
         setActiveTab('client');
       }
-      triggerBanner(`Logged in successfully!`, 'success');
+      triggerBanner(`Welcome back! Logged in successfully.`, 'success');
     } catch (error: any) {
       triggerBanner(`Login failed: ${error.message}`, 'error');
     } finally {
@@ -979,6 +1077,22 @@ export default function KongilaWeb() {
     return talents.find(t => t.email.toLowerCase() === currentUser.email.toLowerCase());
   };
 
+  const handleUpdateProfile = async (updatedProfile: any) => {
+    const updatedTalents = talents.map(t => t.id === updatedProfile.id ? updatedProfile : t);
+    setTalents(updatedTalents);
+
+    try {
+      const res = await fetch('/api/db');
+      if (res.ok) {
+        const dbData = await res.json();
+        dbData.talents = updatedTalents;
+        await saveToDb(dbData);
+      }
+    } catch (e) {
+      console.error("Failed to persist profile update", e);
+    }
+  };
+
   const handleSignOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -1034,15 +1148,15 @@ export default function KongilaWeb() {
         </div>
       )}
 
-      {/* Sidebar navigation: shown only for non-talent users, or when on non-talent tabs */}
-      {currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent') && (
+      {/* Sidebar navigation: shown only when on the master Overview Hub page */}
+      {currentUser && !authView && !clientIntakeActive && activeTab === 'home' && (
         <div className="sidebar">
           <div className="sidebar-logo">
             <KongilaLogo size={28} textColor="#0047CC" />
           </div>
           <div className="sidebar-menu">
             <div 
-              className={`menu-item ${activeTab === 'home' ? 'active' : ''}`}
+              className="menu-item active"
               onClick={() => setActiveTab('home')}
             >
               <span>🏠</span> Overview Hub
@@ -1050,7 +1164,7 @@ export default function KongilaWeb() {
 
             {currentUser.role === 'talent' && (
               <div 
-                className={`menu-item ${activeTab === 'talent' ? 'active' : ''}`}
+                className="menu-item"
                 onClick={() => setActiveTab('talent')}
               >
                 <span>👨‍💻</span> Talent Portal
@@ -1059,7 +1173,7 @@ export default function KongilaWeb() {
 
             {currentUser.role === 'client' && (
               <div 
-                className={`menu-item ${activeTab === 'client' ? 'active' : ''}`}
+                className="menu-item"
                 onClick={() => setActiveTab('client')}
               >
                 <span>💼</span> Client Portal
@@ -1091,11 +1205,11 @@ export default function KongilaWeb() {
 
       {/* Main Content Area */}
       <div className="main-content" style={{ 
-        marginLeft: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '250px' : 'auto',
-        marginRight: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '0' : 'auto',
-        maxWidth: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '1200px' : '100%',
-        width: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? 'calc(100% - 250px)' : '100%',
-        padding: (currentUser && !authView && !clientIntakeActive && !(currentUser.role === 'talent' && activeTab === 'talent')) ? '40px 48px' : '0px',
+        marginLeft: (currentUser && !authView && !clientIntakeActive && activeTab === 'home') ? '250px' : '0px',
+        marginRight: 'auto',
+        maxWidth: '100%',
+        width: (currentUser && !authView && !clientIntakeActive && activeTab === 'home') ? 'calc(100% - 250px)' : '100%',
+        padding: (currentUser && !authView && !clientIntakeActive && activeTab === 'home') ? '40px 48px' : '0px',
         transition: 'var(--transition-smooth)'
       }}>
         
@@ -3146,177 +3260,6 @@ export default function KongilaWeb() {
           </GlassCard>
         )}
 
-        {/* ====================================================================== */}
-        {/* LIMITED PENDING TALENT DASHBOARD (Shown if talent & un-vetted) */}
-        {/* ====================================================================== */}
-        {currentUser && currentUser.role === 'talent' && !authView && getCurrentTalentProfile()?.vettingStatus !== 'Vetted' && getCurrentTalentProfile()?.vettingStatus !== 'Deployed' && (
-          <div>
-            {/* Limited Cockpit Page Header */}
-            <div className="page-header">
-              <div>
-                <h1 className="page-title">Onboarding Cockpit</h1>
-                <p className="page-subtitle">Welcome, {currentUser.name}. Track application screening, complete specialized sandbox challenges.</p>
-              </div>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                {/* Debug Button to bypass Vetting sandbox! */}
-                <button 
-                  onClick={handleSimulateFullVetting}
-                  style={{
-                    background: 'linear-gradient(135deg, var(--accent-cyan), #0047CC)', 
-                    color: '#000', 
-                    fontWeight: 700, 
-                    fontSize: '12px', 
-                    borderRadius: '8px', 
-                    padding: '0 16px', 
-                    height: '40px',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Simulate Admin Approval (Vetted Profile)
-                </button>
-                <Badge text="Vetting: Pending Review" status="Blocked" />
-              </div>
-            </div>
-
-            {/* Core Pipeline grid */}
-            <div className="dashboard-grid">
-              
-              {/* Timeline Checklist */}
-              <div className="vetting-pipeline">
-                <h2 style={{ fontSize: '18px', marginBottom: '16px' }}>Vetting Progress: 7-Stage Vetting Framework</h2>
-                
-                <div className="vetting-step completed">
-                  <div className="step-num">1</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Application Screening (Grade: Verified)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>CV, portfolio, and location availability registered. Progressive EOR credentials locked.</p>
-                  </div>
-                </div>
-
-                <div className={`vetting-step ${getCurrentTalentProfile()?.vettingStatus === 'Review' ? 'completed' : 'active'}`}>
-                  <div className="step-num">2</div>
-                  <div style={{ flexGrow: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Operational Assessment Challenge</h3>
-                      {getCurrentTalentProfile()?.vettingStatus === 'Review' && (
-                        <span style={{ fontSize: '12px', color: 'var(--accent-green)', fontWeight: 700 }}>Cleared (92%)</span>
-                      )}
-                    </div>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Complete our operational simulation challenge sandbox to accelerate matching index.</p>
-                    {getCurrentTalentProfile()?.vettingStatus !== 'Review' && (
-                      <button 
-                        onClick={() => { setShowAssessment(true); setAssessmentStep(1); }}
-                        style={{
-                          background: 'rgba(0, 255, 204, 0.1)', 
-                          border: '1.5px solid var(--accent-cyan)', 
-                          borderRadius: '6px', 
-                          color: 'var(--accent-cyan)', 
-                          fontSize: '11px', 
-                          fontWeight: 700, 
-                          height: '28px', 
-                          padding: '0 12px', 
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Enter Assessment Challenge Sandbox
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className={`vetting-step ${getCurrentTalentProfile()?.vettingStatus === 'Review' ? 'active' : ''}`}>
-                  <div className="step-num">3</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Behavioural Interview Video Call</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Screening self-organization, remote communication fluency, and billing setups.</p>
-                    {getCurrentTalentProfile()?.vettingStatus === 'Review' && (
-                      <div style={{ marginTop: '8px', fontSize: '11px', padding: '6px 12px', background: 'rgba(255,204,0,0.1)', color: 'var(--accent-gold)', borderRadius: '6px', display: 'inline-block' }}>
-                        📅 Automated scheduling link will trigger via WhatsApp (+234...) within 2 hours.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="vetting-step">
-                  <div className="step-num">4</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Personality Style Mapping</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Myers-Briggs automated indexing matching compatibility within remote client teams.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step">
-                  <div className="step-num">5</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Remote Readiness Backup Audits</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Fiber uptime backing, battery/inverter capability verification, and workspace validation.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step">
-                  <div className="step-num">6</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Operational Simulation Sandbox</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Fulfilling a 1-day simulated project milestone inside our active workspace sandbox pipeline.</p>
-                  </div>
-                </div>
-
-                <div className="vetting-step">
-                  <div className="step-num">7</div>
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '4px' }}>Vetted deployable rating</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Composite grading computed (A+, A, B). NDA, contracts and payroll channels initialized.</p>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Side Panels */}
-              <div>
-                <GlassCard style={{ marginBottom: '24px' }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '12px' }}>Intake Application File</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    <div><strong>Title:</strong> {talentOnboardingData.primaryRole}</div>
-                    <div><strong>Salary Targets:</strong> ${talentOnboardingData.salaryExpectation} / mo ({talentOnboardingData.currency})</div>
-                    <div><strong>Location:</strong> {talentOnboardingData.city}, {talentOnboardingData.country} ({talentOnboardingData.timezone})</div>
-                    <div><strong>Status:</strong> Applied (Awaiting Grade)</div>
-                  </div>
-                </GlassCard>
-
-                {/* mini terminal log */}
-                <div className="agent-terminal" style={{ background: '#02070c' }}>
-                  <div className="terminal-header">
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>COMPLIANCE SYSTEM LOGS</span>
-                    <div className="terminal-dots">
-                      <div className="dot dot-red" />
-                      <div className="dot dot-yellow" />
-                      <div className="dot dot-green" />
-                    </div>
-                  </div>
-                  <div className="terminal-body" style={{ height: '160px', padding: '12px', fontSize: '11px' }}>
-                    <div className="log-entry">
-                      <span className="log-time">[13:02]</span>
-                      <span className="log-success">Profile created for {currentUser.name}.</span>
-                    </div>
-                    <div className="log-entry">
-                      <span className="log-time">[13:03]</span>
-                      <span className="log-info">[Compliance Agent] KYC EOR checks resolving...</span>
-                    </div>
-                    {getCurrentTalentProfile()?.vettingStatus === 'Review' && (
-                      <div className="log-entry">
-                        <span className="log-time">[13:10]</span>
-                        <span className="log-success">[Vetting Agent] Specialized Assessment completed. Scored 92%.</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-
-            </div>
-          </div>
-        )}
 
         {/* ====================================================================== */}
         {/* CODING ASSESSMENT SANDBOX MODAL (For Pending Talent) */}
@@ -3457,6 +3400,8 @@ export default function KongilaWeb() {
             talentProfile={getCurrentTalentProfile()}
             contracts={contracts}
             matches={matches}
+            onSignOut={handleSignOut}
+            onUpdateProfile={handleUpdateProfile}
           />
         )}
 
@@ -3464,190 +3409,89 @@ export default function KongilaWeb() {
         {/* FULL PORTALS: ACTIVE CLIENT DASHBOARD (Clients only) */}
         {/* ====================================================================== */}
         {currentUser && currentUser.role === 'client' && !authView && !clientIntakeActive && activeTab === 'client' && (
-          <div>
-            <div className="page-header">
-              <div>
-                <h1 className="page-title">Client Workspace Console</h1>
-                <p className="page-subtitle">Track intake service requests, review matched candidate profiles and e-sign EOR contracts.</p>
-              </div>
-            </div>
+          <ClientDashboard
+            currentUser={currentUser}
+            requests={requests}
+            matches={matches}
+            contracts={contracts}
+            talents={talents}
+            invoices={invoices}
+            messages={messages}
+            notifications={notifications}
+            onSignOut={handleSignOut}
+            setActiveTab={setActiveTab}
+            setClientIntakeActive={setClientIntakeActive}
+            setClientIntakeStep={setClientIntakeStep}
+            onScheduleMeeting={handleScheduleMeeting}
+            onExtendOffer={handleExtendOffer}
+            onSignContract={handleSignContract}
+            showCalendar={showCalendar}
+            setShowCalendar={setShowCalendar}
+            selectedTalent={selectedTalent}
+            setSelectedTalent={setSelectedTalent}
+            meetingTime={meetingTime}
+            setMeetingTime={setMeetingTime}
+            meetingDate={meetingDate}
+            setMeetingDate={setMeetingDate}
+            showSignModal={showSignModal}
+            setShowSignModal={setShowSignModal}
+            activeNDA={activeNDA}
+            signingContractId={signingContractId}
+            selectedRequest={selectedRequest}
+            setSelectedRequest={setSelectedRequest}
+            setInvoices={setInvoices}
+            setMessages={setMessages}
+            setNotifications={setNotifications}
+            onAddRequest={async (newReq) => {
+              const calculatedMatches = generateMatchesForRequest(newReq, talents);
+              const updatedRequests = [...requests, newReq];
+              const updatedMatches = [...matches, ...calculatedMatches];
+              
+              setRequests(updatedRequests);
+              setMatches(updatedMatches);
+              setSelectedRequest(newReq);
 
-            {/* Sub Nav */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '32px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px' }}>
-              <div 
-                style={{ padding: '8px 16px', cursor: 'pointer', fontWeight: 600, color: clientSubTab === 'requests' ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}
-                onClick={() => setClientSubTab('requests')}
-              >
-                1. Service Requests ({requests.filter(r => r.clientId === currentUser.id).length})
-              </div>
-              <div 
-                style={{ padding: '8px 16px', cursor: 'pointer', fontWeight: 600, color: clientSubTab === 'matching' ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}
-                onClick={() => setClientSubTab('matching')}
-              >
-                2. Talent Radar Matches
-              </div>
-              <div 
-                style={{ padding: '8px 16px', cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)' }}
-                onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-              >
-                + Create New Intake Request
-              </div>
-            </div>
-
-            {/* Sub View: Service Requests */}
-            {clientSubTab === 'requests' && (
-              <div>
-                <h2 style={{ fontSize: '18px', marginBottom: '16px' }}>Active Workforce Service Requests</h2>
-                {requests.filter(r => r.clientId === currentUser.id).length === 0 ? (
-                  <GlassCard style={{ padding: '40px', textAlign: 'center' }}>
-                    <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>No active workforce requests found. Complete a Talent Request to scan vetted talent.</p>
-                    <NeonButton onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}>Create Talent Request Form</NeonButton>
-                  </GlassCard>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {requests.filter(r => r.clientId === currentUser.id).map(req => (
-                      <GlassCard key={req.id}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div>
-                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '8px' }}>
-                              <h3 style={{ fontSize: '16px' }}>{req.serviceType} Request</h3>
-                              <Badge text={req.priority + ' Priority'} status={req.priority === 'High' ? 'Blocked' : 'In Progress'} />
-                              <Badge text={req.status} status={req.status} />
-                            </div>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '12px' }}>{req.roleDescription}</p>
-                            
-                            <div style={{ display: 'flex', gap: '20px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                              <div><strong>Skills Required:</strong> {req.requiredSkills.join(', ')}</div>
-                              <div><strong>Monthly Budget:</strong> {formatCurrency(req.budget)}/mo</div>
-                              <div><strong>Timezone Alignment:</strong> {req.timezone}</div>
-                            </div>
-                          </div>
-                          <div>
-                            <NeonButton onClick={() => {
-                              setSelectedRequest(req);
-                              setClientSubTab('matching');
-                            }}>
-                              View Radar Shortlists
-                            </NeonButton>
-                          </div>
-                        </div>
-                      </GlassCard>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Sub View: Matching Radar */}
-            {clientSubTab === 'matching' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                  <h2 style={{ fontSize: '18px' }}>Shortlisted Candidate Profiles</h2>
-                  <div>
-                    <label style={{ fontSize: '13px', marginRight: '8px', color: 'var(--text-muted)' }}>Active Request File:</label>
-                    <select 
-                      className="form-select" 
-                      style={{ width: '250px', display: 'inline-block' }}
-                      value={selectedRequest?.id || ''}
-                      onChange={e => {
-                        const r = requests.find(req => req.id === e.target.value);
-                        if (r) setSelectedRequest(r);
-                      }}
-                    >
-                      <option value="">-- Choose request file --</option>
-                      {requests.filter(r => r.clientId === currentUser.id).map(req => (
-                        <option key={req.id} value={req.id}>{req.serviceType} ({req.id.split('_')[1]})</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {!selectedRequest ? (
-                  <p style={{ color: 'var(--text-secondary)', textAlign: 'center', margin: '40px' }}>
-                    Select an active request from the dropdown or active list to review composite matching scores.
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    <div style={{ padding: '16px', background: 'rgba(0, 255, 204, 0.02)', border: '1px solid rgba(0, 255, 204, 0.1)', borderRadius: '10px', fontSize: '13px' }}>
-                      <strong>Active Matching Algorithm Formula:</strong> Skill Match Fit (40%) + Behaviour Fit (20%) + Personality Style (15%) + Availability Alignment (15%) + Simulation & Experience Vetting (10%).
-                    </div>
-
-                    {getMatchedTalentsForRequest().length === 0 ? (
-                      <p style={{ color: 'var(--text-secondary)' }}>No deployable candidates matching required vetting grades found. Sourcing active talent...</p>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '24px' }}>
-                        {getMatchedTalentsForRequest().map(({ talent, match }) => (
-                          <GlassCard key={talent.id} className="matching-card">
-                            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '20px' }}>
-                              <img 
-                                src={talent.avatar} 
-                                alt={talent.name} 
-                                style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover', border: `2px solid ${getGradeColor(talent.grade)}` }} 
-                              />
-                              <div style={{ flexGrow: 1 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <h3 style={{ fontSize: '18px' }}>{talent.name}</h3>
-                                  <span style={{ fontSize: '16px', fontWeight: 800, color: getGradeColor(talent.grade) }}>{talent.grade}</span>
-                                </div>
-                                <div style={{ fontSize: '13px', color: 'var(--accent-cyan)', fontWeight: 600 }}>{talent.title}</div>
-                                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{talent.timezone} • {talent.experienceYears}y exp</div>
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '10px' }}>
-                              <div>
-                                <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>MATCH PERCENTAGE</div>
-                                <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--accent-green)' }}>{match.score}% MATCH</div>
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', textAlign: 'right' }}>
-                                <div>Skills: {match.breakdown.skillFit}%</div>
-                                <div>Behaviour: {match.breakdown.behaviorFit}%</div>
-                                <div>Availability: {match.breakdown.availability}%</div>
-                              </div>
-                            </div>
-
-                            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', height: '40px', overflow: 'hidden' }}>
-                              {talent.bio}
-                            </p>
-
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '24px' }}>
-                              {talent.tags.map(t => (
-                                <Badge key={t} text={t} status={t} />
-                              ))}
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                              {match.status === 'Shortlisted' ? (
-                                <>
-                                  <NeonButton variant="secondary" onClick={() => {
-                                    setSelectedTalent(talent);
-                                    setShowCalendar(true);
-                                  }}>
-                                    Schedule Interview
-                                  </NeonButton>
-                                  <NeonButton onClick={() => handleExtendOffer(talent)}>
-                                    Hire & Deploy
-                                  </NeonButton>
-                                </>
-                              ) : (
-                                <div style={{ gridColumn: 'span 2', textAlign: 'center' }}>
-                                  <Badge text={match.status} status={match.status} />
-                                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
-                                    {match.status === 'Interview Scheduled' && `Vetting Interview booked for ${meetingDate} at ${meetingTime}`}
-                                    {match.status === 'Offer Extended' && 'Offer agreement generated. Open Talent NDA to sign.'}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </GlassCard>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+              const updatedDb = {
+                talents,
+                clientRequests: updatedRequests,
+                matches: updatedMatches,
+                tasks: [],
+                contracts,
+                notifications: [
+                  {
+                    id: `notif_${Date.now()}`,
+                    userId: currentUser.id,
+                    title: 'New Service Request Created',
+                    message: `Created request matching your intake: ${newReq.roleDescription || newReq.title}. Scanning vetting databases.`,
+                    read: false,
+                    createdAt: new Date().toISOString()
+                  },
+                  ...notifications
+                ],
+                auditLogs: [
+                  {
+                    id: `audit_${Date.now()}`,
+                    actor: currentUser.name,
+                    action: 'Service Request Intake Completed',
+                    details: `Service Request generated: ${newReq.roleDescription || newReq.title}.`,
+                    timestamp: new Date().toISOString()
+                  }
+                ],
+                agentLogs: [
+                  {
+                    id: `alog_client_${Date.now()}`,
+                    agentName: 'Context Agent',
+                    message: `Talent vetting session initiated for role: ${newReq.roleDescription || newReq.title}.`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'success'
+                  }
+                ]
+              };
+              
+              await saveToDb(updatedDb);
+              triggerBanner('New Service Request created! Matchmaker engine initialized.', 'success');
+            }}
+          />
         )}
 
       </div>
@@ -3655,67 +3499,7 @@ export default function KongilaWeb() {
       {/* ====================================================================== */}
       {/* MOCK OVERLAYS: MODAL FOR INTERVIEW SCHEDULER & CONTRACT E-SIGNATURES */}
       {/* ====================================================================== */}
-      {showCalendar && selectedTalent && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '450px', padding: '24px' }}>
-            <h2 style={{ fontSize: '20px', marginBottom: '16px' }}>Book Video Interview</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
-              Scheduling operational interview call with <strong>{selectedTalent.name}</strong>. Workspace timezone conversions resolved automatically.
-            </p>
 
-            <div className="form-group">
-              <label className="form-label">Choose Date</label>
-              <input 
-                type="date" 
-                className="form-input" 
-                value={meetingDate}
-                onChange={e => setMeetingDate(e.target.value)}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Target Time ({selectedTalent.timezone})</label>
-              <input 
-                type="time" 
-                className="form-input" 
-                value={meetingTime}
-                onChange={e => setMeetingTime(e.target.value)}
-              />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
-              <NeonButton variant="ghost" onClick={() => setShowCalendar(false)}>Cancel</NeonButton>
-              <NeonButton onClick={handleScheduleMeeting}>Schedule & Link Zoom</NeonButton>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showSignModal && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ padding: '32px' }}>
-            <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>Secure Onboarding Portal</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Employer of Record (EOR) Master Employment Contracts and compliance signatures.</p>
-
-            <div className="contract-paper">
-              {activeNDA}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <input type="checkbox" id="signcheck" style={{ width: '18px', height: '18px', cursor: 'pointer' }} defaultChecked />
-                <label htmlFor="signcheck" style={{ fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                  I verify my identity and sign all mutual NDA policies.
-                </label>
-              </div>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <NeonButton variant="ghost" onClick={() => setShowSignModal(false)}>Refuse</NeonButton>
-                <NeonButton onClick={handleSignContract}>Sign and Deploy Contract</NeonButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );
