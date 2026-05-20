@@ -198,6 +198,9 @@ importers:
       '@kongila/shared-types':
         specifier: workspace:*
         version: link:../shared-types
+      '@supabase/supabase-js':
+        specifier: ^2.105.4
+        version: 2.105.4
 
   packages/matching-engine: {}
 

@@ -35,7 +35,220 @@
         "Strong Communicator",
         "Independent Worker"
       ],
-      "bio": "Elite developer specializing in React and distributed Node.js backends. Passionate about writing scalable, clean code."
+      "bio": "Elite developer specializing in React and distributed Node.js backends. Passionate about writing scalable, clean code.",
+      "documents": [
+        {
+          "id": "doc_chidi_cv",
+          "name": "Professional_CV_2024.pdf",
+          "category": "Professional (CV, Portfolio)",
+          "fileSize": "1.2 MB",
+          "uploadedAt": "Uploaded 2 days ago",
+          "status": "Vetted"
+        },
+        {
+          "id": "doc_chidi_portfolio",
+          "name": "UX_Case_Studies.pdf",
+          "category": "Professional (CV, Portfolio)",
+          "fileSize": "18.5 MB",
+          "uploadedAt": "Updated 1 week ago",
+          "status": "Vetted"
+        },
+        {
+          "id": "doc_chidi_aws",
+          "name": "AWS_Devops_cert_Assoc.png",
+          "category": "Certifications",
+          "fileSize": "4.8 MB",
+          "uploadedAt": "Verified Jun 2023",
+          "status": "Verified",
+          "certificateImage": "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=150"
+        },
+        {
+          "id": "doc_chidi_nda",
+          "name": "Non-Disclosure Agreement (NDA)",
+          "category": "Identity & Legal",
+          "description": "Confidentiality and proprietary rights for Project Orion.",
+          "fileSize": "1.5 MB",
+          "uploadedAt": "Added 3 days ago",
+          "status": "pending_signature",
+          "dueDate": "Due in 3 days"
+        },
+        {
+          "id": "doc_chidi_ip",
+          "name": "Intellectual Property Agreement",
+          "category": "Identity & Legal",
+          "description": "Master assignment of inventions and copyright.",
+          "fileSize": "2.1 MB",
+          "uploadedAt": "Dec 12, 2023",
+          "status": "signed",
+          "signedAt": "Dec 12, 2023"
+        },
+        {
+          "id": "doc_chidi_ethics",
+          "name": "Code of Ethics & Conduct",
+          "category": "Identity & Legal",
+          "description": "Standard corporate behavior and anti-corruption policy.",
+          "fileSize": "1.1 MB",
+          "uploadedAt": "Jan 05, 2026",
+          "status": "under_review"
+        },
+        {
+          "id": "doc_chidi_contractor",
+          "name": "Independent Contractor Agreement",
+          "category": "Identity & Legal",
+          "description": "General service provision terms and payout schedules.",
+          "fileSize": "3.4 MB",
+          "uploadedAt": "Mar 30, 2023",
+          "status": "signed",
+          "signedAt": "Mar 30, 2023"
+        },
+        {
+          "id": "doc_chidi_dpa",
+          "name": "Data Privacy Addendum (DPA)",
+          "category": "Identity & Legal",
+          "description": "Compliance with GDPR and regional data protection laws.",
+          "fileSize": "1.8 MB",
+          "uploadedAt": "Added 2 hours ago",
+          "status": "pending_signature",
+          "dueDate": "Added 2 hours ago"
+        }
+      ],
+      "supportTickets": [
+        {
+          "id": "TK-88210",
+          "subject": "Urgent - API Timeout on Webhooks",
+          "category": "Technical Support",
+          "status": "Open",
+          "priority": "Urgent",
+          "createdAt": "Oct 28, 2023",
+          "lastActivity": "2 mins ago",
+          "assignedAgent": {
+            "name": "Support System",
+            "role": "Automated Bot",
+            "avatar": ""
+          },
+          "messages": [
+            {
+              "id": "msg_1",
+              "sender": {
+                "name": "Chidi Anya",
+                "role": "Talent",
+                "isSupport": false
+              },
+              "text": "I am getting continuous 504 gateway timeouts when our webhook endpoint is triggered by kongila integration. Please check.",
+              "timestamp": "10:40 AM"
+            }
+          ]
+        },
+        {
+          "id": "TK-67842",
+          "subject": "Issues with International Wire Transfer - Q3 Earnings",
+          "category": "Payment Issues",
+          "status": "In Progress",
+          "priority": "High",
+          "createdAt": "Oct 24, 2023",
+          "lastActivity": "5 hours ago",
+          "assignedAgent": {
+            "name": "Sarah Kong",
+            "role": "Global Support Lead",
+            "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80"
+          },
+          "messages": [
+            {
+              "id": "msg_2_1",
+              "sender": {
+                "name": "Chidi Anya",
+                "role": "Talent",
+                "isSupport": false
+              },
+              "text": "Hello, I'm having trouble receiving my payout for the last project (Project: Nebula). The status says 'Sent' in the dashboard, but I haven't seen anything in my account. I checked with my bank and they don't see any pending transfers.",
+              "timestamp": "10:12 AM"
+            },
+            {
+              "id": "msg_2_2",
+              "sender": {
+                "name": "Sarah Kong",
+                "role": "Global Support Lead",
+                "isSupport": true,
+                "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80"
+              },
+              "text": "Hi Chidi, I've looked into this for you. It seems there was a slight delay in the intermediary bank processing for international wires this week. I've initiated a trace on the transaction. Could you please confirm if your SWIFT/BIC code has changed recently?",
+              "timestamp": "10:45 AM"
+            }
+          ]
+        },
+        {
+          "id": "TK-57115",
+          "subject": "Profile Badge Verification",
+          "category": "Verification",
+          "status": "Resolved",
+          "priority": "Medium",
+          "createdAt": "Oct 22, 2023",
+          "lastActivity": "2 days ago",
+          "assignedAgent": {
+            "name": "Vetting Team",
+            "role": "Compliance Lead",
+            "avatar": ""
+          },
+          "messages": [
+            {
+              "id": "msg_3_1",
+              "sender": {
+                "name": "Chidi Anya",
+                "role": "Talent",
+                "isSupport": false
+              },
+              "text": "Could you please check if my AWS and Scrum Master badges are verified? I uploaded the certificates.",
+              "timestamp": "9:00 AM"
+            },
+            {
+              "id": "msg_3_2",
+              "sender": {
+                "name": "Vetting Team",
+                "role": "Compliance Lead",
+                "isSupport": true
+              },
+              "text": "Hi Chidi, we have verified both certificates. The badges are now live on your profile.",
+              "timestamp": "2:15 PM"
+            }
+          ]
+        },
+        {
+          "id": "TK-28301",
+          "subject": "New User Onboarding Guide",
+          "category": "Guidance",
+          "status": "Resolved",
+          "priority": "Low",
+          "createdAt": "Oct 15, 2023",
+          "lastActivity": "1 week ago",
+          "assignedAgent": {
+            "name": "Onboarding Bot",
+            "role": "System Guide",
+            "avatar": ""
+          },
+          "messages": [
+            {
+              "id": "msg_4_1",
+              "sender": {
+                "name": "Chidi Anya",
+                "role": "Talent",
+                "isSupport": false
+              },
+              "text": "Where can I find details about remote retainer agreements?",
+              "timestamp": "11:00 AM"
+            },
+            {
+              "id": "msg_4_2",
+              "sender": {
+                "name": "Onboarding Bot",
+                "role": "System Guide",
+                "isSupport": true
+              },
+              "text": "Welcome to Kongila! You can view all agreement guides in the resources pane or in your documents tab.",
+              "timestamp": "11:01 AM"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "talent_fatoumata",
@@ -70,7 +283,25 @@
         "Strong Communicator",
         "Attention to Detail"
       ],
-      "bio": "Visual designer dedicated to creating beautiful, human-centered web and mobile experiences."
+      "bio": "Visual designer dedicated to creating beautiful, human-centered web and mobile experiences.",
+      "documents": [
+        {
+          "id": "doc_fatoumata_cv",
+          "name": "Design_Portfolio_Fatoumata.pdf",
+          "category": "Professional (CV, Portfolio)",
+          "fileSize": "4.2 MB",
+          "uploadedAt": "Uploaded 3 days ago",
+          "status": "Vetted"
+        },
+        {
+          "id": "doc_fatoumata_nda",
+          "name": "Mutual_NDA_Nexus.pdf",
+          "category": "Identity & Legal",
+          "fileSize": "1.4 MB",
+          "uploadedAt": "Signed Feb 2024",
+          "status": "Verified"
+        }
+      ]
     },
     {
       "id": "talent_kofi",
@@ -162,231 +393,431 @@
       "experienceYears": 2,
       "availability": 100,
       "vettingStage": "Skill Assessment",
-      "vettingStatus": "Vetted",
+      "vettingStatus": "Review",
       "vettingScores": {
         "technical": 72,
-        "workSimulation": 100,
-        "behavioral": 100,
-        "communication": 88,
+        "behavioral": 80,
         "personality": 78,
-        "remoteReadiness": 100,
+        "remoteReadiness": 85,
+        "workSimulation": 70,
+        "communication": 88,
         "experience": 50
       },
-      "grade": "A+",
+      "grade": "B",
       "tags": [
         "Needs Supervision",
         "Strong Learner"
       ],
       "bio": "Motivated React developer eager to learn and grow in a fast-paced remote product team."
-    },
-    {
-      "id": "talent_1779109177083",
-      "name": "Benita Eze",
-      "email": "benita.dva@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Full-Stack Engineer",
-      "skills": [
-        "React",
-        "Node.js",
-        "TypeScript",
-        "PostgreSQL"
-      ],
-      "timezone": "GMT+1",
-      "salaryExpectation": 4500,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
-      "vettingScores": {
-        "technical": 94,
-        "behavioral": 88,
-        "personality": 90,
-        "remoteReadiness": 95,
-        "workSimulation": 92,
-        "communication": 90,
-        "experience": 85
-      },
-      "grade": "A+",
-      "tags": [
-        "Vetted Professional",
-        "High speed Fiber",
-        "Independent Worker"
-      ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
-    },
-    {
-      "id": "talent_1779126674506",
-      "name": "Benita Eze",
-      "email": "benita.dva@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [
-        "Operations Management",
-        "Logistics",
-        "Team Leadership",
-        "Process Optimization"
-      ],
-      "timezone": "GMT+1",
-      "salaryExpectation": 4500,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
-      "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
-      },
-      "grade": "B",
-      "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
-      ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved."
     }
   ],
-  "clientRequests": [
-    {
-      "id": "req_1779118005107",
-      "clientId": "user_1779117998574",
-      "clientName": "Oluwadamilola Olukunle (Taskive Tech)",
-      "serviceType": "Hire Talent",
-      "roleDescription": "Senior Operations Specialist to optimize enterprise processes.",
-      "requiredSkills": [
-        "React",
-        "Node.js",
-        "TypeScript",
-        "PostgreSQL"
-      ],
-      "duration": "6 Months",
-      "commitmentLevel": "Full Time (40h/week)",
-      "numberOfHires": 1,
-      "timezone": "GMT+1 (Lagos / London)",
-      "startDate": "2026-05-25",
-      "budget": 4500,
-      "priority": "High",
-      "status": "New Request",
-      "createdAt": "2026-05-18T15:26:45.107Z"
-    }
-  ],
-  "matches": [
-    {
-      "id": "match_1779118005107_chidi",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_chidi",
-      "score": 95,
-      "breakdown": {
-        "skillFit": 100,
-        "behaviorFit": 88,
-        "personalityFit": 90,
-        "availability": 100,
-        "pastPerformance": 90
-      },
-      "status": "Applied"
-    },
-    {
-      "id": "match_1779118005107_1779109177083",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_1779109177083",
-      "score": 95,
-      "breakdown": {
-        "skillFit": 100,
-        "behaviorFit": 88,
-        "personalityFit": 90,
-        "availability": 100,
-        "pastPerformance": 90
-      },
-      "status": "Applied"
-    },
-    {
-      "id": "match_1779118005107_amina",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_amina",
-      "score": 65,
-      "breakdown": {
-        "skillFit": 25,
-        "behaviorFit": 100,
-        "personalityFit": 78,
-        "availability": 100,
-        "pastPerformance": 85
-      },
-      "status": "Applied"
-    },
-    {
-      "id": "match_1779118005107_zola",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_zola",
-      "score": 57,
-      "breakdown": {
-        "skillFit": 0,
-        "behaviorFit": 95,
-        "personalityFit": 92,
-        "availability": 100,
-        "pastPerformance": 89
-      },
-      "status": "Applied"
-    },
-    {
-      "id": "match_1779118005107_fatoumata",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_fatoumata",
-      "score": 55,
-      "breakdown": {
-        "skillFit": 0,
-        "behaviorFit": 92,
-        "personalityFit": 85,
-        "availability": 100,
-        "pastPerformance": 86
-      },
-      "status": "Applied"
-    },
-    {
-      "id": "match_1779118005107_kofi",
-      "requestId": "req_1779118005107",
-      "talentId": "talent_kofi",
-      "score": 52,
-      "breakdown": {
-        "skillFit": 0,
-        "behaviorFit": 85,
-        "personalityFit": 80,
-        "availability": 90,
-        "pastPerformance": 95
-      },
-      "status": "Applied"
-    }
-  ],
+  "clientRequests": [],
+  "matches": [],
   "tasks": [],
-  "contracts": [],
-  "notifications": [
+  "contracts": [
     {
-      "id": "notif_1779126674506",
-      "userId": "talent_1779126674506",
-      "title": "Application Intake Submitted",
-      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
-      "read": false,
-      "createdAt": "2026-05-18T17:51:14.506Z"
+      "id": "KNG-FIN-2024-883",
+      "matchId": "match_chidi",
+      "clientId": "client_horizon",
+      "clientName": "Horizon Fintech",
+      "talentId": "talent_chidi",
+      "talentName": "Chidi Anya",
+      "role": "Senior UI Designer",
+      "salary": 6400,
+      "startDate": "Jan 12, 2024",
+      "status": "Signed",
+      "signedAt": "2024-01-12T10:00:00.000Z",
+      "rateType": "Hourly",
+      "rateAmount": 120,
+      "totalEarned": 54240,
+      "invoicedBalance": 12450,
+      "nextPayout": 6400,
+      "nextPayoutDate": "Friday, May 24",
+      "endDate": "Dec 21, 2024",
+      "engagementModel": "Remote / Full-time Retainer",
+      "rating": 5,
+      "qualityOfWork": 4.9,
+      "communication": 4.8,
+      "timeliness": 4.9
+    },
+    {
+      "id": "KNG-HEA-2023-735",
+      "matchId": "match_fatoumata",
+      "clientId": "client_nexus",
+      "clientName": "Nexus Health",
+      "talentId": "talent_fatoumata",
+      "talentName": "Fatoumata Diallo",
+      "role": "Lead Product Designer",
+      "salary": 5800,
+      "startDate": "Mar 15, 2023",
+      "status": "Signed",
+      "signedAt": "2023-03-15T09:30:00.000Z",
+      "rateType": "Monthly",
+      "rateAmount": 5800,
+      "totalEarned": 42800,
+      "invoicedBalance": 8200,
+      "nextPayout": 5800,
+      "nextPayoutDate": "Friday, May 24",
+      "endDate": "Dec 15, 2024",
+      "engagementModel": "Remote / Hybrid (Dakar)",
+      "rating": 5,
+      "qualityOfWork": 5,
+      "communication": 4.9,
+      "timeliness": 4.8
     }
   ],
-  "auditLogs": [
-    {
-      "id": "audit_1779126674506",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-18T17:51:14.506Z"
-    }
-  ],
+  "notifications": [],
+  "auditLogs": [],
   "agentLogs": [
     {
-      "id": "alog_talent_1779126674506",
-      "agentName": "Compliance Agent",
-      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
-      "timestamp": "18:51:14",
+      "id": "alog_1",
+      "agentName": "Context Agent",
+      "message": "System monitoring initialized. Tracking 5 vetted talent files.",
+      "timestamp": "11:26:09 AM",
       "type": "info"
+    },
+    {
+      "id": "alog_2",
+      "agentName": "Workflow Agent",
+      "message": "Work execution hooks registered. Active status listener loaded.",
+      "timestamp": "11:26:09 AM",
+      "type": "info"
+    }
+  ],
+  "users": [
+    {
+      "id": "usr_chidi",
+      "name": "Chidi Anya",
+      "email": "chidi.anya@kongila.dev",
+      "role": "talent",
+      "platform_access": [
+        "kongila",
+        "remotan"
+      ]
+    },
+    {
+      "id": "usr_fatoumata",
+      "name": "Fatoumata Diallo",
+      "email": "fatoumata.diallo@kongila.dev",
+      "role": "talent",
+      "platform_access": [
+        "kongila",
+        "remotan"
+      ]
+    },
+    {
+      "id": "usr_horizon",
+      "name": "Horizon Fintech Admin",
+      "email": "billing@horizon.com",
+      "role": "client",
+      "platform_access": [
+        "kongila"
+      ]
+    },
+    {
+      "id": "usr_admin",
+      "name": "System Admin",
+      "email": "admin@kongila.com",
+      "role": "admin",
+      "platform_access": [
+        "kongila",
+        "admin"
+      ]
+    }
+  ],
+  "organizations": [
+    {
+      "id": "client_horizon",
+      "name": "Horizon Fintech",
+      "subscription_type": "Enterprise"
+    },
+    {
+      "id": "client_nexus",
+      "name": "Nexus Health",
+      "subscription_type": "Basic"
+    }
+  ],
+  "clientProfiles": [
+    {
+      "id": "clp_horizon",
+      "userId": "usr_horizon",
+      "organizationId": "client_horizon",
+      "position": "VP of Engineering",
+      "phone": "+1 (555) 019-2834"
+    }
+  ],
+  "skills": [
+    {
+      "id": "skl_react",
+      "name": "React"
+    },
+    {
+      "id": "skl_node",
+      "name": "Node.js"
+    },
+    {
+      "id": "skl_ts",
+      "name": "TypeScript"
+    },
+    {
+      "id": "skl_figma",
+      "name": "Figma"
+    },
+    {
+      "id": "skl_aws",
+      "name": "AWS"
+    }
+  ],
+  "talentSkills": [
+    {
+      "id": "tsk_chidi_react",
+      "talentId": "talent_chidi",
+      "skillId": "skl_react",
+      "level": "expert"
+    },
+    {
+      "id": "tsk_chidi_node",
+      "talentId": "talent_chidi",
+      "skillId": "skl_node",
+      "level": "expert"
+    },
+    {
+      "id": "tsk_fatoumata_figma",
+      "talentId": "talent_fatoumata",
+      "skillId": "skl_figma",
+      "level": "expert"
+    }
+  ],
+  "documents": [
+    {
+      "id": "doc_chidi_cv",
+      "userId": "usr_chidi",
+      "name": "Professional_CV_2024.pdf",
+      "type": "CV",
+      "fileSize": "1.2 MB",
+      "status": "vetted",
+      "uploadedAt": "2024-05-17T10:00:00.000Z"
+    },
+    {
+      "id": "doc_chidi_portfolio",
+      "userId": "usr_chidi",
+      "name": "UX_Case_Studies.pdf",
+      "type": "portfolio",
+      "fileSize": "18.5 MB",
+      "status": "vetted",
+      "uploadedAt": "2024-05-12T10:00:00.000Z"
+    },
+    {
+      "id": "doc_chidi_aws",
+      "userId": "usr_chidi",
+      "name": "AWS_Devops_cert_Assoc.png",
+      "type": "certification",
+      "fileSize": "4.8 MB",
+      "status": "verified",
+      "certificateImage": "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=150",
+      "uploadedAt": "2023-06-15T10:00:00.000Z"
+    },
+    {
+      "id": "doc_chidi_nda",
+      "userId": "usr_chidi",
+      "name": "Non-Disclosure Agreement (NDA)",
+      "type": "NDA",
+      "fileSize": "1.5 MB",
+      "status": "pending_signature",
+      "uploadedAt": "2026-05-16T10:00:00.000Z",
+      "description": "Confidentiality and proprietary rights for Project Orion.",
+      "dueDate": "Due in 3 days"
+    },
+    {
+      "id": "doc_chidi_ip",
+      "userId": "usr_chidi",
+      "name": "Intellectual Property Agreement",
+      "type": "agreement",
+      "fileSize": "2.1 MB",
+      "status": "signed",
+      "uploadedAt": "2023-12-12T10:00:00.000Z",
+      "description": "Master assignment of inventions and copyright.",
+      "signedAt": "Dec 12, 2023"
+    },
+    {
+      "id": "doc_chidi_ethics",
+      "userId": "usr_chidi",
+      "name": "Code of Ethics & Conduct",
+      "type": "IT_Ethics_Policy",
+      "fileSize": "1.1 MB",
+      "status": "under_review",
+      "uploadedAt": "2026-01-05T10:00:00.000Z",
+      "description": "Standard corporate behavior and anti-corruption policy."
+    },
+    {
+      "id": "doc_chidi_contractor",
+      "userId": "usr_chidi",
+      "name": "Independent Contractor Agreement",
+      "type": "agreement",
+      "fileSize": "3.4 MB",
+      "status": "signed",
+      "uploadedAt": "2023-03-30T10:00:00.000Z",
+      "description": "General service provision terms and payout schedules.",
+      "signedAt": "Mar 30, 2023"
+    },
+    {
+      "id": "doc_chidi_dpa",
+      "userId": "usr_chidi",
+      "name": "Data Privacy Addendum (DPA)",
+      "type": "agreement",
+      "fileSize": "1.8 MB",
+      "status": "pending_signature",
+      "uploadedAt": "2026-05-19T08:00:00.000Z",
+      "description": "Compliance with GDPR and regional data protection laws.",
+      "dueDate": "Added 2 hours ago"
+    }
+  ],
+  "projects": [
+    {
+      "id": "project_general",
+      "clientId": "client_horizon",
+      "name": "General Onboarding",
+      "description": "Initial onboarding orientation projects.",
+      "startDate": "2024-01-01",
+      "endDate": "2024-12-31",
+      "status": "active"
+    },
+    {
+      "id": "project_nebula",
+      "clientId": "client_horizon",
+      "name": "Project Nebula",
+      "description": "Core ledger database service development.",
+      "startDate": "2024-02-01",
+      "endDate": "2024-11-30",
+      "status": "active"
+    }
+  ],
+  "assignments": [
+    {
+      "id": "asg_chidi_nebula",
+      "talentId": "talent_chidi",
+      "projectId": "project_nebula",
+      "contractId": "KNG-FIN-2024-883",
+      "role": "Senior Full-Stack Developer",
+      "startDate": "2024-01-12",
+      "endDate": "2024-12-21",
+      "status": "active"
+    }
+  ],
+  "invoices": [
+    {
+      "id": "inv_horizon_may",
+      "clientId": "client_horizon",
+      "amount": 12450,
+      "status": "sent",
+      "dueDate": "2026-05-31"
+    }
+  ],
+  "payments": [
+    {
+      "id": "pmt_horizon_april",
+      "invoiceId": "inv_horizon_may",
+      "amount": 12450,
+      "paymentMethod": "ACH Bank Wire",
+      "status": "paid",
+      "paidAt": "2026-05-01T15:00:00.000Z"
+    }
+  ],
+  "talentPayouts": [
+    {
+      "id": "pay_chidi_may",
+      "talentId": "talent_chidi",
+      "contractId": "KNG-FIN-2024-883",
+      "amount": 5800,
+      "status": "paid",
+      "paidAt": "2026-05-15T12:00:00.000Z"
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_chidi_admin",
+      "senderId": "usr_admin",
+      "receiverId": "usr_chidi",
+      "content": "Welcome to Kongila talent network! Let us know if you need help setting up billing.",
+      "timestamp": "2026-05-18T09:00:00.000Z",
+      "readStatus": true
+    }
+  ],
+  "roles": [],
+  "userRoles": [],
+  "supportTickets": [
+    {
+      "id": "TK-88210",
+      "talentId": "talent_chidi",
+      "subject": "Urgent - API Timeout on Webhooks",
+      "category": "Technical Support",
+      "status": "Open",
+      "priority": "Urgent",
+      "createdAt": "Oct 28, 2023",
+      "lastActivity": "2 mins ago"
+    },
+    {
+      "id": "TK-67842",
+      "talentId": "talent_chidi",
+      "subject": "Issues with International Wire Transfer - Q3 Earnings",
+      "category": "Payment Issues",
+      "status": "In Progress",
+      "priority": "High",
+      "createdAt": "Oct 24, 2023",
+      "lastActivity": "5 hours ago"
+    },
+    {
+      "id": "TK-57115",
+      "talentId": "talent_chidi",
+      "subject": "Profile Badge Verification",
+      "category": "Verification",
+      "status": "Resolved",
+      "priority": "Medium",
+      "createdAt": "Oct 22, 2023",
+      "lastActivity": "2 days ago"
+    },
+    {
+      "id": "TK-28301",
+      "talentId": "talent_chidi",
+      "subject": "New User Onboarding Guide",
+      "category": "Guidance",
+      "status": "Resolved",
+      "priority": "Low",
+      "createdAt": "Oct 15, 2023",
+      "lastActivity": "1 week ago"
+    }
+  ],
+  "supportMessages": [
+    {
+      "id": "msg_1",
+      "ticketId": "TK-88210",
+      "senderName": "Chidi Anya",
+      "senderRole": "Talent",
+      "isSupport": false,
+      "text": "I am getting continuous 504 gateway timeouts when our webhook endpoint is triggered by kongila integration. Please check.",
+      "timestamp": "10:40 AM",
+      "createdAt": "2023-10-28T10:40:00.000Z"
+    },
+    {
+      "id": "msg_2_1",
+      "ticketId": "TK-67842",
+      "senderName": "Chidi Anya",
+      "senderRole": "Talent",
+      "isSupport": false,
+      "text": "Hello, I'm having trouble receiving my payout for the last project (Project: Nebula). The status says 'Sent' in the dashboard, but I haven't seen anything in my account. I checked with my bank and they don't see any pending transfers.",
+      "timestamp": "10:12 AM",
+      "createdAt": "2023-10-24T10:12:00.000Z"
+    },
+    {
+      "id": "msg_2_2",
+      "ticketId": "TK-67842",
+      "senderName": "Sarah Kong",
+      "senderRole": "Global Support Lead",
+      "isSupport": true,
+      "avatarUrl": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80",
+      "text": "Hi Chidi, I've looked into this for you. It seems there was a slight delay in the intermediary bank processing for international wires this week. I've initiated a trace on the transaction. Could you please confirm if your SWIFT/BIC code has changed recently?",
+      "timestamp": "10:45 AM",
+      "createdAt": "2023-10-24T10:45:00.000Z"
     }
   ]
 }
