@@ -55,6 +55,8 @@ export interface TalentProfile {
   grade: CandidateGrade;
   tags: string[];
   bio: string;
+  documents?: any[];
+  supportTickets?: any[];
 }
 
 export type ServiceType = 'Hire Talent' | 'Outsource Talent' | 'Managed Workforce' | 'Project Execution';
@@ -158,3 +160,119 @@ export interface AgentLog {
   timestamp: string;
   type: 'info' | 'success' | 'warning' | 'error';
 }
+
+export interface ClientProfile {
+  id: string;
+  userId: string;
+  organizationId: string;
+  position: string;
+  phone: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+}
+
+export interface TalentSkill {
+  id: string;
+  talentId: string;
+  skillId: string;
+  level: 'beginner' | 'intermediate' | 'expert';
+}
+
+export interface Document {
+  id: string;
+  userId: string;
+  name: string;
+  type: string;
+  fileUrl?: string;
+  fileSize?: string;
+  status: string;
+  certificateImage?: string;
+  uploadedAt: string;
+  description?: string;
+  signedAt?: string;
+  dueDate?: string;
+  needsSignature?: boolean;
+}
+
+export interface Project {
+  id: string;
+  clientId: string;
+  name: string;
+  description: string;
+  startDate: string;
+  endDate: string;
+  status: 'active' | 'completed' | 'paused';
+}
+
+export interface Assignment {
+  id: string;
+  talentId: string;
+  projectId?: string;
+  contractId: string;
+  role: string;
+  startDate: string;
+  endDate: string;
+  status: 'active' | 'completed' | 'paused';
+}
+
+export interface Invoice {
+  id: string;
+  clientId: string;
+  amount: number;
+  status: 'draft' | 'sent' | 'paid' | 'overdue';
+  dueDate: string;
+}
+
+export interface Payment {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  paymentMethod: string;
+  status: 'pending' | 'paid' | 'failed';
+  paidAt?: string;
+}
+
+export interface TalentPayout {
+  id: string;
+  talentId: string;
+  contractId: string;
+  amount: number;
+  status: 'pending' | 'paid';
+  paidAt?: string;
+}
+
+export interface Message {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  content: string;
+  timestamp: string;
+  readStatus: boolean;
+}
+
+export interface SupportTicket {
+  id: string;
+  talentId: string;
+  subject: string;
+  category: 'Payment Issues' | 'Technical Support' | 'Verification' | 'Guidance';
+  status: 'Open' | 'In Progress' | 'Resolved';
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent';
+  createdAt: string;
+  lastActivity: string;
+}
+
+export interface SupportMessage {
+  id: string;
+  ticketId: string;
+  senderName: string;
+  senderRole: string;
+  isSupport: boolean;
+  avatarUrl?: string;
+  text: string;
+  timestamp: string;
+  createdAt: string;
+}
+

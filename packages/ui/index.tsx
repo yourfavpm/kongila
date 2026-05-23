@@ -14,13 +14,13 @@ export const GlassCard: React.FC<GlassCardProps> = ({ children, className = '', 
       className={`glass-card ${className}`} 
       onClick={onClick}
       style={{
-        background: 'rgba(255, 255, 255, 0.03)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
+        background: 'var(--bg-secondary, #FFFFFF)',
+        backdropFilter: 'blur(16px)',
+        border: '1px solid var(--border-glass, #DDE2EC)',
         borderRadius: '16px',
         padding: '24px',
-        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-        transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+        boxShadow: '0px 1px 3px rgba(0,0,0,0.02), 0px 8px 24px rgba(0,0,0,0.04)',
+        transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease, box-shadow 0.2s ease',
         cursor: onClick ? 'pointer' : 'default',
         position: 'relative',
         overflow: 'hidden',
@@ -52,8 +52,8 @@ export const Badge: React.FC<BadgeProps> = ({ text, status }) => {
         backgroundColor: styles.bg,
         color: styles.color,
         border: `1px solid ${styles.color}22`,
-        textShadow: `0 0 8px ${styles.color}33`,
-        boxShadow: `0 0 10px ${styles.color}11`,
+        textShadow: 'none',
+        boxShadow: 'none',
         letterSpacing: '0.5px'
       }}
     >
@@ -78,36 +78,36 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
     switch (variant) {
       case 'secondary':
         return {
-          bg: 'rgba(255, 255, 255, 0.03)',
-          border: 'rgba(255, 255, 255, 0.1)',
-          hoverBg: 'rgba(255, 255, 255, 0.08)',
-          color: '#ffffff',
+          bg: 'var(--bg-secondary, #FFFFFF)',
+          border: 'var(--border-glass, #DDE2EC)',
+          hoverBg: 'var(--bg-tertiary, #F5F7FA)',
+          color: 'var(--text-primary, #1A2340)',
           shadow: 'none'
         };
       case 'danger':
         return {
-          bg: 'rgba(255, 51, 51, 0.1)',
-          border: '#ff3333',
-          hoverBg: '#ff3333',
+          bg: 'var(--accent-magenta-glow, rgba(229, 62, 62, 0.1))',
+          border: 'var(--accent-magenta, #E53E3E)',
+          hoverBg: 'var(--accent-magenta, #E53E3E)',
           color: '#ffffff',
-          shadow: 'rgba(255, 51, 51, 0.4)'
+          shadow: 'none'
         };
       case 'ghost':
         return {
           bg: 'transparent',
           border: 'transparent',
-          hoverBg: 'rgba(255, 255, 255, 0.05)',
-          color: '#aaaaaa',
+          hoverBg: 'var(--bg-tertiary, #F5F7FA)',
+          color: 'var(--text-secondary, #6B7A99)',
           shadow: 'none'
         };
       case 'primary':
       default:
         return {
-          bg: 'linear-gradient(135deg, #00ffcc, #33ff57)',
+          bg: 'var(--accent-purple, #0047CC)',
           border: 'transparent',
-          hoverBg: 'linear-gradient(135deg, #00e6b8, #2ee64e)',
-          color: '#050c14',
-          shadow: 'rgba(0, 255, 204, 0.4)'
+          hoverBg: 'var(--kongila-dark-navy, #002B7F)',
+          color: '#ffffff',
+          shadow: 'rgba(0, 71, 204, 0.16)'
         };
     }
   };
@@ -128,7 +128,7 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
         border: variant === 'primary' ? 'none' : `1px solid ${colors.border}`,
         color: colors.color,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        boxShadow: variant === 'primary' && !disabled ? `0 0 15px ${colors.shadow}` : 'none',
+        boxShadow: variant === 'primary' && !disabled ? `0px 4px 12px ${colors.shadow}` : 'none',
         opacity: disabled ? 0.5 : 1,
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
         outline: 'none',
@@ -142,8 +142,9 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
         if (disabled) return;
         const btn = e.currentTarget;
         if (variant === 'primary') {
-          btn.style.boxShadow = `0 0 25px ${colors.shadow}`;
-          btn.style.transform = 'translateY(-2px)';
+          btn.style.boxShadow = `0px 6px 20px ${colors.shadow}`;
+          btn.style.background = colors.hoverBg;
+          btn.style.transform = 'translateY(-1px)';
         } else {
           btn.style.background = colors.hoverBg;
           btn.style.transform = 'translateY(-1px)';
@@ -153,7 +154,8 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
         const btn = e.currentTarget;
         btn.style.transform = 'none';
         if (variant === 'primary') {
-          btn.style.boxShadow = `0 0 15px ${colors.shadow}`;
+          btn.style.boxShadow = `0px 4px 12px ${colors.shadow}`;
+          btn.style.background = colors.bg as string;
         } else {
           btn.style.background = colors.bg as string;
         }
