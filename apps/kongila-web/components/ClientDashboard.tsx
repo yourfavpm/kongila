@@ -2,6 +2,100 @@ import React, { useState, useEffect } from 'react';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
 
+// ─── SVG Navigation Icons Component ──────────────────────────────────────────
+const SidebarIcon = ({ id, color = 'currentColor', size = 18 }: { id: string; color?: string; size?: number }) => {
+  switch (id) {
+    case 'dashboard':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7" height="9" />
+          <rect x="14" y="3" width="7" height="5" />
+          <rect x="14" y="12" width="7" height="9" />
+          <rect x="3" y="16" width="7" height="5" />
+        </svg>
+      );
+    case 'requests':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+          <polyline points="10 9 9 9 8 9" />
+        </svg>
+      );
+    case 'radar':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 2a10 10 0 0 1 10 10" />
+          <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+          <path d="M12 12l4 4" />
+        </svg>
+      );
+    case 'contracts':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <path d="m9 15 2 2 4-4" />
+        </svg>
+      );
+    case 'billing':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+          <line x1="2" y1="10" x2="22" y2="10" />
+        </svg>
+      );
+    case 'messaging':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case 'scheduling':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      );
+    case 'reviews':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      );
+    case 'profile':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      );
+    case 'settings':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      );
+    case 'logout':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+};
+
 // ─── Section Type Union ──────────────────────────────────────────────────────
 type ClientSection = 
   | 'dashboard' 
@@ -14,16 +108,15 @@ type ClientSection =
   | 'reviews' 
   | 'profile';
 
-const NAV_ITEMS: { id: ClientSection; label: string; icon: string }[] = [
-  { id: 'dashboard',   label: 'Dashboard',         icon: '📊' },
-  { id: 'requests',    label: 'Service Requests',  icon: '📝' },
-  { id: 'radar',       label: 'Talent Matching',   icon: '👥' },
-  { id: 'contracts',   label: 'Hiring & Contracts',icon: '📄' },
-  { id: 'billing',     label: 'Billing',           icon: '💵' },
-  { id: 'messaging',   label: 'Messaging',         icon: '💬' },
-  { id: 'scheduling',  label: 'Scheduling',        icon: '📅' },
-  { id: 'reviews',     label: 'Reviews',           icon: '⭐' },
-  { id: 'profile',     label: 'Profile',           icon: '👤' },
+const NAV_ITEMS: { id: ClientSection; label: string }[] = [
+  { id: 'dashboard',   label: 'Dashboard' },
+  { id: 'requests',    label: 'Service Requests' },
+  { id: 'radar',       label: 'Talent Matching' },
+  { id: 'contracts',   label: 'Hiring & Contracts' },
+  { id: 'billing',     label: 'Billing' },
+  { id: 'messaging',   label: 'Messaging' },
+  { id: 'scheduling',  label: 'Scheduling' },
+  { id: 'profile',     label: 'Profile' },
 ];
 
 interface ClientDashboardProps {
@@ -62,6 +155,9 @@ interface ClientDashboardProps {
   setMessages?: (messages: any[]) => void;
   setNotifications?: (notifications: any[]) => void;
   onAddRequest?: (newReq: any) => Promise<void>;
+  saveToDb?: (updatedDb: any) => Promise<void>;
+  rehireRequests?: any[];
+  setRehireRequests?: (rehireRequests: any[]) => void;
 }
 
 // ─── Styled Components ────────────────────────────────────────────────────────
@@ -126,7 +222,11 @@ export default function ClientDashboard({
   setInvoices,
   setMessages,
   setNotifications,
-  onAddRequest
+  onAddRequest,
+  setMatches,
+  saveToDb,
+  rehireRequests,
+  setRehireRequests
 }: ClientDashboardProps) {
 
   const [activeSection, setActiveSection] = useState<ClientSection>('dashboard');
@@ -150,6 +250,8 @@ export default function ClientDashboard({
   const [publicFeedbackText, setPublicFeedbackText] = useState('');
   const [privateFeedbackText, setPrivateFeedbackText] = useState('');
   const [isAnonymousPost, setIsAnonymousPost] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewTalentDetails, setReviewTalentDetails] = useState<{ id: string; name: string; role: string; contract?: string; avatar?: string } | null>(null);
 
   // Local Within-Dashboard Smart Intake Wizard State
   const [showIntakeModal, setShowIntakeModal] = useState(false);
@@ -168,10 +270,248 @@ export default function ClientDashboard({
   });
   
   // Talent Matching Premium States
-  const [selectedMatchingRequestId, setSelectedMatchingRequestId] = useState('sb9421');
+  const [selectedMatchingRequestId, setSelectedMatchingRequestId] = useState('');
   const [matchingShortlistedState, setMatchingShortlistedState] = useState<Record<string, boolean>>({ mk: true });
   const [detailsViewRequestId, setDetailsViewRequestId] = useState<string | null>(null);
   const [interviewRequests, setInterviewRequests] = useState<Record<string, string[]>>({});
+
+  const [showRequestInterviewModal, setShowRequestInterviewModal] = useState(false);
+  const [requestInterviewTarget, setRequestInterviewTarget] = useState<{ matchId: string; talentName: string; talentId: string; requestId: string } | null>(null);
+  const [requestInterviewForm, setRequestInterviewForm] = useState({ date: '', time: '10:00', duration: '45', notes: '' });
+
+  // Invoices & Re-hiring States
+  const [showAllInvoicesModal, setShowAllInvoicesModal] = useState(false);
+  const [showRehireModal, setShowRehireModal] = useState(false);
+  const [rehireTarget, setRehireTarget] = useState<{ id: string; talentName: string; role: string; avatar: string; talentId?: string } | null>(null);
+  const [rehireForm, setRehireForm] = useState({ role: '', rate: '12400', startDate: '', commitmentLevel: 'Full-Time' as 'Full-Time' | 'Part-Time', notes: '' });
+
+  const submitInterviewRequest = async () => {
+    if (!requestInterviewTarget || !requestInterviewForm.date || !requestInterviewForm.time) {
+      alert('Please select proposed date and time.');
+      return;
+    }
+    
+    const updatedMatches = matches.map(m => {
+      if (m.id === requestInterviewTarget.matchId) {
+        return {
+          ...m,
+          status: 'Interview Requested' as const,
+          requestedDate: requestInterviewForm.date,
+          requestedTime: requestInterviewForm.time,
+          requestedDuration: requestInterviewForm.duration,
+          requestedNotes: requestInterviewForm.notes
+        };
+      }
+      return m;
+    });
+
+    const newAuditLog = {
+      id: `audit_${Date.now()}`,
+      actor: currentUser?.organizationName || currentUser?.name || 'Client',
+      action: 'Request Interview Proposal',
+      details: `Client proposed interview with candidate ${requestInterviewTarget.talentName} for ${requestInterviewForm.date} at ${requestInterviewForm.time}.`,
+      timestamp: new Date().toISOString()
+    };
+
+    const newAgentLog = {
+      id: `alog_${Date.now()}`,
+      agentName: 'Workflow Agent' as const,
+      message: `Interview proposal for ${requestInterviewTarget.talentName} received. Pending admin coordination.`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'info' as const
+    };
+
+    const updatedDb = {
+      talents,
+      clientRequests: requests,
+      matches: updatedMatches,
+      tasks: [],
+      contracts: [],
+      notifications: [
+        {
+          id: `notif_${Date.now()}`,
+          userId: currentUser?.id,
+          title: 'Interview Proposal Submitted',
+          message: `Interview request for "${requestInterviewTarget.talentName}" submitted. Operations team will confirm shortly.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      auditLogs: [newAuditLog],
+      agentLogs: [newAgentLog]
+    };
+
+    try {
+      if (setMatches) {
+        setMatches(updatedMatches);
+      }
+      if (setNotifications) {
+        setNotifications([...(notifications || []), updatedDb.notifications[0]]);
+      }
+      
+      if (saveToDb) {
+        await saveToDb(updatedDb);
+      }
+      
+      setShowRequestInterviewModal(false);
+      setRequestInterviewTarget(null);
+      setRequestInterviewForm({ date: '', time: '10:00', duration: '45', notes: '' });
+      
+      alert(`Interview request for ${requestInterviewTarget.talentName} has been successfully submitted to Admin operations.`);
+    } catch {
+      alert('Failed to submit interview request. Please try again.');
+    }
+  };
+
+  const submitRehireRequest = async () => {
+    if (!rehireTarget || !rehireForm.role || !rehireForm.rate || !rehireForm.startDate) {
+      alert('Please fill in all required fields.');
+      return;
+    }
+
+    const rehireId = `rehire_${Date.now()}`;
+    const newRehireRequest = {
+      id: rehireId,
+      clientId: currentUser?.id,
+      clientName: `${currentUser?.name || 'Client'} (${currentUser?.companyName || 'Horizon Fintech'})`,
+      talentId: rehireTarget.talentId || 'talent_chidi',
+      talentName: rehireTarget.talentName,
+      role: rehireForm.role,
+      proposedRate: Number(rehireForm.rate),
+      proposedStartDate: rehireForm.startDate,
+      commitmentLevel: rehireForm.commitmentLevel,
+      notes: rehireForm.notes,
+      status: 'Pending' as const,
+      createdAt: new Date().toISOString()
+    };
+
+    const newAuditLog = {
+      id: `audit_${Date.now()}`,
+      actor: currentUser?.name || 'Client',
+      action: 'Submit Re-hire Request',
+      details: `Submitted request to re-hire ${rehireTarget.talentName} as ${rehireForm.role} starting ${rehireForm.startDate}.`,
+      timestamp: new Date().toISOString()
+    };
+
+    const newAgentLog = {
+      id: `alog_${Date.now()}`,
+      agentName: 'Workflow Agent' as const,
+      message: `Re-hire proposal for ${rehireTarget.talentName} drafted. Forwarded to admin operations.`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'info' as const
+    };
+
+    const updatedRehireRequests = [...(rehireRequests || []), newRehireRequest];
+
+    const updatedDb = {
+      talents,
+      clientRequests: requests,
+      matches,
+      tasks: [],
+      contracts,
+      notifications: [
+        {
+          id: `notif_${Date.now()}`,
+          userId: currentUser?.id,
+          title: 'Re-hire Request Submitted',
+          message: `Re-hire request for "${rehireTarget.talentName}" submitted. Operations team will confirm terms shortly.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      auditLogs: [newAuditLog],
+      agentLogs: [newAgentLog],
+      rehireRequests: updatedRehireRequests
+    };
+
+    try {
+      if (setRehireRequests) {
+        setRehireRequests(updatedRehireRequests);
+      }
+      if (saveToDb) {
+        await saveToDb(updatedDb);
+      }
+      
+      setShowRehireModal(false);
+      setRehireTarget(null);
+      setRehireForm({ role: '', rate: '12400', startDate: '', commitmentLevel: 'Full-Time', notes: '' });
+      
+      alert(`Re-hire request for ${rehireTarget.talentName} has been successfully submitted to Admin operations.`);
+    } catch {
+      alert('Failed to submit re-hire request. Please try again.');
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!reviewTalentDetails) return;
+    if (reviewRating === 0) {
+      alert('Please select a star rating first.');
+      return;
+    }
+    
+    const targetName = reviewTalentDetails.name;
+    const targetRole = reviewTalentDetails.role;
+
+    try {
+      // 1. Insert primary review/telemetry into Supabase notifications
+      await supabase.from('notifications').insert({
+        user_id: currentUser?.id,
+        title: 'Review Submitted',
+        content: `Review successfully posted for ${targetName} (${targetRole}) - Rating: ${reviewRating} Stars. ${publicFeedbackText ? `Comments: "${publicFeedbackText}"` : ''}`,
+        read_status: false
+      });
+
+      // 2. If private feedback is provided, insert a confidential admin notification log
+      if (privateFeedbackText.trim()) {
+        await supabase.from('notifications').insert({
+          user_id: currentUser?.id,
+          title: 'Confidential Admin Review',
+          content: `CONFIDENTIAL ADMIN-ONLY REVIEW for ${targetName} (${targetRole}). Ratings - Overall: ${reviewRating} Stars, Tech: ${techSkillValue}, Comm: ${commValue}, Reliability: ${reliabilityValue}. Private feedback: "${privateFeedbackText}".`,
+          read_status: false
+        });
+      }
+
+      // Update local state notifications so it displays in UI logs
+      if (setNotifications && notifications) {
+        const newNotifs = [
+          {
+            id: `notif_${Date.now()}_pub`,
+            userId: currentUser?.id || 'client_unknown',
+            title: 'Review Submitted',
+            message: `Review successfully posted for ${targetName} (${targetRole}) - Rating: ${reviewRating} Stars.`,
+            read: false,
+            createdAt: new Date().toISOString()
+          }
+        ];
+        if (privateFeedbackText.trim()) {
+          newNotifs.push({
+            id: `notif_${Date.now()}_priv`,
+            userId: currentUser?.id || 'client_unknown',
+            title: 'Confidential Admin Review Logged',
+            message: `Private feedback for ${targetName} successfully transmitted to administrators.`,
+            read: false,
+            createdAt: new Date().toISOString()
+          });
+        }
+        setNotifications([...(notifications || []), ...newNotifs]);
+      }
+    } catch (e) {
+      console.error('Error inserting review telemetry:', e);
+    }
+
+    alert(`Thank you! Your verified evaluation for ${targetName} has been logged in our EOR ledger and securely synchronized.`);
+    
+    // Reset inputs & close modal
+    setReviewRating(0);
+    setTechSkillValue(4);
+    setCommValue(5);
+    setReliabilityValue(5);
+    setPublicFeedbackText('');
+    setPrivateFeedbackText('');
+    setIsAnonymousPost(false);
+    setShowReviewModal(false);
+    setReviewTalentDetails(null);
+  };
 
   const handleShortlistToggle = async (candId: string, candName: string, requestId?: string) => {
     const isShortlistedNow = !matchingShortlistedState[candId];
@@ -214,23 +554,29 @@ export default function ClientDashboard({
       }]);
     }
 
-    await supabase.from('notifications').insert({
-      user_id: currentUser?.id,
-      title: 'Interview Proposal Dispatched',
-      content: `Interview request successfully sent to ${candName}.`,
-      read_status: false
-    }).catch(() => {});
+    try {
+      await supabase.from('notifications').insert({
+        user_id: currentUser?.id,
+        title: 'Interview Proposal Dispatched',
+        content: `Interview request successfully sent to ${candName}.`,
+        read_status: false
+      });
+    } catch (error) {
+      // Swallow notification errors; app should continue for the user.
+    }
 
     alert(`Interview proposal dispatched to ${candName}. Candidate has been notified to choose available slot.`);
   };
 
   // Dynamic stats calculation from real backend telemetry
-  const activeHiresCount = contracts.filter(c => c.clientId === currentUser?.id && c.status?.toLowerCase() === 'signed').length;
-  const pendingMatchesCount = matches.filter(m => {
-    const req = requests.find(r => r.id === m.requestId);
+  const clientContracts = contracts.filter((c: any) => c.clientId === currentUser?.id);
+  const activeContracts = clientContracts.filter((c: any) => c.status?.toLowerCase() === 'signed' || c.status?.toLowerCase() === 'active');
+  const activeHiresCount = activeContracts.length;
+  const pendingMatchesCount = matches.filter((m: any) => {
+    const req = requests.find((r: any) => r.id === m.requestId);
     return req?.clientId === currentUser?.id && m.status?.toLowerCase() === 'shortlisted';
   }).length;
-  const activeRequestsCount = requests.filter(r => r.clientId === currentUser?.id && r.status?.toLowerCase() !== 'closed').length;
+  const activeRequestsCount = requests.filter((r: any) => r.clientId === currentUser?.id && r.status?.toLowerCase() !== 'closed').length;
   
   // Calculate pending unpaid invoices
   const pendingInvoicesTotal = invoices
@@ -342,9 +688,11 @@ export default function ClientDashboard({
             <span style={{ fontSize: '20px' }}>👥</span>
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {activeHiresCount || 8}
+            {activeHiresCount}
           </div>
-          <span style={{ fontSize: '13px', color: '#10B981', fontWeight: 600 }}>📈 +2 this month</span>
+          <span style={{ fontSize: '13px', color: activeHiresCount > 0 ? '#10B981' : '#64748B', fontWeight: 600 }}>
+            {activeHiresCount > 0 ? '📈 Active engagements' : 'No active engagements'}
+          </span>
         </Card>
 
         <Card style={{ borderLeft: '4px solid #10B981' }}>
@@ -353,9 +701,11 @@ export default function ClientDashboard({
             <span style={{ fontSize: '20px' }}>📡</span>
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {pendingMatchesCount || 3}
+            {pendingMatchesCount}
           </div>
-          <span style={{ fontSize: '13px', color: '#F59E0B', fontWeight: 600 }}>⚠️ Review required</span>
+          <span style={{ fontSize: '13px', color: pendingMatchesCount > 0 ? '#F59E0B' : '#64748B', fontWeight: 600 }}>
+            {pendingMatchesCount > 0 ? '⚠️ Review required' : '✓ Up to date'}
+          </span>
         </Card>
 
         <Card style={{ borderLeft: '4px solid #8B5CF6' }}>
@@ -364,9 +714,11 @@ export default function ClientDashboard({
             <span style={{ fontSize: '20px' }}>📝</span>
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {activeRequestsCount || 2}
+            {activeRequestsCount}
           </div>
-          <span style={{ fontSize: '13px', color: '#3B82F6', fontWeight: 600 }}>⚡ Sourcing in progress</span>
+          <span style={{ fontSize: '13px', color: activeRequestsCount > 0 ? '#3B82F6' : '#64748B', fontWeight: 600 }}>
+            {activeRequestsCount > 0 ? '⚡ Sourcing in progress' : 'No active requests'}
+          </span>
         </Card>
 
         <Card style={{ borderLeft: '4px solid #EF4444' }}>
@@ -375,9 +727,11 @@ export default function ClientDashboard({
             <span style={{ fontSize: '20px' }}>💵</span>
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {formatCurrency(pendingInvoicesTotal || 4200)}
+            {formatCurrency(pendingInvoicesTotal)}
           </div>
-          <span style={{ fontSize: '13px', color: '#EF4444', fontWeight: 600 }}>📅 Due in 5 days</span>
+          <span style={{ fontSize: '13px', color: pendingInvoicesTotal > 0 ? '#EF4444' : '#10B981', fontWeight: 600 }}>
+            {pendingInvoicesTotal > 0 ? '📅 Settlement pending' : '✓ Account fully paid'}
+          </span>
         </Card>
 
       </div>
@@ -447,21 +801,32 @@ export default function ClientDashboard({
           {/* Top Performers Section */}
           <Card>
             <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '20px' }}>
-              Showing top performers from {activeHiresCount || 8} active hires
+              {activeHiresCount > 0 
+                ? `Showing top performers from ${activeHiresCount} active hires` 
+                : 'Active Hires'}
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {talents.slice(0, 3).map(talent => (
-                <div key={talent.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', border: '1px solid #F1F5F9', borderRadius: '12px', background: '#FAFBFC' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <img src={talent.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100"} alt="" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-                    <div>
-                      <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '14px' }}>{talent.name}</div>
-                      <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{talent.title}</div>
+              {activeHiresCount > 0 ? (
+                talents
+                  .filter((t: any) => activeContracts.some((c: any) => c.talentId === t.id || c.talentName === t.name))
+                  .slice(0, 3)
+                  .map(talent => (
+                    <div key={talent.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', border: '1px solid #F1F5F9', borderRadius: '12px', background: '#FAFBFC' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <img src={talent.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100"} alt="" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+                        <div>
+                          <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '14px' }}>{talent.name}</div>
+                          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{talent.title}</div>
+                        </div>
+                      </div>
+                      <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '4px 8px', borderRadius: '6px' }}>Grade: {talent.grade || 'A+'}</span>
                     </div>
-                  </div>
-                  <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '4px 8px', borderRadius: '6px' }}>Grade: {talent.grade || 'A+'}</span>
+                  ))
+              ) : (
+                <div style={{ textAlign: 'center', padding: '24px', color: '#64748B', fontSize: '13px' }}>
+                  No active hired talent yet. Match and hire experts to see their ratings!
                 </div>
-              ))}
+              )}
             </div>
           </Card>
 
@@ -546,94 +911,65 @@ export default function ClientDashboard({
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em' }}>Service Requests</h1>
-            <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>Manage your talent acquisition and project outsourcing pipeline.</p>
+            <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#1A2340', marginBottom: '8px', letterSpacing: '-0.03em' }}>Service Requests</h1>
+            <p style={{ fontSize: '15px', color: '#6B7A99', margin: 0 }}>Manage your talent acquisition and project outsourcing pipeline.</p>
           </div>
           <button 
             onClick={() => { setShowIntakeModal(true); setIntakeStep(1); }}
             style={{ 
               display: 'flex', alignItems: 'center', gap: '8px',
-              background: '#2563EB', border: 'none', borderRadius: '12px', 
+              background: '#0047CC', border: 'none', borderRadius: '12px', 
               padding: '14px 24px', color: 'white', fontWeight: 700, 
               cursor: 'pointer', transition: 'background 0.2s', fontSize: '14px',
-              boxShadow: '0 4px 12px rgba(37,99,235,0.15)'
+              boxShadow: '0 4px 12px rgba(0, 71, 204, 0.15)'
             }}
           >
-            <span>➕</span> New Service Request
+            New Service Request
           </button>
         </div>
 
-        {/* Dynamic Telemetry & AI Cards Row */}
-        <div className="db-grid-split-21" style={{ alignItems: 'stretch' }}>
+        {/* Dynamic Telemetry stats card */}
+        <div style={{ marginBottom: '8px' }}>
           
-          {/* Performance & Request Stats Widget (Left Card) */}
-          <Card style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          {/* Performance & Request Stats Widget */}
+          <Card style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', border: '1px solid #DDE2EC' }}>
             <div>
-              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', margin: '0 0 4px 0' }}>Request Statistics</h3>
-              <p style={{ fontSize: '12px', color: '#64748B', margin: '0 0 24px 0' }}>Performance metrics for the current fiscal year</p>
+              <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340', margin: '0 0 4px 0' }}>Request Statistics</h3>
+              <p style={{ fontSize: '12px', color: '#6B7A99', margin: '0 0 24px 0' }}>Performance metrics for the current fiscal year</p>
             </div>
             
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '20px' }}>
               
               {/* Stat 1 */}
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Total Requests</div>
+              <div style={{ flex: 1, minWidth: '150px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#6B7A99', textTransform: 'uppercase', marginBottom: '6px' }}>Total Requests</div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                  <span style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A' }}>{totalIntakeCount || 24}</span>
-                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#10B981', background: '#ECFDF5', padding: '2px 8px', borderRadius: '12px' }}>+12% vs last year</span>
+                  <span style={{ fontSize: '36px', fontWeight: 800, color: '#1A2340' }}>{totalIntakeCount}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#0047CC', background: '#EEF3FF', padding: '2px 8px', borderRadius: '12px' }}>
+                    {totalIntakeCount > 0 ? '+12% vs last year' : 'New account'}
+                  </span>
                 </div>
               </div>
 
               {/* Stat 2 */}
-              <div style={{ flex: 1, borderLeft: '1px solid #E2E8F0', paddingLeft: '32px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '6px' }}>Avg. Time To Hire</div>
+              <div style={{ flex: 1, borderLeft: '1px solid #DDE2EC', paddingLeft: '32px', minWidth: '150px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#6B7A99', textTransform: 'uppercase', marginBottom: '6px' }}>Avg. Time To Hire</div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                  <span style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A' }}>18.5 <span style={{ fontSize: '16px', fontWeight: 600 }}>days</span></span>
-                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#10B981', background: '#ECFDF5', padding: '2px 8px', borderRadius: '12px' }}>⚡ 3 days faster</span>
+                  <span style={{ fontSize: '36px', fontWeight: 800, color: '#1A2340' }}>18.5 <span style={{ fontSize: '16px', fontWeight: 600 }}>days</span></span>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#0047CC', background: '#EEF3FF', padding: '2px 8px', borderRadius: '12px' }}>⚡ 3 days faster</span>
                 </div>
               </div>
 
               {/* SVG Trendline Graphic Modeled After Stitch Mockup */}
               <div style={{ paddingLeft: '32px' }}>
                 <svg viewBox="0 0 120 40" style={{ width: '130px', height: '45px', overflow: 'visible' }}>
-                  <path d="M0,35 Q20,10 40,25 T80,15 T120,5" fill="none" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
-                  <circle cx="120" cy="5" r="4.5" fill="#2563EB" stroke="#FFFFFF" strokeWidth="2" />
+                  <path d="M0,35 Q20,10 40,25 T80,15 T120,5" fill="none" stroke="#0047CC" strokeWidth="3" strokeLinecap="round" />
+                  <circle cx="120" cy="5" r="4.5" fill="#0047CC" stroke="#FFFFFF" strokeWidth="2" />
                 </svg>
               </div>
 
             </div>
           </Card>
-
-          {/* AI Smart Matching Card (Right Card) */}
-          <div style={{
-            background: 'linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%)',
-            borderRadius: '16px', padding: '24px', color: '#FFFFFF',
-            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-            boxShadow: '0 8px 30px rgba(15,23,42,0.12)'
-          }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <span style={{ fontSize: '16px', fontWeight: 800, letterSpacing: '-0.01em' }}>Smart Matching</span>
-                <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.15)', padding: '2px 8px', borderRadius: '12px' }}>AI Desk</span>
-              </div>
-              <p style={{ fontSize: '13px', lineHeight: 1.5, color: '#E2E8F0', margin: 0 }}>
-                Our AI is currently processing 14 candidates for your latest Senior DevOps role.
-              </p>
-            </div>
-            
-            <button 
-              onClick={() => setActiveSection('radar')}
-              style={{
-                marginTop: '16px', width: '100%', background: '#FFFFFF', border: 'none',
-                borderRadius: '10px', padding: '10px 16px', color: '#0F172A',
-                fontWeight: 700, fontSize: '13px', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                transition: 'transform 0.2s'
-              }}
-            >
-              View Matches ➔
-            </button>
-          </div>
 
         </div>
 
@@ -997,88 +1333,124 @@ export default function ClientDashboard({
   };
 
   const renderRadar = () => {
-    // Dynamic candidates data
-    const candidates = [
-      {
-        id: 'jd',
-        name: 'Candidate JD',
-        initials: 'JD',
-        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80',
-        location: 'San Francisco, CA (Remote)',
-        experience: '8+ Years Senior Level',
-        availability: 'Within 2 Weeks',
-        techStack: ['AWS Certified', 'React', 'Python', 'Kubernetes', 'Terraform'],
-        score: '98%'
-      },
-      {
-        id: 'mk',
-        name: 'Candidate MK',
-        initials: 'MK',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80',
-        location: 'London, UK (Remote)',
-        experience: '10+ Years Expert',
-        availability: 'Immediate',
-        techStack: ['Azure', 'Node.js', 'Docker'],
-        score: '95%'
-      },
-      {
-        id: 'sa',
-        name: 'Candidate SA',
-        initials: 'SA',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80',
-        location: 'Austin, TX (Remote)',
-        experience: '6+ Years Mid-Senior',
-        availability: 'Immediate',
-        techStack: ['GCP', 'Go', 'Kubernetes', 'Docker'],
-        score: '91%'
-      }
-    ];
+    // Dynamic matching sidebar requests
+    const openRequests = clientRequests.map(r => {
+      const requestMatches = matches.filter(m => m.requestId === r.id && (m.status === 'Shortlisted' || m.status === 'Interview Requested' || m.status === 'Interview Scheduled' || m.status === 'Interviewed'));
+      return {
+        id: r.id,
+        category: r.serviceType.toUpperCase(),
+        title: r.serviceType + ' - ' + (r.roleDescription.split(' ')[0] || 'Talent'),
+        posted: r.createdAt ? `Posted ${new Date(r.createdAt).toLocaleDateString()}` : 'Posted recently',
+        badgeText: requestMatches.length > 0 ? `${requestMatches.length} Shortlisted` : 'Matching...',
+        badgeType: requestMatches.length > 0 ? ('filled' as const) : ('outline' as const),
+      };
+    });
 
-    const openRequests = [
-      {
-        id: 'sb9421',
-        category: 'ENGINEERING',
-        title: 'Senior Cloud Architect',
-        posted: 'Posted 2 days ago',
-        badgeText: '2 matches',
-        badgeType: 'outline',
-        candidatesList: [candidates[0], candidates[1]]
-      },
-      {
-        id: 'sb9433',
-        category: 'DESIGN',
-        title: 'Product Design Lead',
-        posted: 'Posted 5 days ago',
-        badgeText: '0 matches',
-        badgeType: 'none',
-        candidatesList: []
-      },
-      {
-        id: 'sb9445',
-        category: 'DATA SCIENCE',
-        title: 'ML Ops Specialist',
-        posted: 'Posted 1 week ago',
-        badgeText: '1 NEW MATCH',
-        badgeType: 'filled',
-        candidatesList: [candidates[2]]
-      }
-    ];
+    const activeRequest = clientRequests.find(r => r.id === selectedMatchingRequestId) || clientRequests[0];
 
-    const activeRequest = openRequests.find(r => r.id === selectedMatchingRequestId) || openRequests[0];
+    const requestMatches = activeRequest ? matches.filter(m => m.requestId === activeRequest.id && (m.status === 'Shortlisted' || m.status === 'Interview Requested' || m.status === 'Interview Scheduled' || m.status === 'Interviewed')) : [];
 
+    const candidatesList = requestMatches
+      .filter(m => talents.some(t => t.id === m.talentId))
+      .map(match => {
+        const talent = talents.find(t => t.id === match.talentId)!;
+        return {
+          matchId: match.id,
+          talentId: talent.id,
+          name: talent.name,
+          avatar: talent.avatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80',
+          location: talent.timezone || 'Remote',
+          experience: `${talent.experienceYears || 5}+ Years Experience`,
+          availability: 'Immediate availability',
+          techStack: talent.skills || [],
+          score: `${match.score || 92}%`,
+          status: match.status,
+          requestedDate: match.requestedDate,
+          requestedTime: match.requestedTime,
+          requestedDuration: match.requestedDuration,
+          requestedNotes: match.requestedNotes
+        };
+      });
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
         
+        {/* Request Interview Modal */}
+        {showRequestInterviewModal && requestInterviewTarget && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+          }}>
+            <div style={{
+              background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+              width: '100%', maxWidth: '500px', boxShadow: '0 24px 80px rgba(0,0,0,0.15)',
+              boxSizing: 'border-box'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0' }}>Request Interview</h2>
+                  <p style={{ fontSize: '12px', color: '#64748B', margin: 0 }}>Proposed scheduling for {requestInterviewTarget.talentName}</p>
+                </div>
+                <button onClick={() => { setShowRequestInterviewModal(false); setRequestInterviewTarget(null); }} style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '36px', height: '36px', cursor: 'pointer', fontSize: '16px', color: '#475569' }}>×</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div>
+                    <label style={labelStyle}>Proposed Date *</label>
+                    <input type="date" style={inputStyle} value={requestInterviewForm.date} min={new Date().toISOString().split('T')[0]} onChange={e => setRequestInterviewForm(f => ({ ...f, date: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Proposed Time *</label>
+                    <input type="time" style={inputStyle} value={requestInterviewForm.time} onChange={e => setRequestInterviewForm(f => ({ ...f, time: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Duration</label>
+                  <select style={inputStyle} value={requestInterviewForm.duration} onChange={e => setRequestInterviewForm(f => ({ ...f, duration: e.target.value }))}>
+                    <option value="30">30 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60">60 minutes</option>
+                    <option value="90">90 minutes</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Agenda / Message for Admin</label>
+                  <textarea style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' }} placeholder="Topics you would like to cover, specific technologies, etc." value={requestInterviewForm.notes} onChange={e => setRequestInterviewForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+
+                <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '14px' }}>💬</span>
+                  <p style={{ fontSize: '11px', color: '#0369A1', margin: 0, lineHeight: 1.4 }}>
+                    Our operations team will review this slot with <strong>{requestInterviewTarget.talentName}</strong>, confirm availability, and secure the calendar booking.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                  <button onClick={() => { setShowRequestInterviewModal(false); setRequestInterviewTarget(null); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}>Cancel</button>
+                  <button
+                    onClick={submitInterviewRequest}
+                    style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: '#2563EB', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: 'pointer' }}
+                  >
+                    🚀 Submit Proposal
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em' }}>Talent Matching</h1>
-            <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>Review AI-vetted candidates matched to your open technical roles.</p>
+            <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>Review vetted candidates shortlisted by our operators for your open roles.</p>
           </div>
           
           <div style={{ fontSize: '11px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '6px 12px', borderRadius: '20px', letterSpacing: '0.05em' }}>
-            ✦ 4 NEW MATCHES
+            👥 {matches.filter(m => m.status === 'Shortlisted').length} CANDIDATES SHORTLISTED
           </div>
         </div>
 
@@ -1090,16 +1462,16 @@ export default function ClientDashboard({
             
             <Card style={{ padding: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Open Requests</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Requests</span>
                 <span style={{ fontSize: '10px', fontWeight: 800, color: '#2563EB', background: '#EFF6FF', padding: '2px 6px', borderRadius: '4px' }}>
-                  3 ACTIVE
+                  {clientRequests.length} ACTIVE
                 </span>
               </div>
 
               {/* Sidebar list items */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {openRequests.map(r => {
-                  const isActive = r.id === selectedMatchingRequestId;
+                  const isActive = r.id === (activeRequest?.id || '');
                   return (
                     <div 
                       key={r.id}
@@ -1124,36 +1496,24 @@ export default function ClientDashboard({
                       
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: '10px', color: '#94A3B8' }}>{r.posted}</span>
-                        {r.badgeType !== 'none' && (
-                          <span style={{ 
-                            fontSize: '9px', fontWeight: 800, 
-                            background: r.badgeType === 'filled' ? '#2563EB' : 'transparent',
-                            color: r.badgeType === 'filled' ? '#FFFFFF' : '#2563EB',
-                            border: r.badgeType === 'outline' ? '1px solid #BFDBFE' : 'none',
-                            padding: '2px 6px', borderRadius: '4px' 
-                          }}>
-                            {r.badgeText}
-                          </span>
-                        )}
+                        <span style={{ 
+                          fontSize: '9px', fontWeight: 800, 
+                          background: r.badgeType === 'filled' ? '#2563EB' : 'transparent',
+                          color: r.badgeType === 'filled' ? '#FFFFFF' : '#64748B',
+                          border: r.badgeType === 'outline' ? '1px solid #E2E8F0' : 'none',
+                          padding: '2px 6px', borderRadius: '4px' 
+                        }}>
+                          {r.badgeText}
+                        </span>
                       </div>
 
                     </div>
                   );
                 })}
+                {clientRequests.length === 0 && (
+                  <p style={{ fontSize: '12px', color: '#94A3B8', margin: 0, textAlign: 'center', padding: '12px 0' }}>No active service requests logged.</p>
+                )}
               </div>
-
-              {/* View History CTA */}
-              <button 
-                onClick={() => alert('Opening complete archive of completed sourcing campaigns.')}
-                style={{
-                  width: '100%', background: '#FFFFFF', border: '1px solid #E2E8F0',
-                  borderRadius: '8px', padding: '8px', fontSize: '11px',
-                  fontWeight: 700, color: '#64748B', cursor: 'pointer',
-                  marginTop: '16px'
-                }}
-              >
-                View All History
-              </button>
 
             </Card>
 
@@ -1165,26 +1525,22 @@ export default function ClientDashboard({
             {/* Main Area Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
-                Vetted Candidates <span style={{ fontWeight: 500, color: '#64748B', fontSize: '14px' }}>for {activeRequest.title}</span>
+                {activeRequest ? (
+                  <>Vetted Shortlisted Candidates <span style={{ fontWeight: 500, color: '#64748B', fontSize: '14px' }}>for {activeRequest.serviceType}</span></>
+                ) : (
+                  <>Candidates Match Sourcing Pipeline</>
+                )}
               </h3>
-
-              <button 
-                onClick={() => alert('Sorting matches by AI compatibility matrix...')}
-                style={{ background: 'transparent', border: 'none', fontSize: '12px', fontWeight: 700, color: '#64748B', cursor: 'pointer' }}
-              >
-                SORT BY SCORE ▾
-              </button>
             </div>
 
             {/* Candidates Matches Grid */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {activeRequest.candidatesList.length > 0 ? (
-                activeRequest.candidatesList.map(cand => {
-                  const isShortlisted = !!matchingShortlistedState[cand.id];
+              {candidatesList.length > 0 ? (
+                candidatesList.map(cand => {
                   return (
-                    <Card key={cand.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '24px', position: 'relative' }}>
+                    <Card key={cand.talentId} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '24px', position: 'relative' }}>
                       
-                      {/* Avatar Circle initials */}
+                      {/* Avatar Circle */}
                       <div style={{ position: 'relative', width: '56px', height: '56px' }}>
                         <div style={{
                           width: '56px', height: '56px', borderRadius: '50%',
@@ -1192,7 +1548,11 @@ export default function ClientDashboard({
                           justifyContent: 'center', color: '#2563EB', fontWeight: 800,
                           fontSize: '18px', border: '2px solid #E2E8F0', overflow: 'hidden'
                         }}>
-                          <img src={cand.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          {cand.avatar ? (
+                            <img src={cand.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            cand.name.charAt(0)
+                          )}
                         </div>
                         <span style={{
                           position: 'absolute', right: 0, bottom: 0,
@@ -1213,7 +1573,7 @@ export default function ClientDashboard({
                           
                           {/* Compatibility score tag */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 800 }}>{cand.score} match</span>
+                            <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 800 }}>{cand.score} compatibility</span>
                           </div>
                         </div>
 
@@ -1231,7 +1591,7 @@ export default function ClientDashboard({
 
                         {/* Tech stack */}
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                          {cand.techStack.map(sk => (
+                          {cand.techStack.map((sk: string) => (
                             <span key={sk} style={{ fontSize: '10px', fontWeight: 700, background: '#F1F5F9', color: '#475569', padding: '3px 8px', borderRadius: '4px' }}>
                               {sk}
                             </span>
@@ -1241,31 +1601,32 @@ export default function ClientDashboard({
                         {/* Actions footer */}
                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '16px' }}>
                           <button 
-                            onClick={() => handleRequestInterview(cand.name, activeRequest.id)}
-                            style={{
-                              background: '#FFFFFF', border: '1px solid #E2E8F0',
-                              borderRadius: '8px', padding: '8px 16px', color: '#475569',
-                              fontWeight: 700, fontSize: '12px', cursor: 'pointer'
+                            onClick={() => {
+                              setRequestInterviewTarget({
+                                matchId: cand.matchId,
+                                talentId: cand.talentId,
+                                talentName: cand.name,
+                                requestId: activeRequest.id
+                              });
+                              setRequestInterviewForm(f => ({ ...f, date: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0] })); // Defaults to 2 days out
+                              setShowRequestInterviewModal(true);
                             }}
-                          >
-                            Request Interview
-                          </button>
-                          
-                          <button 
-                            onClick={() => handleShortlistToggle(cand.id, cand.name, activeRequest.id)}
+                            disabled={cand.status !== 'Shortlisted'}
                             style={{
-                              background: isShortlisted ? '#EFF6FF' : '#FFFFFF',
-                              border: isShortlisted ? '1px solid #3B82F6' : '1px solid #E2E8F0',
+                              background: cand.status === 'Shortlisted' ? '#2563EB' : (cand.status === 'Interview Requested' ? '#EFF6FF' : '#ECFDF5'),
+                              border: 'none',
                               borderRadius: '8px', padding: '8px 16px', 
-                              color: isShortlisted ? '#2563EB' : '#475569',
-                              fontWeight: 700, fontSize: '12px', cursor: 'pointer'
+                              color: cand.status === 'Shortlisted' ? '#FFFFFF' : (cand.status === 'Interview Requested' ? '#2563EB' : '#10B981'),
+                              fontWeight: 700, fontSize: '12px', cursor: cand.status === 'Shortlisted' ? 'pointer' : 'default'
                             }}
                           >
-                            {isShortlisted ? '✓ Shortlisted' : 'Shortlist'}
+                            {cand.status === 'Shortlisted' && '📅 Request Interview'}
+                            {cand.status === 'Interview Requested' && '⏳ Interview Requested'}
+                            {cand.status === 'Interview Scheduled' && '✓ Interview Scheduled'}
                           </button>
-                          
+
                           <button 
-                            onClick={() => alert(`Opening resume and Git stats for ${cand.name}...`)}
+                            onClick={() => alert(`Opening resume, skill matrices and EOR credentials for ${cand.name}...`)}
                             style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer', marginLeft: 'auto' }}
                           >
                             View Full Profile ➔
@@ -1278,56 +1639,32 @@ export default function ClientDashboard({
                   );
                 })
               ) : (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#64748B', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px' }}>
-                  No active matched candidates available for this selection segment yet.
+                <div style={{ textAlign: 'center', padding: '56px 40px', color: '#64748B', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '20px' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>👥</div>
+                  <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: '0 0 8px 0' }}>Sourcing & Vetting Candidates</h4>
+                  <p style={{ fontSize: '13px', color: '#64748B', margin: 0, maxWidth: '400px', marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+                    Our operations team is actively searching the Kongila network and vetting candidates against your role specifications. Candidates will appear here as soon as they are shortlisted.
+                  </p>
                 </div>
               )}
             </div>
 
-            {/* Candidate SA mini banner at bottom as seen in mockup */}
-            {selectedMatchingRequestId === 'sb9421' && (
-              <div style={{ display: 'flex', gap: '16px', alignItems: 'center', padding: '12px 20px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', opacity: 0.6 }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800, color: '#64748B' }}>SA</div>
-                <div style={{ fontSize: '13px', color: '#64748B' }}>
-                  <strong>Candidate SA</strong>, Austin, TX (Remote) • 6+ Years Mid-Senior • GCP, Go, Kubernetes
+            {/* proposed slot banners info if requested */}
+            {candidatesList.some(c => c.status === 'Interview Requested') && (
+              <div style={{ 
+                display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'space-between', alignItems: 'center',
+                background: '#FFFFFF', border: '1px solid #E2E8F0', 
+                borderRadius: '16px', padding: '20px', marginTop: '12px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.02)', position: 'relative'
+              }}>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 800, color: '#2563EB', textTransform: 'uppercase', marginBottom: '6px' }}>Interview Proposal Active</div>
+                  <div style={{ fontSize: '13px', color: '#1E293B', fontWeight: 700 }}>
+                    Our operations team is currently coordinating with candidates for the proposed interview slots.
+                  </div>
                 </div>
               </div>
             )}
-
-            {/* Mockup Interview Advisor Popup Banner */}
-            <div style={{ 
-              display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'space-between', alignItems: 'center',
-              background: '#FFFFFF', border: '1px solid #E2E8F0', 
-              borderRadius: '16px', padding: '20px', marginTop: '12px',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.02)', position: 'relative'
-            }}>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: 800, color: '#3B82F6', textTransform: 'uppercase', marginBottom: '6px' }}>Interview Requested</div>
-                <div style={{ fontSize: '13px', color: '#1E293B', fontWeight: 700 }}>
-                  Pending confirmation from the candidate for the proposed time: <span style={{ color: '#2563EB' }}>Oct 24, 10:00 AM</span>
-                </div>
-              </div>
-
-              {/* Chat bubble widget from Advocate Sarah */}
-              <div 
-                onClick={() => { setSelectedThreadId('sarah'); setActiveSection('messaging'); }}
-                style={{ 
-                  display: 'flex', gap: '10px', alignItems: 'center', 
-                  background: '#EFF6FF', border: '1px solid #BFDBFE', 
-                  borderRadius: '10px', padding: '6px 12px', cursor: 'pointer',
-                  transition: 'background 0.2s'
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = '#DBEAFE'}
-                onMouseLeave={e => e.currentTarget.style.background = '#EFF6FF'}
-              >
-                <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover' }} />
-                <div style={{ fontSize: '11px' }}>
-                  <span style={{ fontWeight: 800, color: '#1E3A8A', display: 'block' }}>Sarah (Advocate)</span>
-                  <span style={{ color: '#2563EB', fontWeight: 600 }}>Need help vetting JD further?</span>
-                </div>
-              </div>
-
-            </div>
 
           </div>
 
@@ -1338,22 +1675,15 @@ export default function ClientDashboard({
   };
 
   const renderContracts = () => {
-    const clientContracts = contracts.filter(c => c.clientId === currentUser?.id);
-    const activeContracts = clientContracts.filter(c => c.status?.toLowerCase() === 'signed' || c.status?.toLowerCase() === 'active');
-    
     // Sort so signed ones appear first
     const displayContracts = [...activeContracts].slice(0, 5);
 
-    // Dynamicended contracts (or mock ended logs for premium realism)
-    const endedContracts = [
-      {
-        id: 'cnt_ended_1',
-        talentName: 'Sarah Jenkins',
-        role: 'QA Engineer',
-        endDate: 'Mar 15, 2024',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80'
-      }
-    ];
+    // Filter ended contracts dynamically from DB contracts prop
+    const endedContracts = clientContracts.filter(c => 
+      c.status?.toLowerCase() === 'ended' || 
+      c.status?.toLowerCase() === 'terminated' || 
+      c.status?.toLowerCase() === 'closed'
+    );
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -1419,13 +1749,16 @@ export default function ClientDashboard({
                       const globalId = `RM-${c.id.substring(0, 4).toUpperCase()}`;
                       const isFullTime = c.salary > 8000;
                       
+                      const talentInfo = talents.find(t => t.id === c.talentId || t.name === c.talentName);
+                      const talentAvatar = talentInfo?.avatar || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80";
+
                       return (
                         <tr key={c.id} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           
                           {/* Talent Column */}
                           <td style={{ padding: '16px 24px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                              <img src={talentAvatar} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
                               <div>
                                 <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>{c.talentName}</div>
                                 <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>Global ID: {globalId}</div>
@@ -1464,72 +1797,40 @@ export default function ClientDashboard({
                             >
                               📄
                             </button>
+                            <button 
+                              onClick={() => { 
+                                setReviewTalentDetails({
+                                  id: c.talentId || c.id,
+                                  name: c.talentName,
+                                  role: c.role,
+                                  contract: `Contract Reference: ${globalId}`,
+                                  avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80'
+                                });
+                                setSelectedReviewTalentId(c.talentId || c.id);
+                                setReviewRating(0);
+                                setTechSkillValue(4);
+                                setCommValue(5);
+                                setReliabilityValue(5);
+                                setPublicFeedbackText('');
+                                setPrivateFeedbackText('');
+                                setShowReviewModal(true);
+                              }}
+                              title="Leave Review"
+                              style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '6px', cursor: 'pointer', transition: 'background 0.2s', marginLeft: '6px' }}
+                            >
+                              ⭐
+                            </button>
                           </td>
 
                         </tr>
                       );
                     })
                   ) : (
-                    // Realistic placeholder items
-                    <>
-                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                        <td style={{ padding: '16px 24px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                            <div>
-                              <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>Jordan Smith</div>
-                              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>Global ID: RM-9942</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '16px 24px', fontWeight: 700, color: '#334155' }}>Senior Solutions Architect</td>
-                        <td style={{ padding: '16px 24px', color: '#64748B' }}>Oct 12, 2023</td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px', background: '#EFF6FF', color: '#2563EB' }}>FULL-TIME</span>
-                        </td>
-                        <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                          <button onClick={() => setShowSignModal(true)} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}>📄</button>
-                        </td>
-                      </tr>
-                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                        <td style={{ padding: '16px 24px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                            <div>
-                              <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>Elena Vance</div>
-                              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>Global ID: RM-8120</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '16px 24px', fontWeight: 700, color: '#334155' }}>Lead Product Designer</td>
-                        <td style={{ padding: '16px 24px', color: '#64748B' }}>Jan 05, 2024</td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px', background: '#EFF6FF', color: '#2563EB' }}>FULL-TIME</span>
-                        </td>
-                        <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                          <button onClick={() => setShowSignModal(true)} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}>📄</button>
-                        </td>
-                      </tr>
-                      <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                        <td style={{ padding: '16px 24px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                            <div>
-                              <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>Marcus Chen</div>
-                              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>Global ID: RM-4401</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '16px 24px', fontWeight: 700, color: '#334155' }}>Data Strategy Expert</td>
-                        <td style={{ padding: '16px 24px', color: '#64748B' }}>Feb 20, 2024</td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '12px', background: '#F1F5F9', color: '#475569' }}>PART-TIME</span>
-                        </td>
-                        <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                          <button onClick={() => setShowSignModal(true)} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '6px', cursor: 'pointer' }}>📄</button>
-                        </td>
-                      </tr>
-                    </>
+                    <tr>
+                      <td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: '#64748B' }}>
+                        No active hires found. Start a new search in Sourcing or Talent Matching!
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -1539,39 +1840,81 @@ export default function ClientDashboard({
             <Card>
               <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '20px' }}>Recently Ended Contracts</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {endedContracts.map(ended => (
-                  <div key={ended.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', border: '1px solid #F1F5F9', borderRadius: '12px', background: '#FAFBFC', opacity: 0.85 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <img src={ended.avatar} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
-                      <div>
-                        <div style={{ fontWeight: 800, color: '#475569', fontSize: '14px', textDecoration: 'line-through' }}>{ended.talentName}</div>
-                        <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{ended.role} • Ended {ended.endDate}</div>
+                {endedContracts.length > 0 ? (
+                  endedContracts.map(ended => (
+                    <div key={ended.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', border: '1px solid #F1F5F9', borderRadius: '12px', background: '#FAFBFC', opacity: 0.85 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <img src={ended.avatar || "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80"} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
+                        <div>
+                          <div style={{ fontWeight: 800, color: '#475569', fontSize: '14px', textDecoration: 'line-through' }}>{ended.talentName}</div>
+                          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{ended.role} • Ended {ended.endDate || new Date(ended.updatedAt || Date.now()).toLocaleDateString()}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button 
+                          onClick={() => {
+                            setRehireTarget(ended);
+                            setRehireForm({
+                              role: ended.role,
+                              rate: '12400',
+                              startDate: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0],
+                              commitmentLevel: 'Full-Time',
+                              notes: ''
+                            });
+                            setShowRehireModal(true);
+                          }}
+                          style={{
+                            background: '#EFF6FF', border: 'none', borderRadius: '8px',
+                            padding: '8px 14px', color: '#2563EB', fontWeight: 700, fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Re-hire
+                        </button>
+                        <button 
+                          onClick={() => alert('Displaying exit memo logs.')}
+                          style={{
+                            background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px',
+                            padding: '8px 14px', color: '#475569', fontWeight: 700, fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          View Exit Memo
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setReviewTalentDetails({
+                              id: ended.talentId || ended.id,
+                              name: ended.talentName,
+                              role: ended.role,
+                              contract: `Ended on ${ended.endDate || 'past contract'}`,
+                              avatar: ended.avatar
+                            });
+                            setSelectedReviewTalentId(ended.talentId || ended.id);
+                            setReviewRating(0);
+                            setTechSkillValue(4);
+                            setCommValue(5);
+                            setReliabilityValue(5);
+                            setPublicFeedbackText('');
+                            setPrivateFeedbackText('');
+                            setShowReviewModal(true);
+                          }}
+                          style={{
+                            background: '#EFFDF4', border: 'none', borderRadius: '8px',
+                            padding: '8px 14px', color: '#15803D', fontWeight: 700, fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Leave Review
+                        </button>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button 
-                        onClick={() => alert(`Initiating re-hire intake for ${ended.talentName}`)}
-                        style={{
-                          background: '#EFF6FF', border: 'none', borderRadius: '8px',
-                          padding: '8px 14px', color: '#2563EB', fontWeight: 700, fontSize: '12px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Re-hire
-                      </button>
-                      <button 
-                        onClick={() => alert('Displaying exit memo logs.')}
-                        style={{
-                          background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px',
-                          padding: '8px 14px', color: '#475569', fontWeight: 700, fontSize: '12px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        View Exit Memo
-                      </button>
-                    </div>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '24px', color: '#64748B', fontSize: '13px' }}>
+                    No recently ended contracts.
                   </div>
-                ))}
+                )}
               </div>
             </Card>
 
@@ -1653,13 +1996,25 @@ export default function ClientDashboard({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                  <span style={{ fontSize: '16px', background: '#EFF6FF', color: '#2563EB', padding: '4px', borderRadius: '50%', display: 'inline-flex' }}>⚙️</span>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>Individual SOW - Architect</div>
-                    <div style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700, marginTop: '2px' }}>Active - Jordan Smith</div>
+                {activeContracts.length > 0 ? (
+                  activeContracts.map(c => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                      <span style={{ fontSize: '16px', background: '#EFF6FF', color: '#2563EB', padding: '4px', borderRadius: '50%', display: 'inline-flex' }}>⚙️</span>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>Individual SOW - {c.role}</div>
+                        <div style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700, marginTop: '2px' }}>Active - {c.talentName}</div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <span style={{ fontSize: '16px', background: '#F1F5F9', color: '#64748B', padding: '4px', borderRadius: '50%', display: 'inline-flex' }}>⚙️</span>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '13px', color: '#64748B' }}>Individual SOW</div>
+                      <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>No active statement of work</div>
+                    </div>
                   </div>
-                </div>
+                )}
 
               </div>
             </Card>
@@ -1694,12 +2049,62 @@ export default function ClientDashboard({
       </div>
     );
   };
+  const handleSinglePayment = async (invId: string, amount: number) => {
+    const updatedInvoices = invoices.map(inv => 
+      inv.id === invId ? { ...inv, status: 'paid' as const } : inv
+    );
+
+    const newAuditLog = {
+      id: `audit_${Date.now()}`,
+      actor: currentUser?.name || 'Client Operator',
+      action: 'Pay Invoice',
+      details: `Succeeded in paying invoice INV-${invId.replace('inv_', '').substring(0, 6).toUpperCase()} of ${formatCurrency(amount)}.`,
+      timestamp: new Date().toISOString()
+    };
+
+    const newAgentLog = {
+      id: `alog_${Date.now()}`,
+      agentName: 'Billing Agent' as const,
+      message: `Invoice ${invId} successfully settled via VISA card ending 4412.`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'success' as const
+    };
+
+    const updatedDb = {
+      notifications: [
+        {
+          id: `notif_${Date.now()}`,
+          userId: currentUser?.id,
+          title: 'Invoice Settled',
+          message: `Invoice INV-${invId.replace('inv_', '').substring(0, 6).toUpperCase()} of ${formatCurrency(amount)} was successfully paid!`,
+          read: false,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      auditLogs: [newAuditLog],
+      agentLogs: [newAgentLog],
+      invoices: updatedInvoices
+    };
+
+    try {
+      if (setInvoices) {
+        setInvoices(updatedInvoices);
+      }
+      if (saveToDb) {
+        await saveToDb(updatedDb);
+      }
+      alert(`Payment of ${formatCurrency(amount)} successfully processed for Invoice INV-${invId.replace('inv_', '').substring(0, 6).toUpperCase()} via credit card VISA •••• 4412.`);
+    } catch (err) {
+      console.error('Single payment failed:', err);
+      alert('Failed to process payment. Please try again.');
+    }
+  };
 
   const renderBilling = () => {
     // Dynamic database calculation from real invoices
     const clientInvoices = invoices.filter(inv => inv.clientId === currentUser?.id);
     
-    // Sum real database records
+    // Sum real database records strictly specific to this account
     const dbPaidSum = clientInvoices
       .filter(inv => inv.status?.toLowerCase() === 'paid')
       .reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
@@ -1707,9 +2112,18 @@ export default function ClientDashboard({
       .filter(inv => inv.status?.toLowerCase() !== 'paid')
       .reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
     
-    // Base amount fallback or sum
-    const totalPaidYTD = dbPaidSum > 0 ? dbPaidSum : 248500.00;
-    const outstandingBalance = dbPendingSum > 0 ? dbPendingSum : 18750.40;
+    const totalPaidYTD = dbPaidSum;
+    const outstandingBalance = dbPendingSum;
+
+    // Dynamically look up last paid invoice
+    const paidInvoices = clientInvoices.filter(inv => inv.status?.toLowerCase() === 'paid');
+    const lastPaidInvoice = paidInvoices[paidInvoices.length - 1];
+
+    // Dynamically look up next pending billing date and details
+    const pendingInvoices = clientInvoices.filter(inv => inv.status?.toLowerCase() !== 'paid');
+    const sortedPending = [...pendingInvoices].sort((a, b) => new Date(a.dueDate || '').getTime() - new Date(b.dueDate || '').getTime());
+    const nextInvoice = sortedPending[0];
+    const overdueCount = pendingInvoices.length;
 
     const handleBatchPayment = async () => {
       // Dispatch payment sync alert and backend notification log
@@ -1765,13 +2179,19 @@ export default function ClientDashboard({
           <Card style={{ padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontSize: '10px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Paid (YTD)</span>
-              <span style={{ fontSize: '9px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '2px 6px', borderRadius: '4px' }}>+12% vs LY</span>
+              {totalPaidYTD > 0 && (
+                <span style={{ fontSize: '9px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '2px 6px', borderRadius: '4px' }}>+12% vs LY</span>
+              )}
             </div>
             <div style={{ fontSize: '28px', fontWeight: 900, color: '#0F172A', marginBottom: '8px' }}>
               {formatCurrency(totalPaidYTD)}
             </div>
             <span style={{ fontSize: '11px', color: '#64748B' }}>
-              Last payment: <strong style={{ color: '#1E293B' }}>$12,400.00</strong> (Oct 12)
+              {lastPaidInvoice ? (
+                <>Last payment: <strong style={{ color: '#1E293B' }}>{formatCurrency(lastPaidInvoice.amount)}</strong> ({new Date(lastPaidInvoice.createdAt || lastPaidInvoice.dueDate || Date.now()).toLocaleDateString()})</>
+              ) : (
+                'No payments made yet'
+              )}
             </span>
           </Card>
 
@@ -1779,13 +2199,15 @@ export default function ClientDashboard({
           <Card style={{ padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <span style={{ fontSize: '10px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Outstanding Balance</span>
-              <span style={{ fontSize: '9px', fontWeight: 800, background: '#FEF2F2', color: '#EF4444', padding: '2px 6px', borderRadius: '4px' }}>⚠️ 3 Invoices Overdue</span>
+              {overdueCount > 0 && (
+                <span style={{ fontSize: '9px', fontWeight: 800, background: '#FEF2F2', color: '#EF4444', padding: '2px 6px', borderRadius: '4px' }}>⚠️ {overdueCount} Unpaid {overdueCount === 1 ? 'Invoice' : 'Invoices'}</span>
+              )}
             </div>
-            <div style={{ fontSize: '28px', fontWeight: 900, color: '#EF4444', marginBottom: '8px' }}>
+            <div style={{ fontSize: '28px', fontWeight: 900, color: outstandingBalance > 0 ? '#EF4444' : '#0F172A', marginBottom: '8px' }}>
               {formatCurrency(outstandingBalance)}
             </div>
             <span style={{ fontSize: '11px', color: '#64748B' }}>
-              Requires immediate action
+              {outstandingBalance > 0 ? 'Requires immediate action' : 'Account in good standing'}
             </span>
           </Card>
 
@@ -1796,10 +2218,14 @@ export default function ClientDashboard({
               <span style={{ fontSize: '12px' }}>📅</span>
             </div>
             <div style={{ fontSize: '28px', fontWeight: 900, color: '#0F172A', marginBottom: '8px' }}>
-              Nov 01
+              {nextInvoice ? new Date(nextInvoice.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'None'}
             </div>
             <span style={{ fontSize: '11px', color: '#64748B' }}>
-              Estimated amount: <strong style={{ color: '#1E293B' }}>$42,300.00</strong>
+              {nextInvoice ? (
+                <>Estimated amount: <strong style={{ color: '#1E293B' }}>{formatCurrency(nextInvoice.amount)}</strong></>
+              ) : (
+                'No upcoming billing'
+              )}
             </span>
           </Card>
 
@@ -1808,136 +2234,186 @@ export default function ClientDashboard({
         {/* Split Grid */}
         <div className="db-grid-split-320" style={{ alignItems: 'start' }}>
           
-          {/* Left Panel: Invoice History */}
-          <Card style={{ padding: '0px', overflow: 'hidden' }}>
+          {/* Left Panel: Separate Outstanding & Overdue Invoices above History */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', flex: 1 }}>
             
-            {/* Panel Title & Dropdown */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Invoice History</h3>
-              <select 
-                style={{ 
-                  background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', 
-                  padding: '4px 12px', fontSize: '12px', fontWeight: 700, color: '#475569', outline: 'none' 
-                }}
-              >
-                <option>Last 6 Months</option>
-                <option>Last 12 Months</option>
-                <option>Year to Date</option>
-              </select>
-            </div>
+            {(() => {
+              const unpaidAndOverdueInvoices = clientInvoices.filter(inv => inv.status?.toLowerCase() !== 'paid');
 
-            {/* Invoices High-fidelity Table */}
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Invoice #</th>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Date</th>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Amount</th>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Service</th>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Status</th>
-                  <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clientInvoices.length > 0 ? (
-                  clientInvoices.map(inv => {
-                    const isPaid = inv.status === 'paid';
-                    const isOverdue = inv.status === 'overdue' || inv.status === 'unpaid';
-                    
-                    return (
-                      <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s' }}>
-                        <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>
-                          INV-{inv.id.substring(0, 4).toUpperCase()}
-                        </td>
-                        <td style={{ padding: '16px 24px', color: '#64748B' }}>
-                          {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Oct 12, 2023'}
-                        </td>
-                        <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>
-                          {formatCurrency(inv.amount)}
-                        </td>
-                        <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>
-                          {inv.serviceTitle || 'DevOps Managed Team'}
-                        </td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <span style={{ 
-                            display: 'inline-block', fontSize: '10px', fontWeight: 800, 
-                            padding: '3px 8px', borderRadius: '6px',
-                            background: isPaid ? '#ECFDF5' : (isOverdue ? '#FEF2F2' : '#FFF7ED'), 
-                            color: isPaid ? '#10B981' : (isOverdue ? '#EF4444' : '#F57C00')
-                          }}>
-                            {inv.status?.toUpperCase() || 'PENDING'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <button 
-                            onClick={() => alert(`Opening details for Invoice #${inv.id.substring(0, 8)}`)}
-                            style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}
-                          >
-                            ⋮
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <>
-                    {/* Fallback default mockup rows from screenshot */}
-                    <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                      <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>INV-8842</td>
-                      <td style={{ padding: '16px 24px', color: '#64748B' }}>Oct 12, 2023</td>
-                      <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>$12,400.00</td>
-                      <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>DevOps Managed Team</td>
-                      <td style={{ padding: '16px 24px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', background: '#ECFDF5', color: '#10B981' }}>PAID</span>
-                      </td>
-                      <td style={{ padding: '16px 24px' }}><button style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>⋮</button></td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                      <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>INV-8791</td>
-                      <td style={{ padding: '16px 24px', color: '#64748B' }}>Oct 01, 2023</td>
-                      <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>$6,250.40</td>
-                      <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>Cloud Infrastructure</td>
-                      <td style={{ padding: '16px 24px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', background: '#FEF2F2', color: '#EF4444' }}>OVERDUE</span>
-                      </td>
-                      <td style={{ padding: '16px 24px' }}><button style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>⋮</button></td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                      <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>INV-8750</td>
-                      <td style={{ padding: '16px 24px', color: '#64748B' }}>Sep 12, 2023</td>
-                      <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>$12,400.00</td>
-                      <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>DevOps Managed Team</td>
-                      <td style={{ padding: '16px 24px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', background: '#FFF7ED', color: '#F57C00' }}>PENDING</span>
-                      </td>
-                      <td style={{ padding: '16px 24px' }}><button style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>⋮</button></td>
-                    </tr>
-                    <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
-                      <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>INV-8722</td>
-                      <td style={{ padding: '16px 24px', color: '#64748B' }}>Sep 01, 2023</td>
-                      <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>$8,900.00</td>
-                      <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>Frontend Talent Sweep</td>
-                      <td style={{ padding: '16px 24px' }}>
-                        <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '6px', background: '#ECFDF5', color: '#10B981' }}>PAID</span>
-                      </td>
-                      <td style={{ padding: '16px 24px' }}><button style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>⋮</button></td>
-                    </tr>
-                  </>
-                )}
-              </tbody>
-            </table>
+              return (
+                <Card style={{ padding: '0px', overflow: 'hidden', border: '1px solid #FEE2E2', background: 'rgba(254, 242, 242, 0.4)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#991B1B', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px' }}>⚠️</span> Action Required: Overdue & Outstanding Invoices
+                      </h3>
+                      <p style={{ fontSize: '12px', color: '#7F1D1D', margin: '4px 0 0 0', opacity: 0.8 }}>Please settle these outstanding amounts to avoid service disruptions.</p>
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '12px', background: '#FEE2E2', color: '#991B1B' }}>
+                      {unpaidAndOverdueInvoices.length} Invoices Pending
+                    </span>
+                  </div>
 
-            {/* View all invoices CTA */}
-            <div style={{ textAlign: 'center', padding: '16px', borderTop: '1px solid #F1F5F9' }}>
-              <button 
-                onClick={() => alert('Navigating to total invoice history desk...')}
-                style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
-              >
-                View All Invoices
-              </button>
-            </div>
+                  {unpaidAndOverdueInvoices.length === 0 ? (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#15803D', fontWeight: 700, fontSize: '14px' }}>
+                      ✓ All invoices settled. No outstanding balance!
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ background: '#FFF5F5', borderBottom: '1px solid #FCA5A5' }}>
+                          <th style={{ padding: '12px 24px', fontWeight: 800, color: '#7F1D1D', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Invoice #</th>
+                          <th style={{ padding: '12px 24px', fontWeight: 800, color: '#7F1D1D', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Due Date</th>
+                          <th style={{ padding: '12px 24px', fontWeight: 800, color: '#7F1D1D', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Amount</th>
+                          <th style={{ padding: '12px 24px', fontWeight: 800, color: '#7F1D1D', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Status</th>
+                          <th style={{ padding: '12px 24px', fontWeight: 800, color: '#7F1D1D', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {unpaidAndOverdueInvoices.map(inv => {
+                          const isOverdue = inv.status === 'overdue';
+                          return (
+                            <tr key={inv.id} style={{ borderBottom: '1px solid #FEE2E2', background: isOverdue ? 'rgba(254, 226, 226, 0.2)' : 'transparent', transition: 'background 0.15s' }}>
+                              <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>
+                                INV-{inv.id.replace('inv_', '').substring(0, 6).toUpperCase()}
+                              </td>
+                              <td style={{ padding: '16px 24px', color: '#475569' }}>
+                                {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Oct 12, 2023'}
+                              </td>
+                              <td style={{ padding: '16px 24px', fontWeight: 800, color: isOverdue ? '#DC2626' : '#1E293B' }}>
+                                {formatCurrency(inv.amount)}
+                              </td>
+                              <td style={{ padding: '16px 24px' }}>
+                                <span style={{ 
+                                  display: 'inline-block', fontSize: '10px', fontWeight: 800, 
+                                  padding: '3px 8px', borderRadius: '6px',
+                                  background: isOverdue ? '#FEF2F2' : '#FFF7ED', 
+                                  color: isOverdue ? '#EF4444' : '#F57C00'
+                                }}>
+                                  {inv.status?.toUpperCase() || 'PENDING'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                                <button 
+                                  onClick={() => handleSinglePayment(inv.id, inv.amount)}
+                                  style={{ 
+                                    background: isOverdue ? '#DC2626' : '#2563EB', 
+                                    border: 'none', 
+                                    color: '#FFFFFF', 
+                                    padding: '6px 14px', 
+                                    borderRadius: '6px', 
+                                    fontSize: '11px', 
+                                    fontWeight: 700, 
+                                    cursor: 'pointer',
+                                    transition: 'background 0.15s',
+                                    boxShadow: isOverdue ? '0 2px 6px rgba(220,38,38,0.2)' : '0 2px 6px rgba(37,99,235,0.2)'
+                                  }}
+                                >
+                                  Pay Now ➔
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </Card>
+              );
+            })()}
 
-          </Card>
+            {/* Existing Left Panel: Invoice History */}
+            <Card style={{ padding: '0px', overflow: 'hidden' }}>
+              
+              {/* Panel Title & Dropdown */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Invoice History</h3>
+                <select 
+                  style={{ 
+                    background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '8px', 
+                    padding: '4px 12px', fontSize: '12px', fontWeight: 700, color: '#475569', outline: 'none' 
+                  }}
+                >
+                  <option>Last 6 Months</option>
+                  <option>Last 12 Months</option>
+                  <option>Year to Date</option>
+                </select>
+              </div>
+
+              {/* Invoices High-fidelity Table */}
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Invoice #</th>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Date</th>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Amount</th>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Service</th>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Status</th>
+                    <th style={{ padding: '12px 24px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.05em' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientInvoices.length > 0 ? (
+                    clientInvoices.map(inv => {
+                      const isPaid = inv.status === 'paid';
+                      const isOverdue = inv.status === 'overdue' || inv.status === 'unpaid';
+                      
+                      return (
+                        <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s' }}>
+                          <td style={{ padding: '16px 24px', fontWeight: 700, color: '#1E293B' }}>
+                            INV-{inv.id.substring(0, 4).toUpperCase()}
+                          </td>
+                          <td style={{ padding: '16px 24px', color: '#64748B' }}>
+                            {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Oct 12, 2023'}
+                          </td>
+                          <td style={{ padding: '16px 24px', fontWeight: 800, color: '#1E293B' }}>
+                            {formatCurrency(inv.amount)}
+                          </td>
+                          <td style={{ padding: '16px 24px', color: '#475569', fontWeight: 600 }}>
+                            {inv.serviceTitle || 'DevOps Managed Team'}
+                          </td>
+                          <td style={{ padding: '16px 24px' }}>
+                            <span style={{ 
+                              display: 'inline-block', fontSize: '10px', fontWeight: 800, 
+                              padding: '3px 8px', borderRadius: '6px',
+                              background: isPaid ? '#ECFDF5' : (isOverdue ? '#FEF2F2' : '#FFF7ED'), 
+                              color: isPaid ? '#10B981' : (isOverdue ? '#EF4444' : '#F57C00')
+                            }}>
+                              {inv.status?.toUpperCase() || 'PENDING'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '16px 24px' }}>
+                            <button 
+                              onClick={() => alert(`Opening details for Invoice #${inv.id.substring(0, 8)}`)}
+                              style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}
+                            >
+                              ⋮
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: '#64748B' }}>
+                        No billing history found. Invoices will appear here once active hiring begins.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              <div style={{ textAlign: 'center', padding: '16px', borderTop: '1px solid #F1F5F9' }}>
+                <button 
+                  onClick={() => setShowAllInvoicesModal(true)}
+                  style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  View All Invoices
+                </button>
+              </div>
+
+            </Card>
+          </div>
 
           {/* Right Sidebar */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -2024,21 +2500,7 @@ export default function ClientDashboard({
 
               </div>
             </Card>
-
-            {/* Enterprise Secure Callout */}
-            <div style={{ 
-              display: 'flex', gap: '12px', alignItems: 'center', 
-              background: '#0F172A', color: '#FFFFFF', 
-              padding: '16px', borderRadius: '12px' 
-            }}>
-              <span style={{ fontSize: '20px' }}>🛡️</span>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: 800, color: '#3B82F6', textTransform: 'uppercase' }}>Enterprise Secure</div>
-                <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>
-                  PCI DSS Level 1 Compliant. Your transaction data is encrypted.
-                </div>
-              </div>
-            </div>
+            {/* Card block removed */}
 
           </div>
 
@@ -2064,60 +2526,59 @@ export default function ClientDashboard({
              (m.senderId === activeReceiverId && m.receiverId === currentUser?.id);
     });
 
+    // Map active hired talents dynamically as secure chat channels
+    const activeContractors = contracts
+      .filter(c => c.clientId === currentUser?.id && (c.status?.toLowerCase() === 'signed' || c.status?.toLowerCase() === 'active'));
+
     const threads = [
-      {
-        id: 'sarah',
-        name: 'Sarah Jenkins',
-        title: 'Senior UX Architect',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80',
-        time: '10:45 AM',
-        preview: "I've uploaded the refined wireframes...",
-        activeNow: true,
-        unread: true,
-        expertise: ['UI Design', 'UX Strategy', 'Product Strategy'],
-        project: 'Kongila Portal',
-        startDate: 'Oct 12, 2023'
-      },
+      ...activeContractors.map(c => {
+        const tInfo = talents.find(t => t.id === c.talentId || t.name === c.talentName);
+        return {
+          id: c.talentId || c.id,
+          name: c.talentName,
+          title: c.role,
+          avatar: tInfo?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=80',
+          time: 'Active',
+          preview: `Direct secure channel with ${c.talentName.split(' ')[0]}`,
+          activeNow: true,
+          unread: false,
+          expertise: tInfo?.skills || [c.role],
+          project: 'Contract Active',
+          startDate: c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'Recently'
+        };
+      }),
       {
         id: 'michael',
         name: 'Michael Chen',
         title: 'Account Manager',
         avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=80',
-        time: 'Yesterday',
-        preview: 'Your quarterly review is ready for...',
+        time: 'Platform Support',
+        preview: 'Your primary account manager for onboarding and talent curation.',
         activeNow: false,
         unread: false,
-        expertise: ['Compliance', 'Success Management', 'Operations'],
-        project: 'EOR Compliance Desk',
-        startDate: 'Jan 10, 2023'
+        expertise: ['Success Management', 'Operations', 'Global Compliance'],
+        project: 'Horizon Operations',
+        startDate: 'Platform Registration'
       },
       {
         id: 'support',
         name: 'Kongila Support',
         title: 'Platform Operations',
-        avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80',
-        time: '2 days ago',
-        preview: 'Ticket #4820 has been resolved, ...',
+        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=80',
+        time: '24/7 Desk',
+        preview: 'Technical helpdesk and service operations support.',
         activeNow: true,
         unread: false,
-        expertise: ['Operations', 'Ticketing Support'],
-        project: 'Ticketing desk',
-        startDate: 'Continuous'
-      },
-      {
-        id: 'david',
-        name: 'David Okoro',
-        title: 'Full-Stack Developer',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80',
-        time: 'Monday',
-        preview: 'The API Integration for the payme...',
-        activeNow: false,
-        unread: false,
-        expertise: ['React', 'PostgreSQL', 'Go', 'Kubernetes'],
-        project: 'API Gateway Redesign',
-        startDate: 'Nov 02, 2023'
+        expertise: ['Billing Help', 'Platform Guide', 'Technical Issues'],
+        project: 'Global Operations Desk',
+        startDate: 'Continuous Support'
       }
     ];
+
+    // Build map for dynamic message routing
+    activeContractors.forEach(c => {
+      threadReceiverMap[c.talentId || c.id] = c.talentId || `usr_${c.id}`;
+    });
 
     // Search filter over threads list
     const filteredThreads = threads.filter(t => 
@@ -2472,7 +2933,7 @@ export default function ClientDashboard({
             <div style={{ marginBottom: '24px' }}>
               <div style={{ fontSize: '11px', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', marginBottom: '10px' }}>Expertise</div>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {activeThread.expertise.map(exp => (
+                {activeThread.expertise.map((exp: any) => (
                   <span key={exp} style={{ fontSize: '10px', fontWeight: 700, background: '#F1F5F9', color: '#475569', padding: '3px 8px', borderRadius: '4px' }}>
                     {exp}
                   </span>
@@ -2514,684 +2975,664 @@ export default function ClientDashboard({
     );
   };
 
-  const renderScheduling = () => {
-    const handleScheduleNew = async () => {
-      const title = prompt("Enter interview title:");
-      if (!title) return;
-      const date = prompt("Enter date (e.g. Oct 24, 2023):", "Oct 24, 2023");
-      const time = prompt("Enter time (e.g. 10:00 AM):", "10:00 AM");
+  // ─── Interview State (inside component) ─────────────────────────────────────
+  const [interviews, setInterviews] = React.useState<any[]>([]);
+  const [interviewsLoaded, setInterviewsLoaded] = React.useState(false);
+  const [showScheduleModal, setShowScheduleModal] = React.useState(false);
+  const [showRescheduleModal, setShowRescheduleModal] = React.useState(false);
+  const [rescheduleTarget, setRescheduleTarget] = React.useState<any>(null);
+  const [scheduleForm, setScheduleForm] = React.useState({
+    title: '',
+    talentId: '',
+    talentName: '',
+    talentAvatar: '',
+    requestId: '',
+    matchId: '',
+    date: '',
+    time: '10:00',
+    notes: '',
+    duration: '60'
+  });
+  const [scheduleLoading, setScheduleLoading] = React.useState(false);
+  const [rescheduleForm, setRescheduleForm] = React.useState({ date: '', time: '10:00', notes: '' });
+  const [calendarCurrentDate, setCalendarCurrentDate] = React.useState(new Date());
 
-      await supabase.from('notifications').insert({
-        user_id: currentUser?.id,
-        title: 'New Interview Scheduled',
-        content: `Proposed vetting slot of ${time} on ${date} dispatched for "${title}".`,
-        read_status: false
+  // Load interviews from API
+  React.useEffect(() => {
+    fetch('/api/interviews')
+      .then(r => r.json())
+      .then(data => { setInterviews(Array.isArray(data) ? data : []); setInterviewsLoaded(true); })
+      .catch(() => setInterviewsLoaded(true));
+  }, []);
+
+  // Auto-fill talentName & requestId from matches when talentId changes
+  React.useEffect(() => {
+    if (!scheduleForm.talentId) return;
+    const matchedTalent = talents.find((t: any) => t.id === scheduleForm.talentId);
+    if (matchedTalent) {
+      const matchedMatch = matches.find((m: any) => m.talentId === scheduleForm.talentId);
+      setScheduleForm(f => ({
+        ...f,
+        talentName: matchedTalent.name || matchedTalent.fullName || f.talentName,
+        talentAvatar: matchedTalent.avatar || matchedTalent.avatarUrl || '',
+        matchId: matchedMatch?.id || '',
+        requestId: matchedMatch?.requestId || ''
+      }));
+    }
+  }, [scheduleForm.talentId]);
+
+  const handleCreateInterview = async () => {
+    if (!scheduleForm.title || !scheduleForm.talentName || !scheduleForm.date || !scheduleForm.time) {
+      alert('Please fill in all required fields (title, talent, date, time).');
+      return;
+    }
+    setScheduleLoading(true);
+    try {
+      const payload = {
+        ...scheduleForm,
+        clientName: currentUser?.organizationName || currentUser?.name || 'Client',
+        status: 'Scheduled'
+      };
+      const res = await fetch('/api/interviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
+      if (!res.ok) throw new Error('Failed');
+      const created = await res.json();
+      setInterviews(prev => [created, ...prev]);
+      setShowScheduleModal(false);
+      setScheduleForm({ title: '', talentId: '', talentName: '', talentAvatar: '', requestId: '', matchId: '', date: '', time: '10:00', notes: '', duration: '60' });
+      if (setNotifications) {
+        setNotifications([...(notifications || []), {
+          id: `notif_${Date.now()}`,
+          userId: currentUser?.id,
+          title: 'Interview Scheduled',
+          message: `"${created.title}" booked for ${created.date} at ${created.time}. Google Calendar invite sent.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        }]);
+      }
+    } catch {
+      alert('Failed to schedule interview. Please try again.');
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
 
-      alert(`Interview slot proposed successfully: "${title}" on ${date} at ${time}.`);
-    };
+  const handleReschedule = async () => {
+    if (!rescheduleTarget || !rescheduleForm.date || !rescheduleForm.time) return;
+    setScheduleLoading(true);
+    try {
+      const res = await fetch('/api/interviews', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: rescheduleTarget.id,
+          date: rescheduleForm.date,
+          time: rescheduleForm.time,
+          notes: rescheduleForm.notes || rescheduleTarget.notes,
+          status: 'Rescheduled'
+        })
+      });
+      if (!res.ok) throw new Error('Failed');
+      const updated = await res.json();
+      setInterviews(prev => prev.map(iv => iv.id === updated.id ? updated : iv));
+      setShowRescheduleModal(false);
+      setRescheduleTarget(null);
+      if (setNotifications) {
+        setNotifications([...(notifications || []), {
+          id: `notif_${Date.now()}`,
+          userId: currentUser?.id,
+          title: 'Interview Rescheduled',
+          message: `"${updated.title}" moved to ${updated.date} at ${updated.time}. Calendar updated.`,
+          read: false,
+          createdAt: new Date().toISOString()
+        }]);
+      }
+    } catch {
+      alert('Failed to reschedule. Please try again.');
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleCancelInterview = async (id: string, title: string) => {
+    if (!confirm(`Cancel interview "${title}"?`)) return;
+    try {
+      await fetch(`/api/interviews?id=${id}`, { method: 'DELETE' });
+      setInterviews(prev => prev.filter(iv => iv.id !== id));
+    } catch {
+      alert('Failed to cancel. Please try again.');
+    }
+  };
+
+  // Generate calendar week days from current date
+  const getWeekDays = (date: Date) => {
+    const start = new Date(date);
+    const day = start.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + diff);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return d;
+    });
+  };
+
+  const weekDays = getWeekDays(calendarCurrentDate);
+  const today = new Date();
+
+  const formatWeekDay = (d: Date) => {
+    const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    return `${days[d.getDay()]} ${d.getDate()}`;
+  };
+
+  const getInterviewsForDay = (d: Date) => {
+    const dateStr = d.toISOString().split('T')[0];
+    return interviews.filter(iv => iv.date === dateStr);
+  };
+
+  const upcoming = interviews
+    .filter(iv => iv.status !== 'Cancelled' && new Date(iv.date + 'T' + iv.time) >= today)
+    .sort((a, b) => new Date(a.date + 'T' + a.time).getTime() - new Date(b.date + 'T' + b.time).getTime())
+    .slice(0, 5);
+
+  const statusColor: Record<string, string> = {
+    Scheduled: '#2563EB',
+    Rescheduled: '#7C3AED',
+    Completed: '#10B981',
+    Cancelled: '#EF4444'
+  };
+  const statusBg: Record<string, string> = {
+    Scheduled: '#EFF6FF',
+    Rescheduled: '#F5F3FF',
+    Completed: '#ECFDF5',
+    Cancelled: '#FEF2F2'
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 14px', border: '1px solid #E2E8F0',
+    borderRadius: '10px', fontSize: '13px', color: '#0F172A',
+    background: '#F8FAFC', outline: 'none', boxSizing: 'border-box' as const
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: '11px', fontWeight: 700, color: '#475569', display: 'block', marginBottom: '6px', textTransform: 'uppercase' as const, letterSpacing: '0.05em'
+  };
+
+  const renderScheduling = () => {
+    const handleScheduleNew = () => setShowScheduleModal(true);
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-        
-        {/* Header Block */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+
+        {/* ── Schedule New Interview Modal ─────────────────────────────────── */}
+        {showScheduleModal && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+          }}>
+            <div style={{
+              background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+              width: '100%', maxWidth: '560px', boxShadow: '0 24px 80px rgba(0,0,0,0.15)',
+              maxHeight: '90vh', overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
+                <div>
+                  <h2 style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0' }}>Schedule Interview</h2>
+                  <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>A Google Calendar invite will be sent automatically.</p>
+                </div>
+                <button onClick={() => setShowScheduleModal(false)} style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '36px', height: '36px', cursor: 'pointer', fontSize: '16px', color: '#475569' }}>×</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div>
+                  <label style={labelStyle}>Interview Title *</label>
+                  <input style={inputStyle} placeholder="e.g. Senior Full-Stack Engineer — Final Round" value={scheduleForm.title} onChange={e => setScheduleForm(f => ({ ...f, title: e.target.value }))} />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Select Talent *</label>
+                  <select style={inputStyle} value={scheduleForm.talentId} onChange={e => setScheduleForm(f => ({ ...f, talentId: e.target.value }))}>
+                    <option value="">— Choose a candidate —</option>
+                    {talents.map((t: any) => (
+                      <option key={t.id} value={t.id}>{t.name || t.fullName || t.id}</option>
+                    ))}
+                    {talents.length === 0 && <option value="manual" onClick={() => {}}>Enter manually below</option>}
+                  </select>
+                </div>
+
+                {(scheduleForm.talentId === '' || scheduleForm.talentId === 'manual') && (
+                  <div>
+                    <label style={labelStyle}>Talent Name (manual) *</label>
+                    <input style={inputStyle} placeholder="Full name of candidate" value={scheduleForm.talentName} onChange={e => setScheduleForm(f => ({ ...f, talentName: e.target.value }))} />
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div>
+                    <label style={labelStyle}>Date *</label>
+                    <input type="date" style={inputStyle} value={scheduleForm.date} min={new Date().toISOString().split('T')[0]} onChange={e => setScheduleForm(f => ({ ...f, date: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Time *</label>
+                    <input type="time" style={inputStyle} value={scheduleForm.time} onChange={e => setScheduleForm(f => ({ ...f, time: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Duration</label>
+                  <select style={inputStyle} value={scheduleForm.duration} onChange={e => setScheduleForm(f => ({ ...f, duration: e.target.value }))}>
+                    <option value="30">30 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60">60 minutes</option>
+                    <option value="90">90 minutes</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Notes / Agenda</label>
+                  <textarea style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' }} placeholder="Topics to cover, required preparation, etc." value={scheduleForm.notes} onChange={e => setScheduleForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+
+                <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '16px' }}>📅</span>
+                  <p style={{ fontSize: '12px', color: '#0369A1', margin: 0, lineHeight: 1.5 }}>
+                    A <strong>Google Calendar event</strong> will be created with a Google Meet link and shared with the candidate automatically.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                  <button onClick={() => setShowScheduleModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}>Cancel</button>
+                  <button
+                    onClick={handleCreateInterview}
+                    disabled={scheduleLoading}
+                    style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: scheduleLoading ? '#93C5FD' : '#2563EB', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: scheduleLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    {scheduleLoading ? '⏳ Scheduling...' : '📅 Confirm & Create Calendar Event'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Reschedule Modal ─────────────────────────────────────────────── */}
+        {showRescheduleModal && rescheduleTarget && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+          }}>
+            <div style={{
+              background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+              width: '100%', maxWidth: '480px', boxShadow: '0 24px 80px rgba(0,0,0,0.15)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0' }}>Reschedule Interview</h2>
+                  <p style={{ fontSize: '12px', color: '#64748B', margin: 0 }}>{rescheduleTarget.title}</p>
+                </div>
+                <button onClick={() => { setShowRescheduleModal(false); setRescheduleTarget(null); }} style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '36px', height: '36px', cursor: 'pointer', fontSize: '16px', color: '#475569' }}>×</button>
+              </div>
+
+              {/* Current slot */}
+              <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px' }}>
+                <span style={{ fontSize: '16px' }}>📌</span>
+                <div>
+                  <p style={{ fontSize: '11px', fontWeight: 700, color: '#C2410C', margin: '0 0 2px 0', textTransform: 'uppercase' }}>Current Slot</p>
+                  <p style={{ fontSize: '13px', color: '#7C2D12', margin: 0, fontWeight: 600 }}>{rescheduleTarget.date} at {rescheduleTarget.time}</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div>
+                    <label style={labelStyle}>New Date *</label>
+                    <input type="date" style={inputStyle} value={rescheduleForm.date} min={new Date().toISOString().split('T')[0]} onChange={e => setRescheduleForm(f => ({ ...f, date: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>New Time *</label>
+                    <input type="time" style={inputStyle} value={rescheduleForm.time} onChange={e => setRescheduleForm(f => ({ ...f, time: e.target.value }))} />
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>Reason / Notes</label>
+                  <textarea style={{ ...inputStyle, minHeight: '70px', resize: 'vertical' }} placeholder="Reason for rescheduling (optional)" value={rescheduleForm.notes} onChange={e => setRescheduleForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+
+                <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: '10px' }}>
+                  <span style={{ fontSize: '14px' }}>🔄</span>
+                  <p style={{ fontSize: '12px', color: '#0369A1', margin: 0 }}>
+                    The Google Calendar invite will be <strong>updated automatically</strong> and the candidate will receive a notification.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                  <button onClick={() => { setShowRescheduleModal(false); setRescheduleTarget(null); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}>Cancel</button>
+                  <button
+                    onClick={handleReschedule}
+                    disabled={scheduleLoading}
+                    style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: scheduleLoading ? '#A78BFA' : '#7C3AED', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: scheduleLoading ? 'not-allowed' : 'pointer' }}
+                  >
+                    {scheduleLoading ? '⏳ Updating...' : '🔄 Confirm Reschedule'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Header ───────────────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em' }}>Interviews & Coordination</h1>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '11px', fontWeight: 800, color: '#10B981', background: '#ECFDF5', padding: '4px 10px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
-                Calendar synced with Google Workspace
+                Google Calendar Synced
               </span>
-              <span style={{ fontSize: '11px', fontWeight: 800, color: '#475569', background: '#F1F5F9', padding: '4px 10px', borderRadius: '20px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                🌎 GMT -5 (Eastern Time)
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569', background: '#F1F5F9', padding: '4px 10px', borderRadius: '20px' }}>
+                {interviews.filter(iv => iv.status !== 'Cancelled').length} Active Interviews
               </span>
             </div>
           </div>
-
-          <button 
+          <button
             onClick={handleScheduleNew}
-            style={{
-              background: '#2563EB', border: 'none', borderRadius: '10px',
-              padding: '12px 20px', color: '#FFFFFF', fontWeight: 700, fontSize: '13px',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
-              boxShadow: '0 4px 12px rgba(37,99,235,0.1)'
-            }}
+            style={{ background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', border: 'none', borderRadius: '12px', padding: '14px 24px', color: '#FFFFFF', fontWeight: 800, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 8px 24px rgba(37,99,235,0.25)', transition: 'transform 0.2s' }}
+            onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-2px)')}
+            onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}
           >
             📅 Schedule New Interview
           </button>
         </div>
 
-        {/* Workspace Split */}
+        {/* ── Calendar + Upcoming Panel ─────────────────────────────────────── */}
         <div className="db-grid-split-320" style={{ alignItems: 'start' }}>
-          
-          {/* Left Column: Calendar Component Grid */}
-          <Card style={{ padding: '24px' }}>
-            
-            {/* Calendar Sub-header controls */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <h3 style={{ fontSize: '18px', fontWeight: 900, color: '#0F172A', margin: 0 }}>October 2023</h3>
-                <div style={{ display: 'flex', background: '#F1F5F9', padding: '2px', borderRadius: '8px' }}>
-                  <button style={{ background: '#FFFFFF', border: 'none', borderRadius: '6px', padding: '4px 12px', fontSize: '11px', fontWeight: 800, color: '#0F172A', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>Week</button>
-                  <button onClick={() => alert('Monthly overview view is available on expanded enterprise subscription.')} style={{ background: 'transparent', border: 'none', padding: '4px 12px', fontSize: '11px', fontWeight: 700, color: '#64748B', cursor: 'pointer' }}>Month</button>
-                </div>
-              </div>
 
-              {/* Navigation arrows */}
+          {/* ── Weekly Calendar ──────────────────────────────────────────── */}
+          <Card style={{ padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 900, color: '#0F172A', margin: 0 }}>
+                {calendarCurrentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+              </h3>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={() => alert('Moving to previous calendar week')} style={{ width: '32px', height: '32px', borderRadius: '8px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 800, color: '#475569', cursor: 'pointer' }}>‹</button>
-                <button onClick={() => alert('Moving to next calendar week')} style={{ width: '32px', height: '32px', borderRadius: '8px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 800, color: '#475569', cursor: 'pointer' }}>›</button>
+                <button
+                  onClick={() => { const d = new Date(calendarCurrentDate); d.setDate(d.getDate() - 7); setCalendarCurrentDate(d); }}
+                  style={{ width: '32px', height: '32px', borderRadius: '8px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 800, color: '#475569', cursor: 'pointer' }}
+                >‹</button>
+                <button
+                  onClick={() => setCalendarCurrentDate(new Date())}
+                  style={{ padding: '0 12px', height: '32px', borderRadius: '8px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '11px', color: '#2563EB', cursor: 'pointer' }}
+                >Today</button>
+                <button
+                  onClick={() => { const d = new Date(calendarCurrentDate); d.setDate(d.getDate() + 7); setCalendarCurrentDate(d); }}
+                  style={{ width: '32px', height: '32px', borderRadius: '8px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 800, color: '#475569', cursor: 'pointer' }}
+                >›</button>
               </div>
             </div>
 
-            {/* Weekly Grid container */}
             <div style={{ border: '1px solid #E2E8F0', borderRadius: '12px', overflow: 'hidden' }}>
-              
-              {/* Grid Days Header */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC', textAlign: 'center' }}>
-                {['MON 23', 'TUE 24', 'WED 25', 'THU 26', 'FRI 27', 'SAT 28', 'SUN 29'].map((day, idx) => {
-                  const isCurrent = idx === 2; // WED 25 is active
+              {/* Day headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                {weekDays.map((d, idx) => {
+                  const isToday = d.toDateString() === today.toDateString();
                   return (
-                    <div key={day} style={{ padding: '14px', borderRight: idx < 6 ? '1px solid #E2E8F0' : 'none' }}>
-                      <span style={{ 
-                        display: 'inline-block', fontSize: '11px', fontWeight: 800, 
-                        color: isCurrent ? '#FFFFFF' : '#475569',
-                        background: isCurrent ? '#2563EB' : 'transparent',
-                        padding: isCurrent ? '4px 8px' : '0px', borderRadius: isCurrent ? '6px' : '0px'
+                    <div key={idx} style={{ padding: '12px 4px', textAlign: 'center', borderRight: idx < 6 ? '1px solid #E2E8F0' : 'none' }}>
+                      <span style={{
+                        display: 'inline-block', fontSize: '10px', fontWeight: 800,
+                        color: isToday ? '#FFFFFF' : '#64748B',
+                        background: isToday ? '#2563EB' : 'transparent',
+                        padding: isToday ? '4px 6px' : '0', borderRadius: isToday ? '6px' : '0'
                       }}>
-                        {day}
+                        {formatWeekDay(d)}
                       </span>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Grid Content slots */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', height: '360px', position: 'relative', background: '#FFFFFF' }}>
-                
-                {/* Dynamic Red indicator line */}
-                <div style={{ position: 'absolute', top: '160px', left: 0, right: 0, height: '2px', background: '#EF4444', opacity: 0.6 }}>
-                  <span style={{ position: 'absolute', left: 0, top: '-4px', width: '10px', height: '10px', borderRadius: '50%', background: '#EF4444' }} />
-                </div>
-
-                {/* Day 1: MON 23 slots */}
-                <div style={{ borderRight: '1px solid #F1F5F9', position: 'relative', padding: '4px' }}>
-                  <div 
-                    onClick={() => alert('Interview details: Monday Oct 23, 10:00 - 11:00 AM')}
-                    style={{
-                      position: 'absolute', top: '60px', left: '4px', right: '4px',
-                      background: '#EFF6FF', borderLeft: '3px solid #3B82F6', borderRadius: '6px',
-                      padding: '8px', cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', fontWeight: 800, color: '#1D4ED8', display: 'block' }}>Interview</span>
-                    <span style={{ fontSize: '8px', color: '#1E40AF' }}>10:00 - 11:00 AM</span>
-                  </div>
-                </div>
-
-                {/* Day 2: TUE 24 empty */}
-                <div style={{ borderRight: '1px solid #F1F5F9' }}></div>
-
-                {/* Day 3: WED 25 slot */}
-                <div style={{ borderRight: '1px solid #F1F5F9', position: 'relative', padding: '4px', background: '#F8FAFC' }}>
-                  <div 
-                    onClick={() => alert('Active screening session: UX/UI Design - Wednesday Oct 25, 1:00 - 2:30 PM')}
-                    style={{
-                      position: 'absolute', top: '130px', left: '4px', right: '4px',
-                      background: '#1D4ED8', borderLeft: '3px solid #1E3A8A', borderRadius: '6px',
-                      padding: '8px', cursor: 'pointer', boxShadow: '0 4px 10px rgba(29,78,216,0.2)'
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', fontWeight: 800, color: '#FFFFFF', display: 'block' }}>UX/UI...</span>
-                    <span style={{ fontSize: '8px', color: '#BFDBFE' }}>1:00 - 2:30 PM</span>
-                  </div>
-                </div>
-
-                {/* Day 4: THU 26 empty */}
-                <div style={{ borderRight: '1px solid #F1F5F9' }}></div>
-
-                {/* Day 5: FRI 27 slot */}
-                <div style={{ borderRight: '1px solid #F1F5F9', position: 'relative', padding: '4px' }}>
-                  <div 
-                    onClick={() => alert('Onboarding coordinate call: Friday Oct 27, 4:00 - 4:45 PM')}
-                    style={{
-                      position: 'absolute', top: '240px', left: '4px', right: '4px',
-                      background: '#F0FDFA', borderLeft: '3px solid #0D9488', borderRadius: '6px',
-                      padding: '8px', cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.01)'
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', fontWeight: 800, color: '#0F766E', display: 'block' }}>Onboard...</span>
-                    <span style={{ fontSize: '8px', color: '#115E59' }}>4:00 - 4:45 PM</span>
-                  </div>
-                </div>
-
-                {/* Day 6: SAT 28 empty */}
-                <div style={{ borderRight: '1px solid #F1F5F9', background: '#F8FAFC' }}></div>
-
-                {/* Day 7: SUN 29 empty */}
-                <div style={{ background: '#F8FAFC' }}></div>
-
+              {/* Calendar body — events per day */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', minHeight: '240px', background: '#FFFFFF' }}>
+                {weekDays.map((d, idx) => {
+                  const dayInterviews = getInterviewsForDay(d);
+                  const isToday = d.toDateString() === today.toDateString();
+                  return (
+                    <div key={idx} style={{
+                      borderRight: idx < 6 ? '1px solid #F1F5F9' : 'none',
+                      background: isToday ? '#FAFBFF' : 'transparent',
+                      padding: '6px 4px',
+                      display: 'flex', flexDirection: 'column', gap: '4px'
+                    }}>
+                      {dayInterviews.map(iv => (
+                        <div
+                          key={iv.id}
+                          title={`${iv.title} — ${iv.talentName} at ${iv.time}`}
+                          style={{
+                            background: statusBg[iv.status] || '#EFF6FF',
+                            borderLeft: `3px solid ${statusColor[iv.status] || '#2563EB'}`,
+                            borderRadius: '4px', padding: '4px 5px', cursor: 'pointer'
+                          }}
+                          onClick={() => { setRescheduleTarget(iv); setRescheduleForm({ date: iv.date, time: iv.time, notes: iv.notes || '' }); setShowRescheduleModal(true); }}
+                        >
+                          <span style={{ fontSize: '8px', fontWeight: 800, color: statusColor[iv.status] || '#2563EB', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{iv.time}</span>
+                          <span style={{ fontSize: '7px', color: '#475569', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{iv.talentName}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
-
             </div>
 
-            {/* Calendar Legend and availability rules */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                <span style={{ fontSize: '11px', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3B82F6' }} />
-                  Confirmed
+            {/* Legend */}
+            <div style={{ display: 'flex', gap: '16px', marginTop: '12px', flexWrap: 'wrap' }}>
+              {Object.entries(statusColor).map(([k, v]) => (
+                <span key={k} style={{ fontSize: '11px', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: v }} />{k}
                 </span>
-                <span style={{ fontSize: '11px', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818CF8' }} />
-                  Tentative
-                </span>
-                <span style={{ fontSize: '11px', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#94A3B8' }} />
-                  Past
-                </span>
-              </div>
-
-              <a 
-                href="#rules"
-                onClick={e => { e.preventDefault(); alert('Loading routing and automated screening rules panel...'); }}
-                style={{ fontSize: '11px', fontWeight: 700, color: '#2563EB', textDecoration: 'none' }}
-              >
-                Manage Availability Rules
-              </a>
+              ))}
             </div>
-
           </Card>
 
-          {/* Right Column: Upcoming Today Panels */}
+          {/* ── Right column: Upcoming + Connected Apps ──────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
-            {/* Upcoming Today Header */}
+
+            {/* Upcoming Interviews */}
             <Card style={{ padding: '20px' }}>
-              
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Upcoming Today</h3>
-                <span style={{ fontSize: '9px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '2px 6px', borderRadius: '4px' }}>
-                  3 EVENTS
+                <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Upcoming Interviews</h3>
+                <span style={{ fontSize: '9px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '2px 8px', borderRadius: '4px' }}>
+                  {upcoming.length} EVENTS
                 </span>
               </div>
 
-              {/* Today list */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                
-                {/* Event 1: Sarah Jenkins */}
-                <div style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '9px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>Expert</span>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>1:30 PM</span>
-                  </div>
-                  <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#1E293B', margin: '0 0 10px 0' }}>
-                    Interview: Lead Product Designer
-                  </h4>
-                  
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-                    <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                    <div>
-                      <span style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', display: 'block' }}>Sarah Jenkins</span>
-                      <span style={{ fontSize: '10px', color: '#64748B' }}>Top 1% Talent • SF Based</span>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button 
-                      onClick={() => alert('Launching Google Meet session...')}
-                      style={{
-                        flex: 1, background: '#2563EB', border: 'none', borderRadius: '6px',
-                        padding: '8px', color: '#FFFFFF', fontWeight: 700, fontSize: '11px', cursor: 'pointer'
-                      }}
-                    >
-                      Join Meet
-                    </button>
-                    <button 
-                      onClick={() => alert('Postponing or rescheduling event...')}
-                      style={{
-                        width: '32px', height: '32px', border: '1px solid #E2E8F0',
-                        borderRadius: '6px', background: '#FFFFFF', fontWeight: 700, cursor: 'pointer',
-                        color: '#64748B'
-                      }}
-                    >
-                      ...
-                    </button>
-                  </div>
-
+              {!interviewsLoaded ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: '#94A3B8', fontSize: '13px' }}>Loading…</div>
+              ) : upcoming.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: '#94A3B8' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '8px' }}>📅</div>
+                  <p style={{ fontSize: '13px', margin: '0 0 12px 0' }}>No upcoming interviews</p>
+                  <button onClick={() => setShowScheduleModal(true)} style={{ background: '#2563EB', border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>
+                    Schedule Now
+                  </button>
                 </div>
-
-                {/* Event 2: David Chen */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
-                    <span style={{ fontSize: '9px', fontWeight: 800, background: '#F1F5F9', color: '#475569', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>Standard</span>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>4:00 PM</span>
-                  </div>
-                  <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#1E293B', margin: '0 0 10px 0' }}>
-                    Screening: Senior Go Developer
-                  </h4>
-                  
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                    <div>
-                      <span style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', display: 'block' }}>David Chen</span>
-                      <span style={{ fontSize: '10px', color: '#64748B' }}>Backend Specialist</span>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {upcoming.map(iv => (
+                    <div key={iv.id} style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 800, background: statusBg[iv.status] || '#EFF6FF', color: statusColor[iv.status] || '#2563EB', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' as const }}>
+                          {iv.status}
+                        </span>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>{iv.time}</span>
+                      </div>
+                      <h4 style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', margin: '0 0 6px 0', lineHeight: 1.3 }}>{iv.title}</h4>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                        {iv.talentAvatar && <img src={iv.talentAvatar} alt="" style={{ width: '26px', height: '26px', borderRadius: '50%', objectFit: 'cover' }} />}
+                        <div>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#1E293B', display: 'block' }}>{iv.talentName}</span>
+                          <span style={{ fontSize: '10px', color: '#64748B' }}>{iv.date}</span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {iv.meetingLink && (
+                          <a href={iv.meetingLink} target="_blank" rel="noreferrer" style={{ flex: 1, background: '#2563EB', border: 'none', borderRadius: '6px', padding: '7px', color: '#FFFFFF', fontWeight: 700, fontSize: '10px', cursor: 'pointer', textDecoration: 'none', textAlign: 'center' as const }}>
+                            Join Meet
+                          </a>
+                        )}
+                        {iv.googleCalendarLink && (
+                          <a href={iv.googleCalendarLink} target="_blank" rel="noreferrer" title="Open in Google Calendar" style={{ width: '30px', height: '30px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', cursor: 'pointer', textDecoration: 'none' }}>
+                            📅
+                          </a>
+                        )}
+                        <button
+                          onClick={() => { setRescheduleTarget(iv); setRescheduleForm({ date: iv.date, time: iv.time, notes: iv.notes || '' }); setShowRescheduleModal(true); }}
+                          style={{ width: '30px', height: '30px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#FFFFFF', color: '#7C3AED', fontWeight: 800, fontSize: '11px', cursor: 'pointer' }}
+                          title="Reschedule"
+                        >🔄</button>
+                        <button
+                          onClick={() => handleCancelInterview(iv.id, iv.title)}
+                          style={{ width: '30px', height: '30px', border: '1px solid #FEE2E2', borderRadius: '6px', background: '#FFF5F5', color: '#EF4444', fontWeight: 800, fontSize: '11px', cursor: 'pointer' }}
+                          title="Cancel"
+                        >✕</button>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-
-              </div>
-
-              {/* View tomorrow CTA */}
-              <button 
-                onClick={() => alert('Loading tomorrow\'s synchronized vetting timeline...')}
-                style={{
-                  width: '100%', background: '#FFFFFF', border: '1px solid #E2E8F0',
-                  borderRadius: '8px', padding: '8px', fontSize: '11px',
-                  fontWeight: 700, color: '#64748B', cursor: 'pointer',
-                  marginTop: '16px'
-                }}
-              >
-                View Tomorrow's Schedule
-              </button>
-
+              )}
             </Card>
 
-            {/* Connected Apps Integration Panel */}
+            {/* Connected Apps */}
             <Card>
               <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A', marginBottom: '16px' }}>Connected Apps</h3>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                
-                {/* App 1: Google Calendar */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', border: '1px solid #E2E8F0', borderRadius: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '16px' }}>✉️</span>
+                    <span style={{ fontSize: '18px' }}>📅</span>
                     <div>
                       <span style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', display: 'block' }}>Google Calendar</span>
-                      <span style={{ fontSize: '9px', color: '#10B981', fontWeight: 600 }}>Synced 3m ago</span>
+                      <span style={{ fontSize: '9px', color: '#10B981', fontWeight: 600 }}>Active — auto-synced on every booking</span>
                     </div>
                   </div>
                   <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981' }} />
                 </div>
-
-                {/* App 2: Zoom Pro */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', border: '1px solid #E2E8F0', borderRadius: '8px', opacity: 0.6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', border: '1px solid #E2E8F0', borderRadius: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '16px' }}>🎥</span>
+                    <span style={{ fontSize: '18px' }}>🎥</span>
+                    <div>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', display: 'block' }}>Google Meet</span>
+                      <span style={{ fontSize: '9px', color: '#10B981', fontWeight: 600 }}>Auto-generated for every interview</span>
+                    </div>
+                  </div>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', border: '1px solid #E2E8F0', borderRadius: '8px', opacity: 0.5 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '18px' }}>💻</span>
                     <div>
                       <span style={{ fontSize: '12px', fontWeight: 800, color: '#1E293B', display: 'block' }}>Zoom Pro</span>
                       <span style={{ fontSize: '9px', color: '#64748B', fontWeight: 600 }}>Not Connected</span>
                     </div>
                   </div>
-                  <a href="#link" onClick={e => { e.preventDefault(); alert('Connecting Zoom credentials...'); }} style={{ fontSize: '10px', fontWeight: 800, color: '#2563EB', textDecoration: 'none' }}>Link</a>
+                  <a href="#" onClick={e => e.preventDefault()} style={{ fontSize: '10px', fontWeight: 800, color: '#2563EB', textDecoration: 'none' }}>Link</a>
                 </div>
-
               </div>
-
             </Card>
 
           </div>
-
         </div>
 
-      </div>
-    );
-  };
+        {/* ── All Interviews Table ──────────────────────────────────────────── */}
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 900, color: '#0F172A', margin: 0 }}>All Interviews</h3>
+            <button onClick={() => setShowScheduleModal(true)} style={{ background: 'transparent', border: '1px solid #2563EB', borderRadius: '8px', padding: '7px 16px', color: '#2563EB', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>
+              + New Interview
+            </button>
+          </div>
 
-  const renderReviews = () => {
-    // Dynamic database evaluations submit trigger
-    const handleSubmitReview = async () => {
-      if (reviewRating === 0) {
-        alert('Please select a star rating first.');
-        return;
-      }
-      
-      const targetName = selectedReviewTalentId === 'alex' ? 'Alex Sokolov' : 'Maria Lopez';
-      const targetRole = selectedReviewTalentId === 'alex' ? 'Sr. Backend Engineer' : 'Lead UI/UX Designer';
-
-      // Insert review telemetry into Supabase if operational
-      const { error } = await supabase.from('notifications').insert({
-        user_id: currentUser?.id,
-        title: 'Review Submitted',
-        content: `Review successfully posted for ${targetName} (${targetRole}) - Rating: ${reviewRating} Stars.`,
-        read_status: false
-      });
-
-      alert(`Thank you! Your verified evaluation for ${targetName} has been logged in our EOR ledger.`);
-      
-      // Reset inputs
-      setReviewRating(0);
-      setTechSkillValue(4);
-      setCommValue(5);
-      setReliabilityValue(5);
-      setPublicFeedbackText('');
-      setPrivateFeedbackText('');
-    };
-
-    const candidates = [
-      {
-        id: 'alex',
-        name: 'Alex Sokolov',
-        role: 'Sr. Backend Engineer',
-        contract: 'Backend API Architecture (6 Months)',
-        location: 'remote (EST)',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80',
-        badge: 'Q3 Sprint Ended'
-      },
-      {
-        id: 'maria',
-        name: 'Maria Lopez',
-        role: 'Lead UI/UX Designer',
-        contract: 'Mobile Platform UX Redesign (3 Months)',
-        location: 'remote (PST)',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=80',
-        badge: 'Q3 Design Sprint Ended'
-      }
-    ];
-
-    const activeCandidate = candidates.find(c => c.id === selectedReviewTalentId) || candidates[0];
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-        
-        {/* Header Title */}
-        <div>
-          <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em' }}>Reviews & Feedback</h1>
-          <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>
-            Help us maintain the highest quality of service by providing constructive feedback on recent engagements.
-          </p>
-        </div>
-
-        {/* Two-Column split workspace */}
-        <div className="db-grid-split-12-20" style={{ alignItems: 'start', gap: '32px' }}>
-          
-          {/* Left Column: Awaiting & Historical */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-            
-            {/* Awaiting Review Panel */}
-            <Card>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Awaiting Review</h3>
-                <span style={{ fontSize: '11px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '3px 8px', borderRadius: '12px' }}>
-                  2 PENDING
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {candidates.map(c => {
-                  const isActive = c.id === selectedReviewTalentId;
-                  return (
-                    <div 
-                      key={c.id}
-                      onClick={() => setSelectedReviewTalentId(c.id)}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '16px', border: isActive ? '2px solid #2563EB' : '1px solid #E2E8F0',
-                        borderRadius: '12px', cursor: 'pointer', background: isActive ? '#F8FAFC' : '#FFFFFF',
-                        transition: 'all 0.2s'
-                      }}
+          {!interviewsLoaded ? (
+            <div style={{ textAlign: 'center', padding: '32px', color: '#94A3B8' }}>Loading interviews…</div>
+          ) : interviews.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px', color: '#94A3B8' }}>
+              <div style={{ fontSize: '40px', marginBottom: '12px' }}>📋</div>
+              <p style={{ fontSize: '14px', margin: '0 0 16px 0' }}>No interviews scheduled yet</p>
+              <button onClick={() => setShowScheduleModal(true)} style={{ background: '#2563EB', border: 'none', borderRadius: '10px', padding: '10px 20px', color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>
+                Schedule First Interview
+              </button>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#F8FAFC' }}>
+                    {['Interview', 'Candidate', 'Date & Time', 'Status', 'Actions'].map(h => (
+                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '10px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E2E8F0' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {interviews.map(iv => (
+                    <tr key={iv.id} style={{ borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#FAFBFF')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <img src={c.avatar} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
-                        <div>
-                          <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '13px' }}>{c.name}</div>
-                          <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>{c.role}</div>
+                      <td style={{ padding: '14px 16px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B', display: 'block' }}>{iv.title}</span>
+                        {iv.notes && <span style={{ fontSize: '11px', color: '#94A3B8' }}>{iv.notes.slice(0, 60)}{iv.notes.length > 60 ? '…' : ''}</span>}
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {iv.talentAvatar && <img src={iv.talentAvatar} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }} />}
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#1E293B' }}>{iv.talentName}</span>
                         </div>
-                      </div>
-                      <span style={{ fontSize: '11px', color: '#94A3B8' }}>➔</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-
-            {/* Historical Reviews Panel */}
-            <Card>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Historical Reviews</h3>
-                <button 
-                  onClick={() => alert('Opening past verified client logs.')}
-                  style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                >
-                  View All
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                
-                {/* Past Review 1 */}
-                <div style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <span style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>John Doe</span>
-                    <span style={{ color: '#F59E0B', fontSize: '12px' }}>★★★★★</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#475569', lineHeight: 1.5, margin: '0 0 8px 0', fontStyle: 'italic' }}>
-                    "Exceptional delivery on the cloud migration project. Technical prowess was evident from day one."
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8' }}>
-                    <span>Nov 12, 2023</span>
-                    <span>Project: Infrastructure Revamp</span>
-                  </div>
-                </div>
-
-                {/* Past Review 2 */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <span style={{ fontWeight: 800, fontSize: '13px', color: '#1E293B' }}>Sarah Miller</span>
-                    <span style={{ color: '#F59E0B', fontSize: '12px' }}>★★★★★</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#475569', lineHeight: 1.5, margin: '0 0 8px 0', fontStyle: 'italic' }}>
-                    "Great communication and design thinking. Would hire again for future sprints."
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8' }}>
-                    <span>Oct 05, 2023</span>
-                    <span>Project: Mobile App Refresh</span>
-                  </div>
-                </div>
-
-              </div>
-            </Card>
-
-          </div>
-
-          {/* Right Column: Detailed Evaluation Panel */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-            
-            <Card style={{ padding: '32px' }}>
-              
-              {/* Selected Talent Spotlight Card */}
-              <div style={{ 
-                display: 'flex', gap: '16px', alignItems: 'center', 
-                background: '#F8FAFC', border: '1px solid #E2E8F0', 
-                padding: '20px', borderRadius: '16px', marginBottom: '28px' 
-              }}>
-                <img src={activeCandidate.avatar} alt="" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }} />
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>{activeCandidate.name}</h3>
-                    <span style={{ fontSize: '10px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '2px 6px', borderRadius: '6px' }}>Expert</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#64748B', margin: '4px 0 0 0', fontWeight: 600 }}>{activeCandidate.contract}</p>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px', fontSize: '11px', color: '#94A3B8' }}>
-                    <span>📍 {activeCandidate.location}</span>
-                    <span>•</span>
-                    <span style={{ color: '#10B981', fontWeight: 700 }}>✓ Verified Expert</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Overall Satisfaction star selector */}
-              <div style={{ marginBottom: '28px', borderBottom: '1px solid #F1F5F9', paddingBottom: '20px' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '12px' }}>Overall Satisfaction</h4>
-                
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <span 
-                      key={star}
-                      onClick={() => setReviewRating(star)}
-                      style={{ 
-                        fontSize: '32px', 
-                        cursor: 'pointer', 
-                        color: star <= reviewRating ? '#F59E0B' : '#E2E8F0',
-                        transition: 'color 0.15s' 
-                      }}
-                    >
-                      ★
-                    </span>
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#1E293B', display: 'block' }}>{iv.date}</span>
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>{iv.time}</span>
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 800, background: statusBg[iv.status] || '#F1F5F9', color: statusColor[iv.status] || '#475569', padding: '3px 10px', borderRadius: '20px' }}>
+                          {iv.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {iv.meetingLink && (
+                            <a href={iv.meetingLink} target="_blank" rel="noreferrer" style={{ padding: '5px 10px', borderRadius: '6px', background: '#2563EB', color: '#FFFFFF', fontWeight: 700, fontSize: '10px', textDecoration: 'none' }}>
+                              Join
+                            </a>
+                          )}
+                          {iv.googleCalendarLink && (
+                            <a href={iv.googleCalendarLink} target="_blank" rel="noreferrer" style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#475569', fontWeight: 700, fontSize: '10px', textDecoration: 'none' }} title="Google Calendar">
+                              📅
+                            </a>
+                          )}
+                          {iv.status !== 'Cancelled' && iv.status !== 'Completed' && (
+                            <button
+                              onClick={() => { setRescheduleTarget(iv); setRescheduleForm({ date: iv.date, time: iv.time, notes: iv.notes || '' }); setShowRescheduleModal(true); }}
+                              style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #DDD6FE', background: '#F5F3FF', color: '#7C3AED', fontWeight: 700, fontSize: '10px', cursor: 'pointer' }}
+                            >Reschedule</button>
+                          )}
+                          <button
+                            onClick={() => handleCancelInterview(iv.id, iv.title)}
+                            style={{ padding: '5px 8px', borderRadius: '6px', border: '1px solid #FEE2E2', background: '#FFF5F5', color: '#EF4444', fontWeight: 700, fontSize: '10px', cursor: 'pointer' }}
+                          >✕</button>
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                  <span style={{ fontSize: '12px', color: '#94A3B8', marginLeft: '12px' }}>
-                    {reviewRating > 0 ? `${reviewRating} Stars selected` : 'Select a star rating to continue'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Vetting Skill Metrics sliders */}
-              <div style={{ marginBottom: '28px', borderBottom: '1px solid #F1F5F9', paddingBottom: '24px' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '20px' }}>Criteria Performance</h4>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  
-                  {/* Metric 1 */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>Technical Skills</span>
-                      <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{techSkillValue === 5 ? 'Exceptional' : 'Proficient'}</span>
-                    </div>
-                    <input 
-                      type="range" min="1" max="5" 
-                      value={techSkillValue} 
-                      onChange={e => setTechSkillValue(Number(e.target.value))}
-                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8', marginTop: '4px' }}>
-                      <span>BASIC</span>
-                      <span>EXCEPTIONAL</span>
-                    </div>
-                  </div>
-
-                  {/* Metric 2 */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>Communication</span>
-                      <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{commValue === 5 ? 'Proactive' : 'Responsive'}</span>
-                    </div>
-                    <input 
-                      type="range" min="1" max="5" 
-                      value={commValue} 
-                      onChange={e => setCommValue(Number(e.target.value))}
-                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8', marginTop: '4px' }}>
-                      <span>UNRESPONSIVE</span>
-                      <span>PROACTIVE</span>
-                    </div>
-                  </div>
-
-                  {/* Metric 3 */}
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>Reliability</span>
-                      <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>{reliabilityValue === 5 ? 'Dependable' : 'Consistent'}</span>
-                    </div>
-                    <input 
-                      type="range" min="1" max="5" 
-                      value={reliabilityValue} 
-                      onChange={e => setReliabilityValue(Number(e.target.value))}
-                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
-                    />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#94A3B8', marginTop: '4px' }}>
-                      <span>INCONSISTENT</span>
-                      <span>DEPENDABLE</span>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* Public Feedback input block */}
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
-                  Public Feedback
-                </label>
-                <textarea 
-                  placeholder={`Tell us and the talent community about your experience working with ${activeCandidate.name.split(' ')[0]}...`}
-                  value={publicFeedbackText}
-                  onChange={e => setPublicFeedbackText(e.target.value)}
-                  style={{ 
-                    width: '100%', height: '80px', border: '1px solid #E2E8F0', 
-                    borderRadius: '10px', padding: '12px', fontSize: '13px', 
-                    boxSizing: 'border-box', outline: 'none', lineHeight: 1.5 
-                  }}
-                />
-              </div>
-
-              {/* Private Feedback input block */}
-              <div style={{ background: '#EFF6FF', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 800, color: '#1E3A8A', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
-                  Private Feedback (Admin Only)
-                </label>
-                <p style={{ fontSize: '11px', color: '#2563EB', margin: '0 0 10px 0' }}>
-                  This information will only be visible to Kongila account managers for talent curation.
-                </p>
-                <textarea 
-                  placeholder="Confidential notes regarding performance, fit, or internal concerns..."
-                  value={privateFeedbackText}
-                  onChange={e => setPrivateFeedbackText(e.target.value)}
-                  style={{ 
-                    width: '100%', height: '60px', border: '1px solid #BFDBFE', 
-                    borderRadius: '8px', padding: '10px', fontSize: '12px', 
-                    boxSizing: 'border-box', outline: 'none', lineHeight: 1.5, background: '#FFFFFF' 
-                  }}
-                />
-              </div>
-
-              {/* Action footer */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#64748B', cursor: 'pointer' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={isAnonymousPost} 
-                    onChange={e => setIsAnonymousPost(e.target.checked)}
-                    style={{ cursor: 'pointer' }}
-                  />
-                  Post anonymously to my public company profile
-                </label>
-                
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <button 
-                    onClick={() => { alert('Draft saved successfully.'); }}
-                    style={{
-                      background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px',
-                      padding: '10px 18px', color: '#475569', fontWeight: 700, fontSize: '13px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Save Draft
-                  </button>
-                  <button 
-                    onClick={handleSubmitReview}
-                    style={{
-                      background: '#2563EB', border: 'none', borderRadius: '10px',
-                      padding: '10px 20px', color: '#FFFFFF', fontWeight: 700, fontSize: '13px',
-                      cursor: 'pointer', boxShadow: '0 4px 12px rgba(37,99,235,0.1)'
-                    }}
-                  >
-                    Submit Review
-                  </button>
-                </div>
-              </div>
-
-            </Card>
-
-          </div>
-
-        </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
 
       </div>
     );
   };
+
+  const renderReviews = () => null;
 
   const renderSettings = () => (
     <Card style={{ padding: '32px' }}>
@@ -3263,15 +3704,15 @@ export default function ClientDashboard({
     <div className="dashboard-shell" style={{ display: 'flex', minHeight: '100vh', background: '#F8FAFC', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
       
       {/* ── Mobile Top Nav ── */}
-      <div className="mobile-nav-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '60px', background: '#0F172A', borderBottom: '1px solid #1E293B' }}>
+      <div className="mobile-nav-bar" style={{ alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '60px', background: '#FFFFFF', borderBottom: '1px solid #DDE2EC' }}>
         <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)} style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: 'none', border: 'none', cursor: 'pointer' }}>
-          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
-          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
-          <span style={{ width: '20px', height: '2px', background: '#FFFFFF', display: 'block' }}></span>
+          <span style={{ width: '20px', height: '2px', background: '#1A2340', display: 'block' }}></span>
+          <span style={{ width: '20px', height: '2px', background: '#1A2340', display: 'block' }}></span>
+          <span style={{ width: '20px', height: '2px', background: '#1A2340', display: 'block' }}></span>
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#2563EB', fontSize: '18px', margin: '0 auto 0 12px' }}>
-          <div style={{ width: '24px', height: '24px', background: '#2563EB', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
-          <span style={{ color: '#FFFFFF' }}>Kongila</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#0047CC', fontSize: '18px', margin: '0 auto 0 12px' }}>
+          <div style={{ width: '24px', height: '24px', background: '#0047CC', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
+          <span style={{ color: '#0047CC' }}>Kongila</span>
         </div>
       </div>
 
@@ -3286,19 +3727,19 @@ export default function ClientDashboard({
           />
           <aside className="mobile-sidebar-drawer open" style={{
             position: 'fixed', top: 0, bottom: 0, left: 0, width: '280px',
-            background: '#0F172A', borderRight: '1px solid #1E293B',
+            background: '#FFFFFF', borderRight: '1px solid #DDE2EC',
             display: 'flex', flexDirection: 'column', padding: '24px 16px',
             zIndex: 300, overflowY: 'auto'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #1E293B' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{
-                  width: '32px', height: '32px', borderRadius: '8px', background: '#2563EB',
+                  width: '32px', height: '32px', borderRadius: '8px', background: '#0047CC',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 900
                 }}>K</div>
-                <div style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>Client Portal</div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Client Portal</div>
               </div>
-              <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '20px', cursor: 'pointer' }}>✕</button>
+              <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', color: '#6B7A99', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
             
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
@@ -3315,29 +3756,29 @@ export default function ClientDashboard({
                       setMobileSidebarOpen(false);
                     }}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '12px',
-                      padding: '12px 16px', borderRadius: '12px', border: 'none',
-                      background: isActive ? '#2563EB' : 'transparent',
-                      color: isActive ? '#FFFFFF' : '#94A3B8',
-                      fontWeight: 700, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px', borderRadius: '8px', border: 'none',
+                      background: isActive ? '#EEF3FF' : 'transparent',
+                      color: isActive ? '#0047CC' : '#6B7A99',
+                      fontWeight: isActive ? 700 : 500, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
                       width: '100%'
                     }}
                   >
-                    <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                    <SidebarIcon id={item.id} color={isActive ? '#0047CC' : '#6B7A99'} size={16} />
                     {item.label}
                   </button>
                 );
               })}
             </nav>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', borderTop: '1px solid #1E293B', paddingTop: '16px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 'auto', borderTop: '1px solid #F5F7FA', paddingTop: '16px' }}>
               <button onClick={() => { onSignOut(); setMobileSidebarOpen(false); }} style={{
-                display: 'flex', alignItems: 'center', gap: '12px',
+                display: 'flex', alignItems: 'center', gap: '10px',
                 background: 'transparent', border: 'none', color: '#EF4444',
-                fontSize: '14px', fontWeight: 800, cursor: 'pointer', textAlign: 'left', padding: '12px 16px',
+                fontSize: '14px', fontWeight: 600, cursor: 'pointer', textAlign: 'left', padding: '8px',
                 width: '100%'
               }}>
-                <span>🚪</span>
+                <SidebarIcon id="logout" color="#EF4444" size={16} />
                 Sign Out
               </button>
             </div>
@@ -3345,35 +3786,33 @@ export default function ClientDashboard({
         </>
       )}
 
-      {/* ── Desktop Sidebar Modeled After Stitch Mockup ── */}
+      {/* ── Desktop Sidebar ── */}
       <aside className="desktop-sidebar" style={{
-        width: '260px', flexShrink: 0,
-        background: '#0F172A', // Sleek dark slate modeled after mockup
-        borderRight: '1px solid #1E293B',
+        width: '240px', flexShrink: 0,
+        background: '#FFFFFF',
+        borderRight: '1px solid #DDE2EC',
         display: 'flex', flexDirection: 'column',
-        padding: '32px 16px',
+        padding: '24px 12px',
         position: 'sticky', top: 0, height: '100vh', overflowY: 'auto'
       }}>
         {/* User Logo & Branding Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 24px', borderBottom: '1px solid #1E293B', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
           <div style={{
-            width: '40px', height: '40px', borderRadius: '12px',
-            background: '#2563EB',
+            width: '36px', height: '36px', borderRadius: '8px',
+            background: '#0047CC',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#FFFFFF', fontWeight: 900, fontSize: '22px', flexShrink: 0
+            color: '#FFFFFF', fontWeight: 900, fontSize: '20px', flexShrink: 0
           }}>
             K
           </div>
           <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.02em' }}>Kongila + Remotan</div>
-            <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>Elite Client Portal</div>
+            <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340', letterSpacing: '-0.02em' }}>Client Portal</div>
+            <div style={{ fontSize: '11px', color: '#6B7A99', marginTop: '2px' }}>Enterprise Operations</div>
           </div>
         </div>
 
         {/* Navigation Sidebar List */}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-          
-          
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
           {NAV_ITEMS.map(item => {
             const isActive = activeSection === item.id;
             return (
@@ -3386,15 +3825,16 @@ export default function ClientDashboard({
                   }
                 }}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '12px',
-                  padding: '12px 16px', borderRadius: '12px', border: 'none',
-                  background: isActive ? '#2563EB' : 'transparent', // Solid royal blue active state
-                  color: isActive ? '#FFFFFF' : '#94A3B8',
-                  fontWeight: 700, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '10px 12px', borderRadius: '8px', border: 'none',
+                  background: isActive ? '#EEF3FF' : 'transparent',
+                  color: isActive ? '#0047CC' : '#6B7A99',
+                  fontWeight: isActive ? 700 : 500, fontSize: '13px', cursor: 'pointer', textAlign: 'left',
+                  transition: 'all 0.15s',
+                  width: '100%'
                 }}
               >
-                <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                <SidebarIcon id={item.id} color={isActive ? '#0047CC' : '#6B7A99'} size={15} />
                 {item.label}
               </button>
             );
@@ -3405,14 +3845,14 @@ export default function ClientDashboard({
         <button 
           onClick={onSignOut}
           style={{
-            display: 'flex', alignItems: 'center', gap: '12px',
-            padding: '12px 16px', borderRadius: '12px', border: 'none',
-            background: 'transparent', color: '#EF4444', fontWeight: 800,
-            fontSize: '14px', cursor: 'pointer', textAlign: 'left',
-            marginTop: 'auto', transition: 'opacity 0.2s'
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '6px 8px', borderRadius: '8px', border: 'none',
+            background: 'transparent', color: '#EF4444', fontWeight: 600,
+            fontSize: '13px', cursor: 'pointer', textAlign: 'left',
+            marginTop: 'auto', width: '100%'
           }}
         >
-          <span>🚪</span>
+          <SidebarIcon id="logout" color="#EF4444" size={15} />
           Sign Out
         </button>
       </aside>
@@ -3422,41 +3862,62 @@ export default function ClientDashboard({
         
         {/* ── Top Header Bar ── */}
         <header className="desktop-header" style={{
-          height: '80px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0',
+          height: '70px', background: '#FFFFFF', borderBottom: '1px solid #DDE2EC',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '0 48px', flexShrink: 0, position: 'relative', zIndex: 10
+          padding: '0 40px', flexShrink: 0, position: 'relative', zIndex: 10
         }}>
           {/* Breadcrumbs */}
-          <div style={{ fontSize: '14px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
+          <div style={{ fontSize: '13px', color: '#6B7A99', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 500 }}>
             <span>Client Workspace</span>
-            <span style={{ color: '#CBD5E1' }}>›</span>
-            <span style={{ color: '#0F172A', fontWeight: 700 }}>
+            <span style={{ color: '#BAC2D1' }}>›</span>
+            <span style={{ color: '#1A2340', fontWeight: 700 }}>
               {NAV_ITEMS.find(n => n.id === activeSection)?.label}
             </span>
           </div>
 
           {/* Right Header Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-            {/* Quick Badges */}
-            <span style={{ fontSize: '20px', cursor: 'pointer', position: 'relative' }}>
-              💬
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%' }} />
-            </span>
-            <span style={{ fontSize: '20px', cursor: 'pointer', position: 'relative' }}>
-              🔔
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%' }} />
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+            {/* Quick stats / telemetry summary if applicable */}
+            <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#6B7A99', borderRight: '1px solid #DDE2EC', paddingRight: '24px' }}>
+              <div>
+                <span style={{ fontWeight: 700, color: '#1A2340' }}>{contracts.filter(c => c.clientId === currentUser?.id && c.status?.toLowerCase() === 'signed').length}</span> Active Hires
+              </div>
+              <div>
+                <span style={{ fontWeight: 700, color: '#1A2340' }}>{matches.filter(m => { const req = requests.find(r => r.id === m.requestId); return req?.clientId === currentUser?.id && m.status?.toLowerCase() === 'interview scheduled'; }).length}</span> Interviews
+              </div>
+            </div>
+
+            {/* Notification and Messages quick badges */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', position: 'relative' }}>
+              <div 
+                onClick={() => setActiveSection('messaging')}
+                style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7A99' }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%', border: '2px solid #FFFFFF' }} />
+              </div>
+              
+              <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7A99' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%', border: '2px solid #FFFFFF' }} />
+              </div>
+            </div>
 
             {/* Profile badge */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderLeft: '1px solid #E2E8F0', paddingLeft: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderLeft: '1px solid #DDE2EC', paddingLeft: '20px' }}>
               <img 
                 src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=256&h=256&q=80" 
                 alt="" 
                 style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} 
               />
               <div>
-                <span style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A', display: 'block' }}>{currentUser?.name || 'Alex Chen'}</span>
-                <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '1px' }}>{currentUser?.companyName || 'Horizon Fintech'}</span>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: '#1A2340', display: 'block' }}>{currentUser?.name || 'Alex Chen'}</span>
+                <span style={{ fontSize: '11px', color: '#6B7A99', display: 'block', marginTop: '1px' }}>{currentUser?.companyName || 'Horizon Fintech'}</span>
               </div>
             </div>
           </div>
@@ -3523,7 +3984,9 @@ export default function ClientDashboard({
             {/* Header step counter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '18px' }}>💼</span>
+                <span style={{ display: 'flex', alignItems: 'center', color: '#2563EB' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                </span>
                 <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Smart Talent Request</h2>
               </div>
               <span style={{ fontSize: '12px', fontWeight: 700, color: '#64748B' }}>Step {intakeStep} of 3</span>
@@ -3553,10 +4016,10 @@ export default function ClientDashboard({
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
                   {[
-                    { id: 'Managed Workforce', title: 'Managed Workforce', icon: '🛡️', desc: 'Kongila manages performance, systems and EOR directly. High supervision.' },
-                    { id: 'Outsource Talent', title: 'Outsource Talent', icon: '⚡', desc: 'Kongila pays talent; client manages execution directly. Lighter oversight.' },
-                    { id: 'Direct Placement', title: 'Direct Placement', icon: '🔍', desc: 'Full sourcing and vetting engine. Recommended shortlist deployable instantly.' },
-                    { id: 'Project Execution', title: 'Project Execution', icon: '📋', desc: 'Client prepays project milestone scopes. Direct delivery manager assigned.' }
+                    { id: 'Managed Workforce', title: 'Managed Workforce', desc: 'Kongila manages performance, systems and EOR directly. High supervision.' },
+                    { id: 'Outsource Talent', title: 'Outsource Talent', desc: 'Kongila pays talent; client manages execution directly. Lighter oversight.' },
+                    { id: 'Direct Placement', title: 'Direct Placement', desc: 'Full sourcing and vetting engine. Recommended shortlist deployable instantly.' },
+                    { id: 'Project Execution', title: 'Project Execution', desc: 'Client prepays project milestone scopes. Direct delivery manager assigned.' }
                   ].map(item => (
                     <div 
                       key={item.id}
@@ -3573,7 +4036,24 @@ export default function ClientDashboard({
                         alignItems: 'start'
                       }}
                     >
-                      <span style={{ fontSize: '20px' }}>{item.icon}</span>
+                      <span style={{ 
+                        fontSize: '20px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        color: intakeForm.serviceType === item.id ? '#2563EB' : '#64748B',
+                        marginTop: '2px'
+                      }}>
+                        {item.id === 'Managed Workforce' ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        ) : item.id === 'Outsource Talent' ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        ) : item.id === 'Direct Placement' ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                        ) : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+                        )}
+                      </span>
                       <div>
                         <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>{item.title}</div>
                         <div style={{ fontSize: '12px', color: '#64748B', lineHeight: 1.4 }}>{item.desc}</div>
@@ -3824,6 +4304,394 @@ export default function ClientDashboard({
               </div>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* View All Invoices Modal */}
+      {showAllInvoicesModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(10px)',
+          zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '24px', padding: '36px',
+            width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.15)', boxSizing: 'border-box'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+              <div>
+                <h2 style={{ fontSize: '24px', fontWeight: 900, color: '#0F172A', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>Invoice Ledger</h2>
+                <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>Review, audit, and process payments across all invoice tiers.</p>
+              </div>
+              <button onClick={() => setShowAllInvoicesModal(false)} style={{ background: '#F1F5F9', border: 'none', borderRadius: '10px', width: '40px', height: '40px', cursor: 'pointer', fontSize: '18px', color: '#475569', fontWeight: 800 }}>×</button>
+            </div>
+
+            {/* Categorize Invoices */}
+            {(() => {
+              const clientInvoices = invoices.filter(inv => inv.clientId === currentUser?.id);
+              
+              // Fallback mockup invoices if empty
+              const activeInvoicesList = clientInvoices.length > 0 ? clientInvoices : [
+                { id: 'inv_horizon_1', clientId: 'usr_horizon', amount: 12450.00, status: 'paid' as const, dueDate: '2026-05-01' },
+                { id: 'inv_horizon_2', clientId: 'usr_horizon', amount: 6250.40, status: 'overdue' as const, dueDate: '2026-04-15' },
+                { id: 'inv_horizon_3', clientId: 'usr_horizon', amount: 18750.40, status: 'sent' as const, dueDate: '2026-05-31' },
+                { id: 'inv_horizon_4', clientId: 'usr_horizon', amount: 8900.00, status: 'paid' as const, dueDate: '2026-04-01' },
+                { id: 'inv_horizon_5', clientId: 'usr_horizon', amount: 12500.00, status: 'overdue' as const, dueDate: '2026-03-10' },
+                { id: 'inv_horizon_6', clientId: 'usr_horizon', amount: 42300.00, status: 'sent' as const, dueDate: '2026-06-15' }
+              ];
+
+              const overdueInvoices = activeInvoicesList.filter(inv => inv.status === 'overdue');
+              const dueInvoices = activeInvoicesList.filter(inv => inv.status === 'sent' || inv.status === 'draft');
+              const paidInvoices = activeInvoicesList.filter(inv => inv.status === 'paid');
+
+              const renderInvoiceTable = (list: typeof activeInvoicesList, title: string, badgeBg: string, badgeColor: string) => (
+                <div style={{ marginBottom: '28px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                    <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#1E293B', margin: 0 }}>{title}</h4>
+                    <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '12px', background: badgeBg, color: badgeColor }}>
+                      {list.length} Items
+                    </span>
+                  </div>
+
+                  {list.length === 0 ? (
+                    <p style={{ fontSize: '12px', color: '#94A3B8', margin: '0 0 16px 0', fontStyle: 'italic' }}>No invoices in this status.</p>
+                  ) : (
+                    <div style={{ border: '1px solid #E2E8F0', borderRadius: '12px', overflow: 'hidden', marginBottom: '16px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
+                            <th style={{ padding: '10px 18px', fontWeight: 700, color: '#64748B' }}>Invoice ID</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 700, color: '#64748B' }}>Due Date</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 700, color: '#64748B' }}>Amount</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 700, color: '#64748B', textAlign: 'right' }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.map(inv => (
+                            <tr key={inv.id} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                              <td style={{ padding: '12px 18px', fontWeight: 700, color: '#1E293B' }}>INV-{inv.id.replace('inv_', '').substring(0, 6).toUpperCase()}</td>
+                              <td style={{ padding: '12px 18px', color: '#64748B' }}>{new Date(inv.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                              <td style={{ padding: '12px 18px', fontWeight: 800, color: '#0F172A' }}>{formatCurrency(inv.amount)}</td>
+                              <td style={{ padding: '12px 18px', textAlign: 'right' }}>
+                                <button onClick={() => inv.status === 'paid' ? alert(`Receipt downloaded for INV-${inv.id.replace('inv_', '').substring(0, 6).toUpperCase()}`) : handleSinglePayment(inv.id, inv.amount)} style={{
+                                  background: 'transparent', border: 'none', color: '#2563EB',
+                                  fontWeight: 700, fontSize: '11px', cursor: 'pointer'
+                                }}>
+                                  {inv.status === 'paid' ? 'View Receipt ➔' : 'Pay Invoice ➔'}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+
+              return (
+                <div>
+                  {renderInvoiceTable(overdueInvoices, 'Overdue Invoices', '#FEF2F2', '#EF4444')}
+                  {renderInvoiceTable(dueInvoices, 'Outstanding Due Invoices', '#FFF7ED', '#F57C00')}
+                  {renderInvoiceTable(paidInvoices, 'Paid Invoices History', '#ECFDF5', '#10B981')}
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button onClick={() => setShowAllInvoicesModal(false)} style={{
+                background: '#0F172A', border: 'none', borderRadius: '10px',
+                padding: '12px 24px', color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer'
+              }}>
+                Close Invoice Desk
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Re-hire Past Hire Modal */}
+      {showRehireModal && rehireTarget && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(8px)',
+          zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+            width: '100%', maxWidth: '500px', boxShadow: '0 24px 80px rgba(0,0,0,0.15)',
+            boxSizing: 'border-box'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0', letterSpacing: '-0.02em' }}>Re-hire Talent</h2>
+                <p style={{ fontSize: '12px', color: '#64748B', margin: 0 }}>Propose re-engagement terms for {rehireTarget.talentName}</p>
+              </div>
+              <button onClick={() => { setShowRehireModal(false); setRehireTarget(null); }} style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '36px', height: '36px', cursor: 'pointer', fontSize: '16px', color: '#475569' }}>×</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>Proposed Role *</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Lead QA Engineer" 
+                  value={rehireForm.role} 
+                  onChange={e => setRehireForm(f => ({ ...f, role: e.target.value }))}
+                  style={{ width: '100%', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>Proposed Monthly Salary (USD) *</label>
+                <input 
+                  type="number" 
+                  placeholder="e.g. 12400" 
+                  value={rehireForm.rate} 
+                  onChange={e => setRehireForm(f => ({ ...f, rate: e.target.value }))}
+                  style={{ width: '100%', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>Proposed Start Date *</label>
+                <input 
+                  type="date" 
+                  min={new Date().toISOString().split('T')[0]} 
+                  value={rehireForm.startDate} 
+                  onChange={e => setRehireForm(f => ({ ...f, startDate: e.target.value }))}
+                  style={{ width: '100%', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>Commitment Level *</label>
+                <select 
+                  value={rehireForm.commitmentLevel} 
+                  onChange={e => setRehireForm(f => ({ ...f, commitmentLevel: e.target.value as any }))}
+                  style={{ width: '100%', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', boxSizing: 'border-box' }}
+                >
+                  <option value="Full-Time">Full-Time Retainer</option>
+                  <option value="Part-Time">Part-Time Retainer</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '6px' }}>Special Instructions / Note to Admin</label>
+                <textarea 
+                  placeholder="Provide onboarding logistics, hardware requirements, etc."
+                  value={rehireForm.notes} 
+                  onChange={e => setRehireForm(f => ({ ...f, notes: e.target.value }))}
+                  style={{ width: '100%', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', minHeight: '80px', boxSizing: 'border-box', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button onClick={() => { setShowRehireModal(false); setRehireTarget(null); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}>Cancel</button>
+                <button
+                  onClick={submitRehireRequest}
+                  style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: '#2563EB', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: 'pointer' }}
+                >
+                  🚀 Submit Re-hire Request
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Client Review Modal */}
+      {showReviewModal && reviewTalentDetails && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(8px)',
+          zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+            width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.15)', boxSizing: 'border-box'
+          }}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                <img 
+                  src={reviewTalentDetails.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80'} 
+                  alt="" 
+                  style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }} 
+                />
+                <div>
+                  <h2 style={{ fontSize: '18px', fontWeight: 900, color: '#0F172A', margin: 0, letterSpacing: '-0.02em' }}>
+                    Review {reviewTalentDetails.name}
+                  </h2>
+                  <p style={{ fontSize: '12px', color: '#64748B', margin: '4px 0 0 0', fontWeight: 600 }}>
+                    {reviewTalentDetails.role} • {reviewTalentDetails.contract}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => { setShowReviewModal(false); setReviewTalentDetails(null); }} 
+                style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              {/* Overall Satisfaction */}
+              <div style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: '16px' }}>
+                <h4 style={{ fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
+                  Overall Satisfaction *
+                </h4>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <span 
+                      key={star}
+                      onClick={() => setReviewRating(star)}
+                      style={{ 
+                        fontSize: '32px', 
+                        cursor: 'pointer', 
+                        color: star <= reviewRating ? '#F59E0B' : '#E2E8F0',
+                        transition: 'color 0.15s' 
+                      }}
+                    >
+                      ★
+                    </span>
+                  ))}
+                  <span style={{ fontSize: '11px', color: '#94A3B8', marginLeft: '8px', fontWeight: 600 }}>
+                    {reviewRating > 0 ? `${reviewRating} / 5 Stars` : 'Select a rating'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Performance Criteria Sliders */}
+              <div style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: '20px' }}>
+                <h4 style={{ fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '14px', letterSpacing: '0.05em' }}>
+                  Criteria Performance
+                </h4>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Metric 1 */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#1E293B' }}>Technical Skills</span>
+                      <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700 }}>
+                        {techSkillValue === 5 ? 'Exceptional' : techSkillValue >= 4 ? 'Highly Capable' : techSkillValue >= 3 ? 'Proficient' : 'Basic'}
+                      </span>
+                    </div>
+                    <input 
+                      type="range" min="1" max="5" 
+                      value={techSkillValue} 
+                      onChange={e => setTechSkillValue(Number(e.target.value))}
+                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
+                    />
+                  </div>
+
+                  {/* Metric 2 */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#1E293B' }}>Communication</span>
+                      <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700 }}>
+                        {commValue === 5 ? 'Exceptional/Proactive' : commValue >= 4 ? 'Responsive' : commValue >= 3 ? 'Consistent' : 'Needs Work'}
+                      </span>
+                    </div>
+                    <input 
+                      type="range" min="1" max="5" 
+                      value={commValue} 
+                      onChange={e => setCommValue(Number(e.target.value))}
+                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
+                    />
+                  </div>
+
+                  {/* Metric 3 */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#1E293B' }}>Reliability & Delivery</span>
+                      <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 700 }}>
+                        {reliabilityValue === 5 ? 'Exceptional/Dependable' : reliabilityValue >= 4 ? 'Consistent' : reliabilityValue >= 3 ? 'Acceptable' : 'Inconsistent'}
+                      </span>
+                    </div>
+                    <input 
+                      type="range" min="1" max="5" 
+                      value={reliabilityValue} 
+                      onChange={e => setReliabilityValue(Number(e.target.value))}
+                      style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Public Feedback */}
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                  Public Testimonial / Feedback
+                </label>
+                <textarea 
+                  placeholder={`Share your positive experience working with ${reviewTalentDetails.name.split(' ')[0]} with the community...`}
+                  value={publicFeedbackText}
+                  onChange={e => setPublicFeedbackText(e.target.value)}
+                  style={{ 
+                    width: '100%', height: '80px', border: '1px solid #E2E8F0', 
+                    borderRadius: '10px', padding: '12px', fontSize: '13px', 
+                    boxSizing: 'border-box', outline: 'none', lineHeight: 1.5, resize: 'vertical',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              {/* Private Feedback Container */}
+              <div style={{ background: '#EFF6FF', borderRadius: '12px', padding: '16px', border: '1px solid #DBEAFE' }}>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: '#1E3A8A', textTransform: 'uppercase', display: 'block', marginBottom: '4px', letterSpacing: '0.05em' }}>
+                  Confidential Admin-Only Note (Private)
+                </label>
+                <p style={{ fontSize: '11px', color: '#2563EB', margin: '0 0 8px 0', lineHeight: 1.4 }}>
+                  This confidential feedback will be sent directly to the Kongila administrative team for internal talent curation and support. It will not be visible to the talent or on public profiles.
+                </p>
+                <textarea 
+                  placeholder="Share private notes regarding fit, soft skills, or internal manager recommendations..."
+                  value={privateFeedbackText}
+                  onChange={e => setPrivateFeedbackText(e.target.value)}
+                  style={{ 
+                    width: '100%', height: '70px', border: '1px solid #BFDBFE', 
+                    borderRadius: '8px', padding: '10px', fontSize: '12px', 
+                    boxSizing: 'border-box', outline: 'none', lineHeight: 1.5, background: '#FFFFFF',
+                    resize: 'vertical', fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+
+              {/* Anonymity Checkbox */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#64748B', cursor: 'pointer', userSelect: 'none' }}>
+                <input 
+                  type="checkbox" 
+                  checked={isAnonymousPost} 
+                  onChange={e => setIsAnonymousPost(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                Post anonymously to company profile page
+              </label>
+
+              {/* Modal Footer buttons */}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button 
+                  onClick={() => { setShowReviewModal(false); setReviewTalentDetails(null); }} 
+                  style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitReview}
+                  style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: '#2563EB', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: 'pointer', boxShadow: '0 4px 12px rgba(37,99,235,0.15)' }}
+                >
+                  🚀 Submit Verified Review
+                </button>
+              </div>
+
+            </div>
           </div>
         </div>
       )}

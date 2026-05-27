@@ -932,3 +932,141 @@ img { max-width: 100%; height: auto; }
   .hide-mobile { display: none !important; }
   .show-mobile { display: flex !important; }
 }
+
+/* ============================================================
+   ADMIN PANEL — EXTENDED MODULE STYLES
+   ============================================================ */
+
+/* 6-column stats grid variant */
+.stats-card-grid-6 {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+/* Support chat bubbles */
+.chat-bubble-support {
+  background: var(--kongila-blue);
+  color: #ffffff;
+  border-radius: 12px 12px 2px 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 75%;
+}
+
+.chat-bubble-user {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: 12px 12px 12px 2px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 75%;
+}
+
+/* Remotan teal accents */
+.remotan-card {
+  border-top: 3px solid var(--accent-teal) !important;
+}
+
+.remotan-badge {
+  background: rgba(10, 191, 188, 0.1);
+  color: var(--accent-teal);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* Sidebar section label */
+.sidebar-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px 6px;
+  margin-top: 4px;
+}
+
+.sidebar-section-label.remotan {
+  color: var(--accent-teal);
+  border-top: 1px solid var(--border-glass);
+  padding-top: 12px;
+  margin-top: 8px;
+}
+
+/* Priority border indicator */
+.ticket-urgent { border-left: 4px solid var(--accent-magenta) !important; }
+.ticket-high { border-left: 4px solid var(--accent-gold) !important; }
+.ticket-medium { border-left: 4px solid #3D7FFF !important; }
+.ticket-low { border-left: 4px solid var(--accent-green) !important; }
+
+/* Vetting score bar */
+.score-bar-container {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+
+/* Assessment card */
+.assessment-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  padding: 20px;
+  transition: var(--transition-smooth);
+}
+.assessment-card:hover {
+  border-color: var(--accent-purple);
+  box-shadow: 0 4px 16px rgba(0, 71, 204, 0.04);
+}
+
+/* Mobile admin adjustments */
+@media (max-width: 768px) {
+  .mobile-nav-bar { display: flex !important; }
+
+  .sidebar {
+    display: none !important;
+  }
+
+  .main-content {
+    padding: 80px 16px 20px !important;
+  }
+
+  .stats-card-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .stats-card-grid-6 {
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Two-pane layouts collapse on mobile */
+  [style*="grid-template-columns: 1fr 1.4fr"],
+  [style*="grid-template-columns: 1fr 1.6fr"],
+  [style*="grid-template-columns: 1.2fr 2fr"],
+  [style*="grid-template-columns: 2fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-card-grid-6 {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .stats-card-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+

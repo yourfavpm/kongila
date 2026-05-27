@@ -1,7 +1,7 @@
 import { 
   TalentProfile, ServiceRequest, Match, Task, Contract, Notification, AuditLog, AgentLog,
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
-  Invoice, Payment, TalentPayout, Message, SupportTicket, SupportMessage
+  Invoice, Payment, TalentPayout, Message, SupportTicket, SupportMessage, Interview, RehireRequest
 } from '@kongila/shared-types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -371,7 +371,48 @@ interface Schema {
   userRoles: any[];
   supportTickets: SupportTicket[];
   supportMessages: SupportMessage[];
+  interviews: Interview[];
+  rehireRequests?: RehireRequest[];
 }
+
+const DEFAULT_INTERVIEWS: Interview[] = [
+  {
+    id: 'interview_001',
+    requestId: 'req_seed_001',
+    matchId: 'match_seed_001',
+    talentId: 'talent_chidi',
+    talentName: 'Chidi Anya',
+    talentAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200',
+    clientName: 'Horizon Fintech',
+    title: 'Senior Full-Stack Engineering Interview',
+    date: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    time: '10:00',
+    status: 'Scheduled',
+    meetingLink: 'https://meet.google.com/kng-int-001',
+    notes: 'Focus on system design and distributed architecture experience.',
+    googleCalendarEventId: 'gcal_evt_001',
+    googleCalendarLink: 'https://calendar.google.com/calendar/event?eid=gcal_evt_001',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'interview_002',
+    requestId: 'req_seed_002',
+    matchId: 'match_seed_002',
+    talentId: 'talent_fatoumata',
+    talentName: 'Fatoumata Diallo',
+    talentAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+    clientName: 'Nexus Health',
+    title: 'Lead Product Designer Final Interview',
+    date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    time: '14:00',
+    status: 'Scheduled',
+    meetingLink: 'https://meet.google.com/kng-int-002',
+    notes: 'Portfolio walkthrough and design philosophy discussion.',
+    googleCalendarEventId: 'gcal_evt_002',
+    googleCalendarLink: 'https://calendar.google.com/calendar/event?eid=gcal_evt_002',
+    createdAt: new Date().toISOString()
+  }
+];
 
 const DEFAULT_CONTRACTS: any[] = [
   {
@@ -477,7 +518,12 @@ const DEFAULT_ASSIGNMENTS: Assignment[] = [
 ];
 
 const DEFAULT_INVOICES: Invoice[] = [
-  { id: 'inv_horizon_may', clientId: 'client_horizon', amount: 12450.00, status: 'sent', dueDate: '2026-05-31' }
+  { id: 'inv_horizon_1', clientId: 'usr_horizon', amount: 12450.00, status: 'paid', dueDate: '2026-05-01' },
+  { id: 'inv_horizon_2', clientId: 'usr_horizon', amount: 6250.40, status: 'overdue', dueDate: '2026-04-15' },
+  { id: 'inv_horizon_3', clientId: 'usr_horizon', amount: 18750.40, status: 'sent', dueDate: '2026-05-31' },
+  { id: 'inv_horizon_4', clientId: 'usr_horizon', amount: 8900.00, status: 'paid', dueDate: '2026-04-01' },
+  { id: 'inv_horizon_5', clientId: 'usr_horizon', amount: 12500.00, status: 'overdue', dueDate: '2026-03-10' },
+  { id: 'inv_horizon_6', clientId: 'usr_horizon', amount: 42300.00, status: 'sent', dueDate: '2026-06-15' }
 ];
 
 const DEFAULT_PAYMENTS: Payment[] = [
@@ -558,7 +604,9 @@ let inMemoryDb: Schema = {
   roles: [],
   userRoles: [],
   supportTickets: DEFAULT_SUPPORT_TICKETS,
-  supportMessages: DEFAULT_SUPPORT_MESSAGES
+  supportMessages: DEFAULT_SUPPORT_MESSAGES,
+  interviews: DEFAULT_INTERVIEWS,
+  rehireRequests: []
 };
 
 function isServer(): boolean {
@@ -834,6 +882,80 @@ export function addAgentLog(agentName: AgentLog['agentName'], message: string, t
     db.agentLogs = db.agentLogs.slice(0, 100);
   }
   
+  writeDb(db);
+}
+
+// ─── Interview CRUD Helpers ───────────────────────────────────────────────────
+
+export function getInterviews(): Interview[] {
+  const db = readDb();
+  return db.interviews || [];
+}
+
+export function createInterview(data: Omit<Interview, 'id' | 'createdAt'>): Interview {
+  const db = readDb();
+  const newInterview: Interview = {
+    ...data,
+    id: `interview_${Date.now()}`,
+    createdAt: new Date().toISOString()
+  };
+  if (!db.interviews) db.interviews = [];
+  db.interviews.push(newInterview);
+
+  addAuditLog(
+    'Client',
+    'Schedule Interview',
+    `Booked "${data.title}" with ${data.talentName} on ${data.date} at ${data.time}`
+  );
+  addAgentLog(
+    'Workflow Agent',
+    `Interview slot confirmed with ${data.talentName} on ${data.date}. Google Calendar event synced.`,
+    'success'
+  );
+
+  writeDb(db);
+  return newInterview;
+}
+
+export function updateInterview(id: string, updates: Partial<Interview>): Interview | null {
+  const db = readDb();
+  if (!db.interviews) return null;
+  let updated: Interview | null = null;
+  db.interviews = db.interviews.map(iv => {
+    if (iv.id === id) {
+      updated = { ...iv, ...updates, updatedAt: new Date().toISOString() };
+      return updated;
+    }
+    return iv;
+  });
+
+  if (updated) {
+    const iv = updated as Interview;
+    addAuditLog(
+      'Client',
+      updates.status === 'Rescheduled' ? 'Reschedule Interview' : 'Update Interview',
+      `Interview "${iv.title}" with ${iv.talentName} updated — new slot: ${iv.date} at ${iv.time}`
+    );
+    addAgentLog(
+      'Workflow Agent',
+      `Interview rescheduled for ${iv.talentName}. Calendar invite updated automatically.`,
+      'info'
+    );
+  }
+
+  writeDb(db);
+  return updated;
+}
+
+export function deleteInterview(id: string): void {
+  const db = readDb();
+  if (!db.interviews) return;
+  const target = db.interviews.find(iv => iv.id === id);
+  db.interviews = db.interviews.filter(iv => iv.id !== id);
+  if (target) {
+    addAuditLog('Client', 'Cancel Interview', `Interview with ${target.talentName} cancelled.`);
+    addAgentLog('Workflow Agent', `Interview with ${target.talentName} removed from calendar.`, 'warning');
+  }
   writeDb(db);
 }
 
@@ -1230,11 +1352,22 @@ export async function readDbAsync(): Promise<Schema> {
     roles: [],
     userRoles: [],
     supportTickets,
-    supportMessages
+    supportMessages,
+    interviews: readDb().interviews || [],
+    rehireRequests: readDb().rehireRequests || []
   };
 }
 
 export async function writeDbAsync(db: Schema): Promise<void> {
+  // Mirror state locally to db.json for persistent offline/interviews support
+  try {
+    const currentDb = readDb();
+    const mergedDb = { ...currentDb, ...db };
+    writeDb(mergedDb);
+  } catch (e) {
+    console.error('Failed to write db.json in writeDbAsync:', e);
+  }
+
   const supabase = getSupabaseClient();
   
   if (db.users) {

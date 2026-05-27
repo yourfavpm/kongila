@@ -1,18 +1,74 @@
 {
   "talents": [
     {
+      "id": "talent_zola",
+      "name": "Zola Ndlovu",
+      "email": "",
+      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
+      "title": "Technical Product Manager",
+      "skills": [],
+      "timezone": "GMT+2 (Johannesburg)",
+      "salaryExpectation": 4800,
+      "experienceYears": 7,
+      "availability": 100,
+      "vettingStage": "Final Review",
+      "vettingStatus": "Vetted",
+      "vettingScores": {
+        "technical": 88,
+        "behavioral": 95,
+        "personality": 92,
+        "remoteReadiness": 90,
+        "workSimulation": 90,
+        "communication": 98,
+        "experience": 85
+      },
+      "grade": "A",
+      "tags": [
+        "Independent Worker",
+        "Strong Communicator"
+      ],
+      "bio": "Experienced PM skilled in bridging engineering and business goals to deliver exceptional user-facing features.",
+      "documents": []
+    },
+    {
+      "id": "talent_amina",
+      "name": "Amina Osei",
+      "email": "",
+      "avatar": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=200",
+      "title": "Frontend Engineer",
+      "skills": [],
+      "timezone": "GMT+3 (Nairobi)",
+      "salaryExpectation": 2500,
+      "experienceYears": 2,
+      "availability": 100,
+      "vettingStage": "Skill Assessment",
+      "vettingStatus": "Review",
+      "vettingScores": {
+        "technical": 72,
+        "behavioral": 80,
+        "personality": 78,
+        "remoteReadiness": 85,
+        "workSimulation": 70,
+        "communication": 88,
+        "experience": 50
+      },
+      "grade": "B",
+      "tags": [
+        "Needs Supervision",
+        "Strong Learner"
+      ],
+      "bio": "Motivated React developer eager to learn and grow in a fast-paced remote product team.",
+      "documents": []
+    },
+    {
       "id": "talent_chidi",
       "name": "Chidi Anya",
-      "email": "chidi.anya@kongila.dev",
+      "email": "",
       "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
       "title": "Senior Full-Stack Engineer",
       "skills": [
         "React",
-        "Node.js",
-        "TypeScript",
-        "PostgreSQL",
-        "GraphQL",
-        "Next.js"
+        "Node.js"
       ],
       "timezone": "GMT+1 (Lagos)",
       "salaryExpectation": 4500,
@@ -36,232 +92,16 @@
         "Independent Worker"
       ],
       "bio": "Elite developer specializing in React and distributed Node.js backends. Passionate about writing scalable, clean code.",
-      "documents": [
-        {
-          "id": "doc_chidi_cv",
-          "name": "Professional_CV_2024.pdf",
-          "category": "Professional (CV, Portfolio)",
-          "fileSize": "1.2 MB",
-          "uploadedAt": "Uploaded 2 days ago",
-          "status": "Vetted"
-        },
-        {
-          "id": "doc_chidi_portfolio",
-          "name": "UX_Case_Studies.pdf",
-          "category": "Professional (CV, Portfolio)",
-          "fileSize": "18.5 MB",
-          "uploadedAt": "Updated 1 week ago",
-          "status": "Vetted"
-        },
-        {
-          "id": "doc_chidi_aws",
-          "name": "AWS_Devops_cert_Assoc.png",
-          "category": "Certifications",
-          "fileSize": "4.8 MB",
-          "uploadedAt": "Verified Jun 2023",
-          "status": "Verified",
-          "certificateImage": "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=150"
-        },
-        {
-          "id": "doc_chidi_nda",
-          "name": "Non-Disclosure Agreement (NDA)",
-          "category": "Identity & Legal",
-          "description": "Confidentiality and proprietary rights for Project Orion.",
-          "fileSize": "1.5 MB",
-          "uploadedAt": "Added 3 days ago",
-          "status": "pending_signature",
-          "dueDate": "Due in 3 days"
-        },
-        {
-          "id": "doc_chidi_ip",
-          "name": "Intellectual Property Agreement",
-          "category": "Identity & Legal",
-          "description": "Master assignment of inventions and copyright.",
-          "fileSize": "2.1 MB",
-          "uploadedAt": "Dec 12, 2023",
-          "status": "signed",
-          "signedAt": "Dec 12, 2023"
-        },
-        {
-          "id": "doc_chidi_ethics",
-          "name": "Code of Ethics & Conduct",
-          "category": "Identity & Legal",
-          "description": "Standard corporate behavior and anti-corruption policy.",
-          "fileSize": "1.1 MB",
-          "uploadedAt": "Jan 05, 2026",
-          "status": "under_review"
-        },
-        {
-          "id": "doc_chidi_contractor",
-          "name": "Independent Contractor Agreement",
-          "category": "Identity & Legal",
-          "description": "General service provision terms and payout schedules.",
-          "fileSize": "3.4 MB",
-          "uploadedAt": "Mar 30, 2023",
-          "status": "signed",
-          "signedAt": "Mar 30, 2023"
-        },
-        {
-          "id": "doc_chidi_dpa",
-          "name": "Data Privacy Addendum (DPA)",
-          "category": "Identity & Legal",
-          "description": "Compliance with GDPR and regional data protection laws.",
-          "fileSize": "1.8 MB",
-          "uploadedAt": "Added 2 hours ago",
-          "status": "pending_signature",
-          "dueDate": "Added 2 hours ago"
-        }
-      ],
-      "supportTickets": [
-        {
-          "id": "TK-88210",
-          "subject": "Urgent - API Timeout on Webhooks",
-          "category": "Technical Support",
-          "status": "Open",
-          "priority": "Urgent",
-          "createdAt": "Oct 28, 2023",
-          "lastActivity": "2 mins ago",
-          "assignedAgent": {
-            "name": "Support System",
-            "role": "Automated Bot",
-            "avatar": ""
-          },
-          "messages": [
-            {
-              "id": "msg_1",
-              "sender": {
-                "name": "Chidi Anya",
-                "role": "Talent",
-                "isSupport": false
-              },
-              "text": "I am getting continuous 504 gateway timeouts when our webhook endpoint is triggered by kongila integration. Please check.",
-              "timestamp": "10:40 AM"
-            }
-          ]
-        },
-        {
-          "id": "TK-67842",
-          "subject": "Issues with International Wire Transfer - Q3 Earnings",
-          "category": "Payment Issues",
-          "status": "In Progress",
-          "priority": "High",
-          "createdAt": "Oct 24, 2023",
-          "lastActivity": "5 hours ago",
-          "assignedAgent": {
-            "name": "Sarah Kong",
-            "role": "Global Support Lead",
-            "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80"
-          },
-          "messages": [
-            {
-              "id": "msg_2_1",
-              "sender": {
-                "name": "Chidi Anya",
-                "role": "Talent",
-                "isSupport": false
-              },
-              "text": "Hello, I'm having trouble receiving my payout for the last project (Project: Nebula). The status says 'Sent' in the dashboard, but I haven't seen anything in my account. I checked with my bank and they don't see any pending transfers.",
-              "timestamp": "10:12 AM"
-            },
-            {
-              "id": "msg_2_2",
-              "sender": {
-                "name": "Sarah Kong",
-                "role": "Global Support Lead",
-                "isSupport": true,
-                "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80"
-              },
-              "text": "Hi Chidi, I've looked into this for you. It seems there was a slight delay in the intermediary bank processing for international wires this week. I've initiated a trace on the transaction. Could you please confirm if your SWIFT/BIC code has changed recently?",
-              "timestamp": "10:45 AM"
-            }
-          ]
-        },
-        {
-          "id": "TK-57115",
-          "subject": "Profile Badge Verification",
-          "category": "Verification",
-          "status": "Resolved",
-          "priority": "Medium",
-          "createdAt": "Oct 22, 2023",
-          "lastActivity": "2 days ago",
-          "assignedAgent": {
-            "name": "Vetting Team",
-            "role": "Compliance Lead",
-            "avatar": ""
-          },
-          "messages": [
-            {
-              "id": "msg_3_1",
-              "sender": {
-                "name": "Chidi Anya",
-                "role": "Talent",
-                "isSupport": false
-              },
-              "text": "Could you please check if my AWS and Scrum Master badges are verified? I uploaded the certificates.",
-              "timestamp": "9:00 AM"
-            },
-            {
-              "id": "msg_3_2",
-              "sender": {
-                "name": "Vetting Team",
-                "role": "Compliance Lead",
-                "isSupport": true
-              },
-              "text": "Hi Chidi, we have verified both certificates. The badges are now live on your profile.",
-              "timestamp": "2:15 PM"
-            }
-          ]
-        },
-        {
-          "id": "TK-28301",
-          "subject": "New User Onboarding Guide",
-          "category": "Guidance",
-          "status": "Resolved",
-          "priority": "Low",
-          "createdAt": "Oct 15, 2023",
-          "lastActivity": "1 week ago",
-          "assignedAgent": {
-            "name": "Onboarding Bot",
-            "role": "System Guide",
-            "avatar": ""
-          },
-          "messages": [
-            {
-              "id": "msg_4_1",
-              "sender": {
-                "name": "Chidi Anya",
-                "role": "Talent",
-                "isSupport": false
-              },
-              "text": "Where can I find details about remote retainer agreements?",
-              "timestamp": "11:00 AM"
-            },
-            {
-              "id": "msg_4_2",
-              "sender": {
-                "name": "Onboarding Bot",
-                "role": "System Guide",
-                "isSupport": true
-              },
-              "text": "Welcome to Kongila! You can view all agreement guides in the resources pane or in your documents tab.",
-              "timestamp": "11:01 AM"
-            }
-          ]
-        }
-      ]
+      "documents": []
     },
     {
       "id": "talent_fatoumata",
       "name": "Fatoumata Diallo",
-      "email": "fatoumata.diallo@kongila.dev",
+      "email": "",
       "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
       "title": "Senior Product Designer",
       "skills": [
-        "Figma",
-        "UI Design",
-        "User Research",
-        "Design Systems",
-        "Mobile UX"
+        "Figma"
       ],
       "timezone": "GMT (Dakar)",
       "salaryExpectation": 3800,
@@ -284,39 +124,15 @@
         "Attention to Detail"
       ],
       "bio": "Visual designer dedicated to creating beautiful, human-centered web and mobile experiences.",
-      "documents": [
-        {
-          "id": "doc_fatoumata_cv",
-          "name": "Design_Portfolio_Fatoumata.pdf",
-          "category": "Professional (CV, Portfolio)",
-          "fileSize": "4.2 MB",
-          "uploadedAt": "Uploaded 3 days ago",
-          "status": "Vetted"
-        },
-        {
-          "id": "doc_fatoumata_nda",
-          "name": "Mutual_NDA_Nexus.pdf",
-          "category": "Identity & Legal",
-          "fileSize": "1.4 MB",
-          "uploadedAt": "Signed Feb 2024",
-          "status": "Verified"
-        }
-      ]
+      "documents": []
     },
     {
       "id": "talent_kofi",
       "name": "Kofi Mensah",
-      "email": "kofi.mensah@kongila.dev",
+      "email": "",
       "avatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
       "title": "Lead DevOps Engineer",
-      "skills": [
-        "AWS",
-        "Docker",
-        "Kubernetes",
-        "Terraform",
-        "CI/CD",
-        "Linux"
-      ],
+      "skills": [],
       "timezone": "GMT (Accra)",
       "salaryExpectation": 5200,
       "experienceYears": 8,
@@ -337,96 +153,101 @@
         "Highly Reliable",
         "Independent Worker"
       ],
-      "bio": "Infrastructure specialist with deep expertise in cloud architectures, container orchestration, and secure automation pipelines."
+      "bio": "Infrastructure specialist with deep expertise in cloud architectures, container orchestration, and secure automation pipelines.",
+      "documents": []
     },
     {
-      "id": "talent_zola",
-      "name": "Zola Ndlovu",
-      "email": "zola.ndlovu@kongila.dev",
-      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
-      "title": "Technical Product Manager",
-      "skills": [
-        "Product Strategy",
-        "Agile",
-        "Scrum",
-        "Jira",
-        "User Research",
-        "Product Analytics"
-      ],
-      "timezone": "GMT+2 (Johannesburg)",
-      "salaryExpectation": 4800,
-      "experienceYears": 7,
-      "availability": 100,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
+      "id": "talent_1779838570148",
+      "name": "dare OJO",
+      "email": "",
+      "avatar": null,
+      "title": "Professional",
+      "skills": [],
+      "timezone": "GMT+1 (Lagos)",
+      "salaryExpectation": 0,
+      "experienceYears": 0,
+      "availability": 40,
+      "vettingStage": "Application",
+      "vettingStatus": "Pending",
       "vettingScores": {
-        "technical": 88,
-        "behavioral": 95,
-        "personality": 92,
+        "technical": 90,
+        "behavioral": 85,
+        "personality": 88,
         "remoteReadiness": 90,
-        "workSimulation": 90,
-        "communication": 98,
-        "experience": 85
+        "workSimulation": 85,
+        "communication": 90,
+        "experience": 80
       },
       "grade": "A",
-      "tags": [
-        "Independent Worker",
-        "Strong Communicator"
-      ],
-      "bio": "Experienced PM skilled in bridging engineering and business goals to deliver exceptional user-facing features."
+      "tags": [],
+      "bio": "",
+      "documents": []
     },
     {
-      "id": "talent_amina",
-      "name": "Amina Osei",
-      "email": "amina.osei@kongila.dev",
-      "avatar": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=200",
-      "title": "Frontend Engineer",
-      "skills": [
-        "React",
-        "CSS",
-        "JavaScript",
-        "HTML5",
-        "TailwindCSS"
-      ],
-      "timezone": "GMT+3 (Nairobi)",
-      "salaryExpectation": 2500,
-      "experienceYears": 2,
+      "id": "talent_1779838651893",
+      "name": "dare OJO",
+      "email": "",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [],
+      "timezone": "GMT+1",
+      "salaryExpectation": 4500,
+      "experienceYears": 5,
       "availability": 100,
-      "vettingStage": "Skill Assessment",
-      "vettingStatus": "Review",
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
       "vettingScores": {
-        "technical": 72,
-        "behavioral": 80,
-        "personality": 78,
-        "remoteReadiness": 85,
-        "workSimulation": 70,
-        "communication": 88,
-        "experience": 50
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
       },
       "grade": "B",
       "tags": [
-        "Needs Supervision",
-        "Strong Learner"
+        "Progressive Entry",
+        "Assessment Pending"
       ],
-      "bio": "Motivated React developer eager to learn and grow in a fast-paced remote product team."
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved.",
+      "documents": []
     }
   ],
-  "clientRequests": [],
+  "clientRequests": [
+    {
+      "id": "req_1779294209723",
+      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "clientName": "Horizon Fintech",
+      "serviceType": "managed",
+      "roleDescription": "Senior operations manager",
+      "requiredSkills": [],
+      "duration": "Ongoing",
+      "commitmentLevel": "Full-Time",
+      "numberOfHires": 1,
+      "timezone": "GMT+1",
+      "startDate": null,
+      "budget": 0,
+      "priority": "Medium",
+      "status": "New Request",
+      "createdAt": "2026-05-20T16:23:30.795217+00:00"
+    }
+  ],
   "matches": [],
   "tasks": [],
   "contracts": [
     {
       "id": "KNG-FIN-2024-883",
-      "matchId": "match_chidi",
-      "clientId": "client_horizon",
+      "matchId": "match_talent_chidi",
+      "clientId": "usr_horizon",
       "clientName": "Horizon Fintech",
       "talentId": "talent_chidi",
       "talentName": "Chidi Anya",
       "role": "Senior UI Designer",
-      "salary": 6400,
+      "salary": 120,
       "startDate": "Jan 12, 2024",
       "status": "Signed",
-      "signedAt": "2024-01-12T10:00:00.000Z",
+      "signedAt": "2024-01-12T10:00:00+00:00",
       "rateType": "Hourly",
       "rateAmount": 120,
       "totalEarned": 54240,
@@ -442,23 +263,23 @@
     },
     {
       "id": "KNG-HEA-2023-735",
-      "matchId": "match_fatoumata",
-      "clientId": "client_nexus",
-      "clientName": "Nexus Health",
+      "matchId": "match_talent_fatoumata",
+      "clientId": "usr_horizon",
+      "clientName": "Horizon Fintech",
       "talentId": "talent_fatoumata",
       "talentName": "Fatoumata Diallo",
       "role": "Lead Product Designer",
       "salary": 5800,
-      "startDate": "Mar 15, 2023",
+      "startDate": "Jan 12, 2024",
       "status": "Signed",
-      "signedAt": "2023-03-15T09:30:00.000Z",
+      "signedAt": "2023-03-15T09:30:00+00:00",
       "rateType": "Monthly",
       "rateAmount": 5800,
       "totalEarned": 42800,
       "invoicedBalance": 8200,
       "nextPayout": 5800,
       "nextPayoutDate": "Friday, May 24",
-      "endDate": "Dec 15, 2024",
+      "endDate": "Dec 21, 2024",
       "engagementModel": "Remote / Hybrid (Dakar)",
       "rating": 5,
       "qualityOfWork": 5,
@@ -467,74 +288,240 @@
     }
   ],
   "notifications": [],
-  "auditLogs": [],
+  "auditLogs": [
+    {
+      "id": "audit_1779904351102",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Reschedule Interview",
+      "details": "Interview \"Ops Manager\" with Kofi Mensah — new slot: 2026-05-30 at 10:00",
+      "timestamp": "2026-05-27T17:52:31.102Z"
+    },
+    {
+      "id": "audit_1779904329824",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Schedule Interview",
+      "details": "Booked \"Ops Manager\" with Kofi Mensah on 2026-05-29 at 10:00. Google Calendar event created.",
+      "timestamp": "2026-05-27T17:52:09.824+00:00"
+    },
+    {
+      "id": "audit_1779902232484",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Schedule Interview",
+      "details": "Booked \"Product Manager\" with dare OJO on 2026-05-29 at 10:00. Google Calendar event created.",
+      "timestamp": "2026-05-27T17:17:12.484+00:00"
+    },
+    {
+      "id": "audit_1779806755850",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Schedule Interview",
+      "details": "Booked \"Senior Full Stack Engineer Final Round\" with Amina Osei on 2026-05-29 at 10:00. Google Calendar event created.",
+      "timestamp": "2026-05-26T14:45:55.85+00:00"
+    },
+    {
+      "id": "audit_1779439681448",
+      "actor": "Alex Mercer",
+      "action": "Talent Request Completed & Authenticated",
+      "details": "Service Request generated. Linked to organization Vanguard .",
+      "timestamp": "2026-05-22T08:48:01.448+00:00"
+    },
+    {
+      "id": "audit_1779826742537",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Submit Re-hire Request",
+      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
+      "timestamp": "2026-05-26T20:19:02.537+00:00"
+    },
+    {
+      "id": "audit_1779826741091",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Submit Re-hire Request",
+      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
+      "timestamp": "2026-05-26T20:19:01.091+00:00"
+    },
+    {
+      "id": "audit_1779826745208",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Submit Re-hire Request",
+      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
+      "timestamp": "2026-05-26T20:19:05.208+00:00"
+    },
+    {
+      "id": "audit_1779826743205",
+      "actor": "Oluwadamilola Olukunle",
+      "action": "Submit Re-hire Request",
+      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
+      "timestamp": "2026-05-26T20:19:03.205+00:00"
+    },
+    {
+      "id": "audit_1779838301169",
+      "actor": "dare OJO",
+      "action": "Talent Request Completed & Authenticated",
+      "details": "Service Request generated. Linked to organization Eduplan Ltd.",
+      "timestamp": "2026-05-26T23:31:41.169+00:00"
+    },
+    {
+      "id": "audit_1779838651893",
+      "actor": "dare OJO",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-26T23:37:31.893+00:00"
+    }
+  ],
   "agentLogs": [
+    {
+      "id": "alog_1779904351102",
+      "agentName": "Workflow Agent",
+      "message": "Rescheduled interview for Kofi Mensah. Calendar invite updated.",
+      "timestamp": "6:52:31 PM",
+      "type": "info"
+    },
     {
       "id": "alog_1",
       "agentName": "Context Agent",
       "message": "System monitoring initialized. Tracking 5 vetted talent files.",
-      "timestamp": "11:26:09 AM",
+      "timestamp": "2026-05-20T10:36:11.907+00:00",
       "type": "info"
     },
     {
       "id": "alog_2",
       "agentName": "Workflow Agent",
       "message": "Work execution hooks registered. Active status listener loaded.",
-      "timestamp": "11:26:09 AM",
+      "timestamp": "2026-05-20T10:36:12.091+00:00",
       "type": "info"
+    }
+  ],
+  "rehireRequests": [
+    {
+      "id": "rehire_1779826741091",
+      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "clientName": "Oluwadamilola Olukunle (Vanguard)",
+      "talentId": "talent_sarah",
+      "talentName": "Sarah Jenkins",
+      "role": "QA Engineer",
+      "proposedRate": 12400,
+      "proposedStartDate": "2026-06-02",
+      "commitmentLevel": "Full-Time",
+      "notes": "onboarding",
+      "status": "Pending",
+      "createdAt": "2026-05-26T20:19:01.091Z"
+    },
+    {
+      "id": "rehire_1779826742537",
+      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "clientName": "Oluwadamilola Olukunle (Vanguard)",
+      "talentId": "talent_sarah",
+      "talentName": "Sarah Jenkins",
+      "role": "QA Engineer",
+      "proposedRate": 12400,
+      "proposedStartDate": "2026-06-02",
+      "commitmentLevel": "Full-Time",
+      "notes": "onboarding",
+      "status": "Pending",
+      "createdAt": "2026-05-26T20:19:02.537Z"
+    },
+    {
+      "id": "rehire_1779826743205",
+      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "clientName": "Oluwadamilola Olukunle (Vanguard)",
+      "talentId": "talent_sarah",
+      "talentName": "Sarah Jenkins",
+      "role": "QA Engineer",
+      "proposedRate": 12400,
+      "proposedStartDate": "2026-06-02",
+      "commitmentLevel": "Full-Time",
+      "notes": "onboarding",
+      "status": "Pending",
+      "createdAt": "2026-05-26T20:19:03.205Z"
+    },
+    {
+      "id": "rehire_1779826745208",
+      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "clientName": "Oluwadamilola Olukunle (Vanguard)",
+      "talentId": "talent_sarah",
+      "talentName": "Sarah Jenkins",
+      "role": "QA Engineer",
+      "proposedRate": 12400,
+      "proposedStartDate": "2026-06-02",
+      "commitmentLevel": "Full-Time",
+      "notes": "onboarding",
+      "status": "Pending",
+      "createdAt": "2026-05-26T20:19:05.208Z"
     }
   ],
   "users": [
     {
       "id": "usr_chidi",
-      "name": "Chidi Anya",
       "email": "chidi.anya@kongila.dev",
       "role": "talent",
-      "platform_access": [
-        "kongila",
-        "remotan"
-      ]
+      "status": "active",
+      "emailVerified": true,
+      "createdAt": "2026-05-20T10:25:22.240593+00:00",
+      "updatedAt": "2026-05-20T10:25:22.240593+00:00"
     },
     {
       "id": "usr_fatoumata",
-      "name": "Fatoumata Diallo",
       "email": "fatoumata.diallo@kongila.dev",
       "role": "talent",
-      "platform_access": [
-        "kongila",
-        "remotan"
-      ]
+      "status": "active",
+      "emailVerified": true,
+      "createdAt": "2026-05-20T10:25:22.964193+00:00",
+      "updatedAt": "2026-05-20T10:25:22.964193+00:00"
     },
     {
       "id": "usr_horizon",
-      "name": "Horizon Fintech Admin",
       "email": "billing@horizon.com",
       "role": "client",
-      "platform_access": [
-        "kongila"
-      ]
+      "status": "active",
+      "emailVerified": true,
+      "createdAt": "2026-05-20T10:25:23.239292+00:00",
+      "updatedAt": "2026-05-20T10:25:23.239292+00:00"
     },
     {
       "id": "usr_admin",
-      "name": "System Admin",
       "email": "admin@kongila.com",
       "role": "admin",
-      "platform_access": [
-        "kongila",
-        "admin"
-      ]
+      "status": "active",
+      "emailVerified": true,
+      "createdAt": "2026-05-20T10:25:23.43783+00:00",
+      "updatedAt": "2026-05-20T10:25:23.43783+00:00"
+    },
+    {
+      "id": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "email": "ezebenita6101@gmail.com",
+      "role": "client",
+      "status": "active",
+      "emailVerified": false,
+      "createdAt": "2026-05-20T10:37:21.564282+00:00",
+      "updatedAt": "2026-05-20T10:37:21.564282+00:00"
+    },
+    {
+      "id": "cff95626-297e-4c1c-b500-ee63d937c022",
+      "email": "dareojox@gmail.com",
+      "role": "talent",
+      "status": "active",
+      "emailVerified": false,
+      "createdAt": "2026-05-26T23:36:09.895213+00:00",
+      "updatedAt": "2026-05-26T23:36:09.895213+00:00"
     }
   ],
   "organizations": [
     {
       "id": "client_horizon",
       "name": "Horizon Fintech",
-      "subscription_type": "Enterprise"
+      "created_by": null,
+      "created_at": "2026-05-20T10:25:23.649848+00:00"
     },
     {
       "id": "client_nexus",
       "name": "Nexus Health",
-      "subscription_type": "Basic"
+      "created_by": null,
+      "created_at": "2026-05-20T10:25:23.981775+00:00"
+    },
+    {
+      "id": "org_1779273440449",
+      "name": "Vanguard",
+      "created_by": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "created_at": "2026-05-20T10:37:21.971646+00:00"
     }
   ],
   "clientProfiles": [
@@ -544,6 +531,13 @@
       "organizationId": "client_horizon",
       "position": "VP of Engineering",
       "phone": "+1 (555) 019-2834"
+    },
+    {
+      "id": "clp_1779273441099",
+      "userId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
+      "organizationId": "org_1779273440449",
+      "position": "Admin",
+      "phone": null
     }
   ],
   "skills": [
@@ -596,7 +590,7 @@
       "type": "CV",
       "fileSize": "1.2 MB",
       "status": "vetted",
-      "uploadedAt": "2024-05-17T10:00:00.000Z"
+      "uploadedAt": "2024-05-17T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_portfolio",
@@ -605,7 +599,7 @@
       "type": "portfolio",
       "fileSize": "18.5 MB",
       "status": "vetted",
-      "uploadedAt": "2024-05-12T10:00:00.000Z"
+      "uploadedAt": "2024-05-12T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_aws",
@@ -614,8 +608,7 @@
       "type": "certification",
       "fileSize": "4.8 MB",
       "status": "verified",
-      "certificateImage": "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=150",
-      "uploadedAt": "2023-06-15T10:00:00.000Z"
+      "uploadedAt": "2023-06-15T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_nda",
@@ -624,9 +617,7 @@
       "type": "NDA",
       "fileSize": "1.5 MB",
       "status": "pending_signature",
-      "uploadedAt": "2026-05-16T10:00:00.000Z",
-      "description": "Confidentiality and proprietary rights for Project Orion.",
-      "dueDate": "Due in 3 days"
+      "uploadedAt": "2026-05-16T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_ip",
@@ -635,9 +626,7 @@
       "type": "agreement",
       "fileSize": "2.1 MB",
       "status": "signed",
-      "uploadedAt": "2023-12-12T10:00:00.000Z",
-      "description": "Master assignment of inventions and copyright.",
-      "signedAt": "Dec 12, 2023"
+      "uploadedAt": "2023-12-12T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_ethics",
@@ -646,8 +635,7 @@
       "type": "IT_Ethics_Policy",
       "fileSize": "1.1 MB",
       "status": "under_review",
-      "uploadedAt": "2026-01-05T10:00:00.000Z",
-      "description": "Standard corporate behavior and anti-corruption policy."
+      "uploadedAt": "2026-01-05T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_contractor",
@@ -656,9 +644,7 @@
       "type": "agreement",
       "fileSize": "3.4 MB",
       "status": "signed",
-      "uploadedAt": "2023-03-30T10:00:00.000Z",
-      "description": "General service provision terms and payout schedules.",
-      "signedAt": "Mar 30, 2023"
+      "uploadedAt": "2023-03-30T10:00:00+00:00"
     },
     {
       "id": "doc_chidi_dpa",
@@ -667,15 +653,13 @@
       "type": "agreement",
       "fileSize": "1.8 MB",
       "status": "pending_signature",
-      "uploadedAt": "2026-05-19T08:00:00.000Z",
-      "description": "Compliance with GDPR and regional data protection laws.",
-      "dueDate": "Added 2 hours ago"
+      "uploadedAt": "2026-05-19T08:00:00+00:00"
     }
   ],
   "projects": [
     {
       "id": "project_general",
-      "clientId": "client_horizon",
+      "clientId": "usr_horizon",
       "name": "General Onboarding",
       "description": "Initial onboarding orientation projects.",
       "startDate": "2024-01-01",
@@ -684,7 +668,7 @@
     },
     {
       "id": "project_nebula",
-      "clientId": "client_horizon",
+      "clientId": "usr_horizon",
       "name": "Project Nebula",
       "description": "Core ledger database service development.",
       "startDate": "2024-02-01",
@@ -699,15 +683,15 @@
       "projectId": "project_nebula",
       "contractId": "KNG-FIN-2024-883",
       "role": "Senior Full-Stack Developer",
-      "startDate": "2024-01-12",
-      "endDate": "2024-12-21",
+      "startDate": null,
+      "endDate": null,
       "status": "active"
     }
   ],
   "invoices": [
     {
       "id": "inv_horizon_may",
-      "clientId": "client_horizon",
+      "clientId": "usr_horizon",
       "amount": 12450,
       "status": "sent",
       "dueDate": "2026-05-31"
@@ -720,7 +704,7 @@
       "amount": 12450,
       "paymentMethod": "ACH Bank Wire",
       "status": "paid",
-      "paidAt": "2026-05-01T15:00:00.000Z"
+      "paidAt": "2026-05-01T15:00:00+00:00"
     }
   ],
   "talentPayouts": [
@@ -730,7 +714,7 @@
       "contractId": "KNG-FIN-2024-883",
       "amount": 5800,
       "status": "paid",
-      "paidAt": "2026-05-15T12:00:00.000Z"
+      "paidAt": "2026-05-15T12:00:00+00:00"
     }
   ],
   "messages": [
@@ -739,12 +723,14 @@
       "senderId": "usr_admin",
       "receiverId": "usr_chidi",
       "content": "Welcome to Kongila talent network! Let us know if you need help setting up billing.",
-      "timestamp": "2026-05-18T09:00:00.000Z",
+      "timestamp": "2026-05-18T09:00:00+00:00",
       "readStatus": true
     }
   ],
   "roles": [],
   "userRoles": [],
+  "assessments": [],
+  "skillAssessmentResults": [],
   "supportTickets": [
     {
       "id": "TK-88210",
@@ -753,8 +739,8 @@
       "category": "Technical Support",
       "status": "Open",
       "priority": "Urgent",
-      "createdAt": "Oct 28, 2023",
-      "lastActivity": "2 mins ago"
+      "createdAt": "2023-10-27T23:00:00+00:00",
+      "lastActivity": "Active"
     },
     {
       "id": "TK-67842",
@@ -763,8 +749,8 @@
       "category": "Payment Issues",
       "status": "In Progress",
       "priority": "High",
-      "createdAt": "Oct 24, 2023",
-      "lastActivity": "5 hours ago"
+      "createdAt": "2023-10-23T23:00:00+00:00",
+      "lastActivity": "Active"
     },
     {
       "id": "TK-57115",
@@ -773,8 +759,8 @@
       "category": "Verification",
       "status": "Resolved",
       "priority": "Medium",
-      "createdAt": "Oct 22, 2023",
-      "lastActivity": "2 days ago"
+      "createdAt": "2023-10-21T23:00:00+00:00",
+      "lastActivity": "Active"
     },
     {
       "id": "TK-28301",
@@ -783,8 +769,8 @@
       "category": "Guidance",
       "status": "Resolved",
       "priority": "Low",
-      "createdAt": "Oct 15, 2023",
-      "lastActivity": "1 week ago"
+      "createdAt": "2023-10-14T23:00:00+00:00",
+      "lastActivity": "Active"
     }
   ],
   "supportMessages": [
@@ -794,9 +780,10 @@
       "senderName": "Chidi Anya",
       "senderRole": "Talent",
       "isSupport": false,
+      "avatarUrl": null,
       "text": "I am getting continuous 504 gateway timeouts when our webhook endpoint is triggered by kongila integration. Please check.",
       "timestamp": "10:40 AM",
-      "createdAt": "2023-10-28T10:40:00.000Z"
+      "createdAt": "2023-10-28T10:40:00+00:00"
     },
     {
       "id": "msg_2_1",
@@ -804,9 +791,10 @@
       "senderName": "Chidi Anya",
       "senderRole": "Talent",
       "isSupport": false,
+      "avatarUrl": null,
       "text": "Hello, I'm having trouble receiving my payout for the last project (Project: Nebula). The status says 'Sent' in the dashboard, but I haven't seen anything in my account. I checked with my bank and they don't see any pending transfers.",
       "timestamp": "10:12 AM",
-      "createdAt": "2023-10-24T10:12:00.000Z"
+      "createdAt": "2023-10-24T10:12:00+00:00"
     },
     {
       "id": "msg_2_2",
@@ -817,7 +805,48 @@
       "avatarUrl": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80",
       "text": "Hi Chidi, I've looked into this for you. It seems there was a slight delay in the intermediary bank processing for international wires this week. I've initiated a trace on the transaction. Could you please confirm if your SWIFT/BIC code has changed recently?",
       "timestamp": "10:45 AM",
-      "createdAt": "2023-10-24T10:45:00.000Z"
+      "createdAt": "2023-10-24T10:45:00+00:00"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Product Manager",
+      "talentId": "talent_1779838570148",
+      "talentName": "dare OJO",
+      "talentAvatar": "",
+      "requestId": "",
+      "matchId": "",
+      "date": "2026-05-29",
+      "time": "10:00",
+      "notes": "",
+      "duration": "60",
+      "clientName": "Oluwadamilola Olukunle",
+      "status": "Scheduled",
+      "id": "interview_1779902232484",
+      "meetingLink": "https://meet.google.com/dkm-fslg-arc",
+      "googleCalendarEventId": "gcal_1779902232484_dh2w13",
+      "googleCalendarLink": "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Product%20Manager&dates=20260529T100000/20260529T100000&details=Kongila+Interview+via+Google+Meet&location=https%3A%2F%2Fmeet.google.com%2Fdkm-fslg-arc",
+      "createdAt": "2026-05-27T17:17:12.484Z"
+    },
+    {
+      "title": "Ops Manager",
+      "talentId": "talent_kofi",
+      "talentName": "Kofi Mensah",
+      "talentAvatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
+      "requestId": "",
+      "matchId": "",
+      "date": "2026-05-30",
+      "time": "10:00",
+      "notes": "loikuhg",
+      "duration": "60",
+      "clientName": "Oluwadamilola Olukunle",
+      "status": "Rescheduled",
+      "id": "interview_1779904329824",
+      "meetingLink": "https://meet.google.com/vgh-nlza-snh",
+      "googleCalendarEventId": "gcal_1779904329824_5meon2",
+      "googleCalendarLink": "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Ops%20Manager&dates=20260529T100000/20260529T100000&details=Kongila+Interview+via+Google+Meet&location=https%3A%2F%2Fmeet.google.com%2Fvgh-nlza-snh",
+      "createdAt": "2026-05-27T17:52:09.824Z",
+      "updatedAt": "2026-05-27T17:52:31.102Z"
     }
   ]
 }

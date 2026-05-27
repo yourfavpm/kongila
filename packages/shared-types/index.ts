@@ -102,7 +102,11 @@ export interface Match {
   talentId: string;
   score: number; // 0 - 100
   breakdown: MatchBreakdown;
-  status: 'Applied' | 'Shortlisted' | 'Interview Scheduled' | 'Interviewed' | 'Offer Extended' | 'Offer Accepted' | 'Declined';
+  status: 'Applied' | 'Shortlisted' | 'Interview Requested' | 'Interview Scheduled' | 'Interviewed' | 'Offer Extended' | 'Offer Accepted' | 'Declined';
+  requestedDate?: string;
+  requestedTime?: string;
+  requestedDuration?: string;
+  requestedNotes?: string;
 }
 
 export type TaskStatus = 'Not Started' | 'In Progress' | 'Blocked' | 'Under Review' | 'Completed';
@@ -275,4 +279,40 @@ export interface SupportMessage {
   timestamp: string;
   createdAt: string;
 }
+
+export interface Interview {
+  id: string;
+  requestId: string;
+  matchId: string;
+  talentId: string;
+  talentName: string;
+  talentAvatar?: string;
+  clientName: string;
+  title: string;
+  date: string;
+  time: string;
+  status: 'Scheduled' | 'Rescheduled' | 'Completed' | 'Cancelled';
+  meetingLink?: string;
+  notes?: string;
+  googleCalendarEventId?: string;
+  googleCalendarLink?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RehireRequest {
+  id: string;
+  clientId: string;
+  clientName: string;
+  talentId: string;
+  talentName: string;
+  role: string;
+  proposedRate: number;
+  proposedStartDate: string;
+  commitmentLevel: 'Full-Time' | 'Part-Time';
+  notes?: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  createdAt: string;
+}
+
 
