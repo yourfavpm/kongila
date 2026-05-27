@@ -4,7 +4,12 @@ import { readDbAsync, writeDbAsync } from '@kongila/database';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     try {
-      await writeDbAsync(req.body);
+      const existing = await readDbAsync();
+      const merged = {
+        ...existing,
+        ...req.body
+      };
+      await writeDbAsync(merged);
       return res.status(200).json({ success: true });
     } catch (e) {
       return res.status(500).json({ error: 'Failed to write database' });

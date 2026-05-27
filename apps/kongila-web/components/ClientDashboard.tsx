@@ -279,6 +279,14 @@ export default function ClientDashboard({
   const [requestInterviewTarget, setRequestInterviewTarget] = useState<{ matchId: string; talentName: string; talentId: string; requestId: string } | null>(null);
   const [requestInterviewForm, setRequestInterviewForm] = useState({ date: '', time: '10:00', duration: '45', notes: '' });
 
+  // Viewing Talent Profile Detail State
+  const [viewingTalentProfile, setViewingTalentProfile] = useState<any | null>(null);
+
+  // Job Offer / Hire State
+  const [showHireModal, setShowHireModal] = useState(false);
+  const [hireTarget, setHireTarget] = useState<any | null>(null);
+  const [hireForm, setHireForm] = useState({ salary: '', startDate: '', notes: '' });
+
   // Invoices & Re-hiring States
   const [showAllInvoicesModal, setShowAllInvoicesModal] = useState(false);
   const [showRehireModal, setShowRehireModal] = useState(false);
@@ -295,7 +303,7 @@ export default function ClientDashboard({
       if (m.id === requestInterviewTarget.matchId) {
         return {
           ...m,
-          status: 'Interview Requested' as const,
+          status: 'Interview Scheduled' as const,
           requestedDate: requestInterviewForm.date,
           requestedTime: requestInterviewForm.time,
           requestedDuration: requestInterviewForm.duration,
@@ -305,61 +313,90 @@ export default function ClientDashboard({
       return m;
     });
 
-    const newAuditLog = {
-      id: `audit_${Date.now()}`,
-      actor: currentUser?.organizationName || currentUser?.name || 'Client',
-      action: 'Request Interview Proposal',
-      details: `Client proposed interview with candidate ${requestInterviewTarget.talentName} for ${requestInterviewForm.date} at ${requestInterviewForm.time}.`,
-      timestamp: new Date().toISOString()
-    };
+    const activeRequest = requests.find(r => r.id === requestInterviewTarget.requestId) || selectedRequest;
+    if (!activeRequest) return;
 
-    const newAgentLog = {
-      id: `alog_${Date.now()}`,
-      agentName: 'Workflow Agent' as const,
-      message: `Interview proposal for ${requestInterviewTarget.talentName} received. Pending admin coordination.`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'info' as const
-    };
+    const confCode = `${Math.random().toString(36).substring(2, 5)}-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 5)}`;
+    const meetingLink = `https://meet.google.com/${confCode}`;
+    const calEventId = `gcal_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const calendarTitle = encodeURIComponent(`${activeRequest.serviceType} - Interview with ${requestInterviewTarget.talentName}`);
+    const googleCalendarLink = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${calendarTitle}&dates=${requestInterviewForm.date.replace(/-/g, '')}T${requestInterviewForm.time.replace(':', '')}00Z/${requestInterviewForm.date.replace(/-/g, '')}T${requestInterviewForm.time.replace(':', '')}00Z&location=${encodeURIComponent(meetingLink)}`;
 
-    const updatedDb = {
-      talents,
-      clientRequests: requests,
-      matches: updatedMatches,
-      tasks: [],
-      contracts: [],
-      notifications: [
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentUser?.id,
-          title: 'Interview Proposal Submitted',
-          message: `Interview request for "${requestInterviewTarget.talentName}" submitted. Operations team will confirm shortly.`,
-          read: false,
-          createdAt: new Date().toISOString()
-        }
-      ],
-      auditLogs: [newAuditLog],
-      agentLogs: [newAgentLog]
+    const newInterview = {
+      id: `interview_${Date.now()}`,
+      requestId: requestInterviewTarget.requestId,
+      matchId: requestInterviewTarget.matchId,
+      talentId: requestInterviewTarget.talentId,
+      talentName: requestInterviewTarget.talentName,
+      talentAvatar: talents.find(t => t.id === requestInterviewTarget.talentId)?.avatar || '',
+      clientName: currentUser?.companyName || currentUser?.name || 'Client',
+      title: `${activeRequest.serviceType} - Interview with ${requestInterviewTarget.talentName}`,
+      date: requestInterviewForm.date,
+      time: requestInterviewForm.time,
+      status: 'Scheduled',
+      meetingLink,
+      googleCalendarEventId: calEventId,
+      googleCalendarLink,
+      notes: requestInterviewForm.notes || '',
+      createdAt: new Date().toISOString()
     };
 
     try {
-      if (setMatches) {
-        setMatches(updatedMatches);
+      const res = await fetch('/api/db');
+      if (res.ok) {
+        const dbData = await res.json();
+        dbData.matches = updatedMatches;
+        dbData.interviews = [...(dbData.interviews || []), newInterview];
+        dbData.notifications = [
+          {
+            id: `notif_${Date.now()}`,
+            userId: requestInterviewTarget.talentId,
+            title: 'Interview Scheduled',
+            message: `Interview "${newInterview.title}" has been booked for ${newInterview.date} at ${newInterview.time}.`,
+            read: false,
+            createdAt: new Date().toISOString()
+          },
+          ...(dbData.notifications || [])
+        ];
+        dbData.auditLogs = [
+          {
+            id: `audit_${Date.now()}`,
+            actor: currentUser?.organizationName || currentUser?.name || 'Client',
+            action: 'Schedule Interview',
+            details: `Booked interview with candidate ${requestInterviewTarget.talentName} for ${requestInterviewForm.date} at ${requestInterviewForm.time}.`,
+            timestamp: new Date().toISOString()
+          },
+          ...(dbData.auditLogs || [])
+        ];
+        dbData.agentLogs = [
+          {
+            id: `alog_${Date.now()}`,
+            agentName: 'Workflow Agent',
+            message: `Interview slot confirmed with ${requestInterviewTarget.talentName}. Calendar synced.`,
+            timestamp: new Date().toLocaleTimeString(),
+            type: 'success'
+          },
+          ...(dbData.agentLogs || [])
+        ];
+
+        if (saveToDb) {
+          await saveToDb(dbData);
+        }
+        if (setMatches) {
+          setMatches(updatedMatches);
+        }
+        if (setNotifications) {
+          setNotifications([...(notifications || []), dbData.notifications[0]]);
+        }
       }
-      if (setNotifications) {
-        setNotifications([...(notifications || []), updatedDb.notifications[0]]);
-      }
-      
-      if (saveToDb) {
-        await saveToDb(updatedDb);
-      }
-      
+
       setShowRequestInterviewModal(false);
       setRequestInterviewTarget(null);
       setRequestInterviewForm({ date: '', time: '10:00', duration: '45', notes: '' });
       
-      alert(`Interview request for ${requestInterviewTarget.talentName} has been successfully submitted to Admin operations.`);
+      alert(`Interview with ${requestInterviewTarget.talentName} has been successfully scheduled and synced to your calendars.`);
     } catch {
-      alert('Failed to submit interview request. Please try again.');
+      alert('Failed to schedule interview. Please try again.');
     }
   };
 
@@ -1375,6 +1412,298 @@ export default function ClientDashboard({
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
         
+        {/* Viewing Talent Profile Detail Modal */}
+        {viewingTalentProfile && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)',
+            zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+          }}>
+            <div style={{
+              background: '#FFFFFF', borderRadius: '24px', padding: '36px',
+              width: '100%', maxWidth: '640px', boxShadow: '0 25px 80px rgba(0,0,0,0.2)',
+              maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', position: 'relative'
+            }}>
+              <button 
+                onClick={() => setViewingTalentProfile(null)} 
+                style={{ 
+                  position: 'absolute', right: '24px', top: '24px', 
+                  background: '#F1F5F9', border: 'none', borderRadius: '8px', 
+                  width: '36px', height: '36px', cursor: 'pointer', fontSize: '18px', 
+                  color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' 
+                }}
+              >
+                ×
+              </button>
+
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginBottom: '24px' }}>
+                <div style={{
+                  width: '72px', height: '72px', borderRadius: '50%',
+                  background: '#EFF6FF', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', color: '#2563EB', fontWeight: 800,
+                  fontSize: '24px', border: '3px solid #E2E8F0', overflow: 'hidden'
+                }}>
+                  {viewingTalentProfile.avatar ? (
+                    <img src={viewingTalentProfile.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    viewingTalentProfile.name.charAt(0)
+                  )}
+                </div>
+                <div>
+                  <h2 style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0' }}>{viewingTalentProfile.name}</h2>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', color: '#2563EB', fontWeight: 700 }}>{viewingTalentProfile.title}</span>
+                    <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#94A3B8' }} />
+                    <span style={{ fontSize: '12px', color: '#64748B' }}>{viewingTalentProfile.location || viewingTalentProfile.timezone}</span>
+                  </div>
+                </div>
+                <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                  <span style={{ fontWeight: 900, fontSize: '18px', color: '#10B981' }}>{viewingTalentProfile.grade} Grade</span>
+                  <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 700 }}>Vetted Talent Profile</span>
+                </div>
+              </div>
+
+              {/* Bio & Details */}
+              <div style={{ marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Executive Summary</h3>
+                <p style={{ fontSize: '13px', color: '#475569', lineHeight: 1.6, margin: 0 }}>
+                  {viewingTalentProfile.bio || 'Highly accomplished operational talent with comprehensive expertise in enterprise delivery management, team coordination, and system integrations.'}
+                </p>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
+                <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '12px', border: '1px solid #F1F5F9' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px 0' }}>Key Metrics</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748B' }}>Experience</span>
+                      <strong style={{ color: '#1E293B' }}>{viewingTalentProfile.experienceYears || 5} Years</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748B' }}>Expected Salary</span>
+                      <strong style={{ color: '#1E293B' }}>${viewingTalentProfile.salaryExpectation || 4500}/mo</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748B' }}>Availability</span>
+                      <strong style={{ color: '#10B981' }}>{viewingTalentProfile.availability || 100}% Immediate</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748B' }}>Vetting Status</span>
+                      <strong style={{ color: '#2563EB' }}>{viewingTalentProfile.vettingStatus || 'Vetted'}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '12px', border: '1px solid #F1F5F9' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px 0' }}>Technical Vetting Scores</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: '#64748B' }}>Technical Fit</span>
+                      <strong style={{ color: '#1E293B' }}>{viewingTalentProfile.vettingScores?.technical || 94}%</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: '#64748B' }}>Behavioral Fit</span>
+                      <strong style={{ color: '#1E293B' }}>{viewingTalentProfile.vettingScores?.behavioral || 90}%</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: '#64748B' }}>Communication</span>
+                      <strong style={{ color: '#1E293B' }}>{viewingTalentProfile.vettingScores?.communication || 95}%</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: '#64748B' }}>Remote Readiness</span>
+                      <strong style={{ color: '#10B981' }}>{viewingTalentProfile.vettingScores?.remoteReadiness || 98}%</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Workspace Infrastructure */}
+              <div style={{ background: '#F8FAFC', padding: '16px', borderRadius: '12px', border: '1px solid #F1F5F9', marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px 0' }}>Workspace Infrastructure</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '12px', color: '#475569' }}>
+                  <div>
+                    <span style={{ display: 'block', color: '#94A3B8', fontWeight: 700, fontSize: '10px', textTransform: 'uppercase', marginBottom: '2px' }}>Devices</span>
+                    <strong>{viewingTalentProfile.devices || 'MacBook Pro M3, Dual 4K Monitors'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ display: 'block', color: '#94A3B8', fontWeight: 700, fontSize: '10px', textTransform: 'uppercase', marginBottom: '2px' }}>Internet</span>
+                    <strong>{viewingTalentProfile.internetQuality || 'Fiber Optic High-Speed (100 Mbps+)'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Skills Pills */}
+              <div style={{ marginBottom: '32px' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px' }}>Key Technical Expertise</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {(viewingTalentProfile.skills || []).map((sk: string) => (
+                    <span key={sk} style={{ fontSize: '11px', fontWeight: 700, background: '#EFF6FF', color: '#2563EB', padding: '4px 10px', borderRadius: '6px' }}>
+                      {sk}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button 
+                  onClick={() => setViewingTalentProfile(null)} 
+                  style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}
+                >
+                  Close Profile
+                </button>
+                <button 
+                  onClick={() => {
+                    const match = matches.find(m => m.talentId === viewingTalentProfile.id && m.requestId === activeRequest.id);
+                    if (match) {
+                      setRequestInterviewTarget({
+                        matchId: match.id,
+                        talentId: viewingTalentProfile.id,
+                        talentName: viewingTalentProfile.name,
+                        requestId: activeRequest.id
+                      });
+                      setRequestInterviewForm(f => ({ ...f, date: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0] }));
+                      setShowRequestInterviewModal(true);
+                    }
+                    setViewingTalentProfile(null);
+                  }}
+                  style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: '#2563EB', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: 'pointer' }}
+                >
+                  📅 Request Coordination Interview
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Hire Candidate / Job Offer Modal */}
+        {showHireModal && hireTarget && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(6px)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+          }}>
+            <div style={{
+              background: '#FFFFFF', borderRadius: '20px', padding: '36px',
+              width: '100%', maxWidth: '500px', boxShadow: '0 24px 80px rgba(0,0,0,0.15)',
+              boxSizing: 'border-box'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#0F172A', margin: '0 0 4px 0' }}>Generate Job Offer</h2>
+                  <p style={{ fontSize: '12px', color: '#64748B', margin: 0 }}>Deploy EOR contract proposal for {hireTarget.name}</p>
+                </div>
+                <button onClick={() => { setShowHireModal(false); setHireTarget(null); }} style={{ background: '#F1F5F9', border: 'none', borderRadius: '8px', width: '36px', height: '36px', cursor: 'pointer', fontSize: '16px', color: '#475569' }}>×</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={labelStyle}>Proposed Start Date *</label>
+                  <input type="date" style={inputStyle} value={hireForm.startDate} min={new Date().toISOString().split('T')[0]} onChange={e => setHireForm(f => ({ ...f, startDate: e.target.value }))} />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Monthly Retainer Rate (USD) *</label>
+                  <input type="number" style={inputStyle} value={hireForm.salary} onChange={e => setHireForm(f => ({ ...f, salary: e.target.value }))} placeholder="e.g. 4500" />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Offer Letter Notes / Custom Clauses</label>
+                  <textarea style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' }} placeholder="Mention specific milestones, benefits, or custom terms..." value={hireForm.notes} onChange={e => setHireForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+
+                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '14px' }}>🛡️</span>
+                  <p style={{ fontSize: '11px', color: '#166534', margin: 0, lineHeight: 1.4 }}>
+                    By extending this offer, Kongila will draft a localized employment contract compliant with all EOR tax and labor frameworks.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                  <button onClick={() => { setShowHireModal(false); setHireTarget(null); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', fontWeight: 700, fontSize: '13px', color: '#475569', cursor: 'pointer' }}>Cancel</button>
+                  <button
+                    onClick={async () => {
+                      if (!hireForm.startDate || !hireForm.salary) {
+                        alert('Please fill in start date and monthly rate.');
+                        return;
+                      }
+
+                      const updatedMatches = matches.map(m => {
+                        if (m.id === hireTarget.matchId) {
+                          return {
+                            ...m,
+                            status: 'Offer Extended' as const
+                          };
+                        }
+                        return m;
+                      });
+
+                      const newContract = {
+                        id: `contract_${Date.now()}`,
+                        matchId: hireTarget.matchId,
+                        clientId: currentUser?.id || 'usr_horizon',
+                        clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Vanguard Corp'})` : 'Client',
+                        talentId: hireTarget.talentId,
+                        talentName: hireTarget.name,
+                        role: activeRequest.roleDescription || activeRequest.serviceType,
+                        salary: Number(hireForm.salary),
+                        rateAmount: Number(hireForm.salary),
+                        rateType: 'Monthly',
+                        startDate: hireForm.startDate,
+                        status: 'Pending',
+                        createdAt: new Date().toISOString()
+                      };
+
+                      try {
+                        const res = await fetch('/api/db');
+                        if (res.ok) {
+                          const dbData = await res.json();
+                          dbData.matches = updatedMatches;
+                          dbData.contracts = [...(dbData.contracts || []), newContract];
+                          dbData.notifications = [
+                            {
+                              id: `notif_${Date.now()}`,
+                              userId: hireTarget.talentId,
+                              title: 'Job Offer Received!',
+                              message: `You received a job offer for the "${newContract.role}" role at $${newContract.salary}/mo.`,
+                              read: false,
+                              createdAt: new Date().toISOString()
+                            },
+                            ...(dbData.notifications || [])
+                          ];
+                          dbData.auditLogs = [
+                            {
+                              id: `audit_${Date.now()}`,
+                              actor: currentUser?.name || 'Client',
+                              action: 'Extend Job Offer',
+                              details: `Offer contract initiated for ${hireTarget.name} for the ${newContract.role} role.`,
+                              timestamp: new Date().toISOString()
+                            },
+                            ...(dbData.auditLogs || [])
+                          ];
+
+                          if (saveToDb) {
+                            await saveToDb(dbData);
+                          }
+                          if (setMatches) {
+                            setMatches(updatedMatches);
+                          }
+                          setShowHireModal(false);
+                          setHireTarget(null);
+                          alert(`Job Offer Extended to ${hireTarget.name} successfully! EOR drafting initiated.`);
+                        }
+                      } catch {
+                        alert('Failed to extend offer. Please try again.');
+                      }
+                    }}
+                    style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: '#10B981', fontWeight: 800, fontSize: '13px', color: '#FFFFFF', cursor: 'pointer' }}
+                  >
+                    💼 Extend Retainer Offer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Request Interview Modal */}
         {showRequestInterviewModal && requestInterviewTarget && (
           <div style={{
@@ -1599,7 +1928,7 @@ export default function ClientDashboard({
                         </div>
 
                         {/* Actions footer */}
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '16px' }}>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '16px', flexWrap: 'wrap' }}>
                           <button 
                             onClick={() => {
                               setRequestInterviewTarget({
@@ -1625,8 +1954,38 @@ export default function ClientDashboard({
                             {cand.status === 'Interview Scheduled' && '✓ Interview Scheduled'}
                           </button>
 
+                          {(cand.status === 'Shortlisted' || cand.status === 'Interview Scheduled' || cand.status === 'Interview Requested') && (
+                            <button
+                              onClick={() => {
+                                setHireTarget(cand);
+                                setHireForm({
+                                  salary: activeRequest.budget ? String(activeRequest.budget) : '4500',
+                                  startDate: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0],
+                                  notes: ''
+                                });
+                                setShowHireModal(true);
+                              }}
+                              style={{
+                                background: '#10B981',
+                                border: 'none',
+                                borderRadius: '8px', padding: '8px 16px',
+                                color: '#FFFFFF',
+                                fontWeight: 700, fontSize: '12px', cursor: 'pointer'
+                              }}
+                            >
+                              💼 Hire Candidate
+                            </button>
+                          )}
+
                           <button 
-                            onClick={() => alert(`Opening resume, skill matrices and EOR credentials for ${cand.name}...`)}
+                            onClick={() => {
+                              const exactTalent = talents.find(t => t.id === cand.talentId);
+                              if (exactTalent) {
+                                setViewingTalentProfile(exactTalent);
+                              } else {
+                                alert('Talent profile loading...');
+                              }
+                            }}
                             style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer', marginLeft: 'auto' }}
                           >
                             View Full Profile ➔

@@ -181,6 +181,77 @@ export default function KongilaWeb() {
     }
   };
 
+  const syncAuthSignupToDb = async (user: any) => {
+    try {
+      const res = await fetch('/api/db');
+      if (res.ok) {
+        const dbData = await res.json();
+        if (!dbData.users) dbData.users = [];
+        if (!dbData.organizations) dbData.organizations = [];
+        if (!dbData.clientProfiles) dbData.clientProfiles = [];
+        if (!dbData.talents) dbData.talents = [];
+
+        // Check if user already exists
+        if (!dbData.users.some((u: any) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase())) {
+          dbData.users.push({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            createdAt: user.createdAt || new Date().toISOString()
+          });
+        }
+
+        if (user.role === 'client') {
+          const orgId = user.organizationId || `org_${Date.now()}`;
+          if (!dbData.organizations.some((o: any) => o.id === orgId || o.name === user.companyName)) {
+            dbData.organizations.push({
+              id: orgId,
+              name: user.companyName || `${user.name}'s Company`,
+              createdBy: user.id,
+              createdAt: new Date().toISOString()
+            });
+          }
+          if (!dbData.clientProfiles.some((cp: any) => cp.userId === user.id)) {
+            dbData.clientProfiles.push({
+              id: `clp_${Date.now()}`,
+              userId: user.id,
+              organizationId: orgId,
+              position: 'Admin',
+              createdAt: new Date().toISOString()
+            });
+          }
+        } else if (user.role === 'talent') {
+          // If a progressive talent is logged, add a placeholder talent profile so admin can see it immediately
+          if (!dbData.talents.some((t: any) => t.id === user.id || t.email.toLowerCase() === user.email.toLowerCase())) {
+            dbData.talents.push({
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=80',
+              title: 'Operational Talent',
+              skills: ['Operations', 'Team Coordination'],
+              timezone: 'GMT+1 (Lagos)',
+              salaryExpectation: 4000,
+              experienceYears: 4,
+              availability: 100,
+              vettingStage: 'Application Screening',
+              vettingStatus: 'Applied',
+              vettingScores: { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0 },
+              grade: 'B',
+              tags: ['Progressive Entry', 'Sourcing Scan Active'],
+              bio: 'Vetted operational specialist registered via Kongila talent workspace. Screening initiated.'
+            });
+          }
+        }
+
+        await saveToDb(dbData);
+      }
+    } catch (err) {
+      console.error("Failed to sync signup to db.json", err);
+    }
+  };
+
   useEffect(() => {
     // Restore session on page load
     const initSession = async () => {
@@ -406,6 +477,8 @@ export default function KongilaWeb() {
       };
 
       setCurrentUser(newUser);
+      await syncAuthSignupToDb(newUser);
+
       if (authRole === 'talent') {
         setAuthView('onboarding');
       } else {
@@ -485,6 +558,7 @@ export default function KongilaWeb() {
     };
 
     setCurrentUser(googleUser);
+    syncAuthSignupToDb(googleUser);
     triggerBanner('Authenticated with Google OAuth!', 'success');
 
     if (role === 'talent') {
@@ -513,6 +587,7 @@ export default function KongilaWeb() {
       createdAt: new Date().toISOString()
     };
 
+    syncAuthSignupToDb(linkedInUser);
     // Pre-populate talent profile details from LinkedIn profile import
     setTalentOnboardingData(prev => ({
       ...prev,
@@ -554,6 +629,7 @@ export default function KongilaWeb() {
   };
 
   const completeClientSmartIntake = async (user: any) => {
+    await syncAuthSignupToDb(user);
     setLoading(true);
     const newReq: ServiceRequest = {
       id: `req_${Date.now()}`,
