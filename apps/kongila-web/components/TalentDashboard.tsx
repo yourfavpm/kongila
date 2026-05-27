@@ -460,7 +460,7 @@ const ProfessionalSection = ({ profile }: { profile: any }) => {
           <h3 style={{ fontWeight: 700, fontSize: '15px', color: '#1A2340', marginBottom: '16px' }}>Role & Availability</h3>
           <FieldRow label="Primary Role" value={profile?.title || 'Senior Operations Manager'} />
           <FieldRow label="Seniority" value={profile?.seniorityLevel || 'Senior'} />
-          <FieldRow label="Experience" value={`${profile?.yearsExperience || 5} years`} />
+          <FieldRow label="Experience" value={`${profile?.experienceYears || profile?.yearsExperience || 5} years`} />
           <FieldRow label="Employment Type" value={profile?.employmentPreference || 'Full Time'} />
           <FieldRow label="Availability" value={`${profile?.availability || 100}%`} />
         </Card>

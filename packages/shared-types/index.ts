@@ -57,6 +57,27 @@ export interface TalentProfile {
   bio: string;
   documents?: any[];
   supportTickets?: any[];
+  phone?: string;
+  country?: string;
+  city?: string;
+  seniorityLevel?: string;
+  employmentPreference?: string;
+  currency?: string;
+  hourlyMonthly?: string;
+  portfolioUrl?: string;
+  certifications?: string;
+  internetQuality?: string;
+  workSetup?: string;
+  devices?: string;
+  communicationTools?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  nationality?: string;
+  maritalStatus?: string;
+  nationalId?: string;
+  passportNo?: string;
+  address?: string;
+  workExperience?: any[];
 }
 
 export type ServiceType = 'Hire Talent' | 'Outsource Talent' | 'Managed Workforce' | 'Project Execution';

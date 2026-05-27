@@ -724,74 +724,102 @@ export default function KongilaWeb() {
   const handleTalentWizardSubmit = async () => {
     setLoading(true);
 
-    // Create a new TalentProfile object inside db.json
-    const newTalent: TalentProfile = {
-      id: `talent_${Date.now()}`,
-      name: talentOnboardingData.fullName || currentUser?.name || 'Tariq Ibrahim',
-      email: currentUser?.email || 'talent@onb-pool.dev',
-      avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
-      title: talentOnboardingData.primaryRole,
-      skills: talentOnboardingData.skills.split(',').map(s => s.trim()),
-      timezone: talentOnboardingData.timezone,
-      salaryExpectation: talentOnboardingData.salaryExpectation,
-      experienceYears: talentOnboardingData.yearsExperience,
-      availability: talentOnboardingData.availability,
-      vettingStage: 'Application Screening',
-      vettingStatus: 'Applied', // progressive EOR state
-      vettingScores: {
-        technical: 0,
-        behavioral: 0,
-        personality: 0,
-        remoteReadiness: 0,
-        workSimulation: 0,
-        communication: 0,
-        experience: 0
-      },
-      grade: 'B', // default un-graded
-      tags: ['Progressive Entry', 'Assessment Pending'],
-      bio: `Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}. Readiness setups resolved.`
-    };
+    try {
+      const res = await fetch('/api/db');
+      if (res.ok) {
+        const dbData = await res.json();
+        if (!dbData.talents) dbData.talents = [];
+        if (!dbData.notifications) dbData.notifications = [];
+        if (!dbData.auditLogs) dbData.auditLogs = [];
+        if (!dbData.agentLogs) dbData.agentLogs = [];
 
-    const updatedTalents = [...talents, newTalent];
+        // Check if talent already exists in dbData
+        const existingIndex = dbData.talents.findIndex((t: any) => t.id === currentUser?.id || t.email.toLowerCase() === currentUser?.email?.toLowerCase());
 
-    const updatedDb = {
-      talents: updatedTalents,
-      clientRequests: requests,
-      matches: matches,
-      tasks: [],
-      contracts: contracts,
-      notifications: [
-        {
+        const baseTalent = existingIndex > -1 ? dbData.talents[existingIndex] : {};
+
+        const updatedTalent: TalentProfile = {
+          ...baseTalent,
+          id: currentUser?.id || baseTalent.id || `talent_${Date.now()}`,
+          name: talentOnboardingData.fullName || baseTalent.name || currentUser?.name || 'Tariq Ibrahim',
+          email: currentUser?.email || baseTalent.email || 'talent@onb-pool.dev',
+          avatar: baseTalent.avatar || 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
+          title: talentOnboardingData.primaryRole || baseTalent.title || 'Operational Talent',
+          skills: talentOnboardingData.skills ? talentOnboardingData.skills.split(',').map((s: string) => s.trim()) : (baseTalent.skills || []),
+          timezone: talentOnboardingData.timezone || baseTalent.timezone || 'GMT+1 (Lagos)',
+          salaryExpectation: Number(talentOnboardingData.salaryExpectation) || baseTalent.salaryExpectation || 4500,
+          experienceYears: Number(talentOnboardingData.yearsExperience) || baseTalent.experienceYears || 5,
+          availability: Number(talentOnboardingData.availability) || baseTalent.availability || 100,
+          vettingStage: baseTalent.vettingStage || 'Application Screening',
+          vettingStatus: baseTalent.vettingStatus || 'Applied',
+          vettingScores: baseTalent.vettingScores || {
+            technical: 0,
+            behavioral: 0,
+            personality: 0,
+            remoteReadiness: 0,
+            workSimulation: 0,
+            communication: 0,
+            experience: 0
+          },
+          grade: baseTalent.grade || 'B',
+          tags: baseTalent.tags || ['Progressive Entry', 'Assessment Pending'],
+          bio: `Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}. Readiness setups resolved.`,
+          
+          // Onboarding fields:
+          phone: talentOnboardingData.phone || baseTalent.phone || '',
+          country: talentOnboardingData.country || baseTalent.country || 'Nigeria',
+          city: talentOnboardingData.city || baseTalent.city || 'Lagos',
+          seniorityLevel: talentOnboardingData.seniorityLevel || baseTalent.seniorityLevel || 'Senior',
+          employmentPreference: talentOnboardingData.employmentPreference || baseTalent.employmentPreference || 'Full Time',
+          currency: talentOnboardingData.currency || baseTalent.currency || 'USD',
+          hourlyMonthly: talentOnboardingData.hourlyMonthly || baseTalent.hourlyMonthly || 'Monthly',
+          portfolioUrl: talentOnboardingData.portfolioUrl || baseTalent.portfolioUrl || '',
+          certifications: talentOnboardingData.certifications || baseTalent.certifications || '',
+          internetQuality: talentOnboardingData.internetQuality || baseTalent.internetQuality || '',
+          workSetup: talentOnboardingData.workSetup || baseTalent.workSetup || '',
+          devices: talentOnboardingData.devices || baseTalent.devices || '',
+          communicationTools: talentOnboardingData.communicationTools || baseTalent.communicationTools || '',
+          documents: baseTalent.documents || [],
+          supportTickets: baseTalent.supportTickets || []
+        };
+
+        if (existingIndex > -1) {
+          dbData.talents[existingIndex] = updatedTalent;
+        } else {
+          dbData.talents.push(updatedTalent);
+        }
+
+        dbData.notifications.push({
           id: `notif_${Date.now()}`,
-          userId: newTalent.id,
+          userId: updatedTalent.id,
           title: 'Application Intake Submitted',
           message: 'Your talent application screening review is running. Complete your Node/Postgres coding assessment.',
           read: false,
           createdAt: new Date().toISOString()
-        }
-      ],
-      auditLogs: [
-        {
+        });
+
+        dbData.auditLogs.push({
           id: `audit_${Date.now()}`,
-          actor: newTalent.name,
+          actor: updatedTalent.name,
           action: 'Progressive Onboarding Completed',
-          details: `Role expectations: ${newTalent.title}. Setup: ${talentOnboardingData.workSetup}`,
+          details: `Role expectations: ${updatedTalent.title}. Setup: ${talentOnboardingData.workSetup}`,
           timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
+        });
+
+        dbData.agentLogs.push({
           id: `alog_talent_${Date.now()}`,
           agentName: 'Compliance Agent',
-          message: `Screening pipeline initiated for talent ${newTalent.name}. KYC & equipment logs verified.`,
+          message: `Screening pipeline initiated for talent ${updatedTalent.name}. KYC & equipment logs verified.`,
           timestamp: new Date().toLocaleTimeString(),
           type: 'info'
-        }
-      ]
-    };
+        });
 
-    setTalents(updatedTalents);
-    await saveToDb(updatedDb);
+        await saveToDb(dbData);
+        setTalents(dbData.talents);
+      }
+    } catch (e) {
+      console.error("Failed to submit onboarding data", e);
+    }
 
     if (currentUser) {
       setCurrentUser({ ...currentUser, onboardingStatus: 'complete' });
@@ -1150,10 +1178,10 @@ export default function KongilaWeb() {
     }).filter(item => item.talent !== undefined) as { talent: TalentProfile; match: Match }[];
   };
 
-  // Find the database talent profile matching current user email
+  // Find the database talent profile matching current user email or ID
   const getCurrentTalentProfile = () => {
     if (!currentUser) return null;
-    return talents.find(t => t.email.toLowerCase() === currentUser.email.toLowerCase());
+    return talents.find(t => t.id === currentUser.id || t.email.toLowerCase() === currentUser.email.toLowerCase());
   };
 
   const handleUpdateProfile = async (updatedProfile: any) => {
