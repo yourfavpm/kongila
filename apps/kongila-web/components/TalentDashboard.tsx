@@ -3059,20 +3059,20 @@ const ComplianceSection = ({ profile, onUpdateProfile }: { profile: any; onUpdat
 
 // ─── Section 7: Profile Detail Section ───────────────────────────────────────
 const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { user: any; profile: any; contracts: any[]; onUpdateProfile?: (updatedProfile: any) => void }) => {
-  const vettingStatus = profile?.vettingStatus || 'Under Review';
-  const vettingStage = profile?.vettingStage || 'Final Review';
-  const grade = profile?.grade || 'A';
-  const vettingScores = profile?.vettingScores || { cognitive: 92, technical: 95, communication: 90 };
-  const tags = profile?.tags || ['PostgreSQL', 'Node.js', 'React', 'Docker'];
+  const vettingStatus = profile?.vettingStatus || 'Pending';
+  const vettingStage = profile?.vettingStage || 'Application';
+  const grade = profile?.grade || '';
+  const vettingScores = profile?.vettingScores || { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0 };
+  const tags = profile?.tags || [];
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(null), 3000); };
 
   // ── Header state ──
   const [isEditingHeader, setIsEditingHeader] = useState(false);
-  const [fullName, setFullName] = useState(profile?.name || user?.name || 'Chidi Anya');
-  const [title, setTitle] = useState(profile?.title || 'Senior Software Engineer');
-  const [bio, setBio] = useState(profile?.bio || 'Passionate engineer specialized in scalable system designs and low-latency database engines.');
+  const [fullName, setFullName] = useState(profile?.name || user?.name || '');
+  const [title, setTitle] = useState(profile?.title || '');
+  const [bio, setBio] = useState(profile?.bio || '');
   const [tagsInput, setTagsInput] = useState(tags.join(', '));
 
   const handleSaveHeader = () => {
@@ -3084,17 +3084,17 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
 
   // ── Personal Information ──
   const [isEditingPersonal, setIsEditingPersonal] = useState(false);
-  const [phone, setPhone] = useState(profile?.phone || '+234 809 123 4567');
-  const [city, setCity] = useState(profile?.city || 'Lagos');
-  const [country, setCountry] = useState(profile?.country || 'Nigeria');
-  const [timezone, setTimezone] = useState(profile?.timezone || 'GMT+1 (Lagos)');
-  const [dateOfBirth, setDateOfBirth] = useState(profile?.dateOfBirth || '1990-04-14');
-  const [gender, setGender] = useState(profile?.gender || 'Male');
-  const [nationality, setNationality] = useState(profile?.nationality || 'Nigerian');
-  const [maritalStatus, setMaritalStatus] = useState(profile?.maritalStatus || 'Single');
-  const [nationalId, setNationalId] = useState(profile?.nationalId || 'NIN-9234-8812-XXXX');
-  const [passportNo, setPassportNo] = useState(profile?.passportNo || 'A12345678');
-  const [address, setAddress] = useState(profile?.address || '14 Ahmadu Bello Way, Victoria Island, Lagos');
+  const [phone, setPhone] = useState(profile?.phone || '');
+  const [city, setCity] = useState(profile?.city || '');
+  const [country, setCountry] = useState(profile?.country || '');
+  const [timezone, setTimezone] = useState(profile?.timezone || '');
+  const [dateOfBirth, setDateOfBirth] = useState(profile?.dateOfBirth || '');
+  const [gender, setGender] = useState(profile?.gender || '');
+  const [nationality, setNationality] = useState(profile?.nationality || '');
+  const [maritalStatus, setMaritalStatus] = useState(profile?.maritalStatus || '');
+  const [nationalId, setNationalId] = useState(profile?.nationalId || '');
+  const [passportNo, setPassportNo] = useState(profile?.passportNo || '');
+  const [address, setAddress] = useState(profile?.address || '');
 
   const handleSavePersonal = () => {
     if (onUpdateProfile) onUpdateProfile({ ...profile, phone, city, country, timezone, dateOfBirth, gender, nationality, maritalStatus, nationalId, passportNo, address });
@@ -3104,17 +3104,17 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
 
   // ── Professional Details ──
   const [isEditingProfessional, setIsEditingProfessional] = useState(false);
-  const [primaryRole, setPrimaryRole] = useState(profile?.title || 'Senior Software Engineer');
-  const [seniorityLevel, setSeniorityLevel] = useState(profile?.seniorityLevel || 'Senior');
-  const [yearsExperience, setYearsExperience] = useState(profile?.experienceYears ?? 7);
-  const [skills, setSkills] = useState(Array.isArray(profile?.skills) ? profile.skills.join(', ') : (profile?.skills || 'PostgreSQL, Node.js, React, Docker, Kubernetes'));
-  const [employmentPreference, setEmploymentPreference] = useState(profile?.employmentPreference || 'Full Time');
-  const [salaryExpectation, setSalaryExpectation] = useState(profile?.salaryExpectation ?? 4500);
+  const [primaryRole, setPrimaryRole] = useState(profile?.title || '');
+  const [seniorityLevel, setSeniorityLevel] = useState(profile?.seniorityLevel || '');
+  const [yearsExperience, setYearsExperience] = useState(profile?.experienceYears ?? 0);
+  const [skills, setSkills] = useState(Array.isArray(profile?.skills) ? profile.skills.join(', ') : (profile?.skills || ''));
+  const [employmentPreference, setEmploymentPreference] = useState(profile?.employmentPreference || '');
+  const [salaryExpectation, setSalaryExpectation] = useState(profile?.salaryExpectation ?? 0);
   const [currency, setCurrency] = useState(profile?.currency || 'USD');
   const [hourlyMonthly, setHourlyMonthly] = useState(profile?.hourlyMonthly || 'Monthly');
-  const [availability, setAvailability] = useState(profile?.availability ?? 100);
-  const [linkedIn, setLinkedIn] = useState(profile?.linkedIn || 'https://linkedin.com/in/chidi-anya');
-  const [portfolioUrl, setPortfolioUrl] = useState(profile?.portfolioUrl || 'https://github.com/chidi-anya');
+  const [availability, setAvailability] = useState(profile?.availability ?? 0);
+  const [linkedIn, setLinkedIn] = useState(profile?.linkedIn || '');
+  const [portfolioUrl, setPortfolioUrl] = useState(profile?.portfolioUrl || '');
 
   const handleSaveProfessional = () => {
     if (onUpdateProfile) onUpdateProfile({ ...profile, title: primaryRole, seniorityLevel, experienceYears: Number(yearsExperience), skills: skills.split(',').map((s: string) => s.trim()), employmentPreference, salaryExpectation: Number(salaryExpectation), currency, hourlyMonthly, availability: Number(availability), linkedIn, portfolioUrl });
@@ -3124,10 +3124,10 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
 
   // ── Work Setup ──
   const [isEditingSetup, setIsEditingSetup] = useState(false);
-  const [internetQuality, setInternetQuality] = useState(profile?.internetQuality || 'Fiber Optic (Primary) + LTE (Backup)');
-  const [workSetup, setWorkSetup] = useState(profile?.workSetup || 'Dedicated ergonomic workspace with UPS battery backup');
-  const [devices, setDevices] = useState(profile?.devices || 'MacBook Pro 16", Dual 27" 4K Monitors');
-  const [communicationTools, setCommunicationTools] = useState(profile?.communicationTools || 'Slack, Zoom, Teams, Loom');
+  const [internetQuality, setInternetQuality] = useState(profile?.internetQuality || '');
+  const [workSetup, setWorkSetup] = useState(profile?.workSetup || '');
+  const [devices, setDevices] = useState(profile?.devices || '');
+  const [communicationTools, setCommunicationTools] = useState(profile?.communicationTools || '');
 
   const handleSaveSetup = () => {
     if (onUpdateProfile) onUpdateProfile({ ...profile, internetQuality, workSetup, devices, communicationTools });
@@ -3136,10 +3136,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Work Experience ──
-  const [workExperience, setWorkExperience] = useState<any[]>(profile?.workExperience && profile.workExperience.length > 0 ? profile.workExperience : [
-    { id: 'we_1', company: 'Horizon Fintech Ltd', role: 'Senior Software Engineer', startDate: '2022-01', endDate: 'Present', location: 'Lagos, Nigeria (Remote)', description: 'Led architecture of microservices payment gateway processing over $5M daily. Managed a team of 8 engineers across 3 time zones.' },
-    { id: 'we_2', company: 'Nebula Systems Inc.', role: 'Full-Stack Engineer', startDate: '2019-03', endDate: '2021-12', location: 'Abuja, Nigeria', description: 'Built and maintained core ledger synchronization systems with PostgreSQL, achieving 99.99% uptime SLA.' },
-  ]);
+  const [workExperience, setWorkExperience] = useState<any[]>(profile?.workExperience && profile.workExperience.length > 0 ? profile.workExperience : []);
   const [isWorkModalOpen, setIsWorkModalOpen] = useState(false);
   const [isEditingWork, setIsEditingWork] = useState(false);
   const [workForm, setWorkForm] = useState({ id: '', company: '', role: '', startDate: '', endDate: '', location: '', description: '' });
@@ -3160,9 +3157,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Education ──
-  const [educationList, setEducationList] = useState<any[]>(profile?.educationList && profile.educationList.length > 0 ? profile.educationList : [
-    { id: 'edu_1', institution: 'University of Lagos', degree: 'B.Sc. Computer Science', startYear: '2009', endYear: '2013', grade: 'First Class Honours', description: 'Focused on distributed systems, algorithms, and software engineering practices.' },
-  ]);
+  const [educationList, setEducationList] = useState<any[]>(profile?.educationList && profile.educationList.length > 0 ? profile.educationList : []);
   const [isEduModalOpen, setIsEduModalOpen] = useState(false);
   const [isEditingEdu, setIsEditingEdu] = useState(false);
   const [eduForm, setEduForm] = useState({ id: '', institution: '', degree: '', startYear: '', endYear: '', grade: '', description: '' });
@@ -3183,11 +3178,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Languages ──
-  const [languagesList, setLanguagesList] = useState<any[]>(profile?.languagesList && profile.languagesList.length > 0 ? profile.languagesList : [
-    { id: 'lang_1', language: 'English', proficiency: 'Native / Bilingual' },
-    { id: 'lang_2', language: 'French', proficiency: 'Professional Working Proficiency' },
-    { id: 'lang_3', language: 'Yoruba', proficiency: 'Native' },
-  ]);
+  const [languagesList, setLanguagesList] = useState<any[]>(profile?.languagesList && profile.languagesList.length > 0 ? profile.languagesList : []);
   const [isLangModalOpen, setIsLangModalOpen] = useState(false);
   const [langForm, setLangForm] = useState({ id: '', language: '', proficiency: '' });
 
@@ -3202,10 +3193,10 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
 
   // ── Emergency Contact ──
   const [isEditingEmergency, setIsEditingEmergency] = useState(false);
-  const [emergencyName, setEmergencyName] = useState(profile?.emergencyContact?.name || 'Adaeze Anya');
-  const [emergencyRelation, setEmergencyRelation] = useState(profile?.emergencyContact?.relation || 'Spouse');
-  const [emergencyPhone, setEmergencyPhone] = useState(profile?.emergencyContact?.phone || '+234 802 456 7890');
-  const [emergencyEmail, setEmergencyEmail] = useState(profile?.emergencyContact?.email || 'adaeze.anya@gmail.com');
+  const [emergencyName, setEmergencyName] = useState(profile?.emergencyContact?.name || '');
+  const [emergencyRelation, setEmergencyRelation] = useState(profile?.emergencyContact?.relation || '');
+  const [emergencyPhone, setEmergencyPhone] = useState(profile?.emergencyContact?.phone || '');
+  const [emergencyEmail, setEmergencyEmail] = useState(profile?.emergencyContact?.email || '');
 
   const handleSaveEmergency = () => {
     if (onUpdateProfile) onUpdateProfile({ ...profile, emergencyContact: { name: emergencyName, relation: emergencyRelation, phone: emergencyPhone, email: emergencyEmail } });
@@ -3214,12 +3205,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Documents ──
-  const [documents, setDocuments] = useState<any[]>(profile?.documents && profile.documents.length > 0 ? profile.documents : [
-    { id: 'doc_1', name: 'Chidi_Anya_Resume_2026.pdf', category: 'CV / Resume', uploadedAt: '2026-05-15', fileSize: '1.2 MB', status: 'Verified' },
-    { id: 'doc_2', name: 'Government_Passport_ID.pdf', category: 'Identity / Government ID', uploadedAt: '2026-05-18', fileSize: '2.4 MB', status: 'Verified' },
-    { id: 'doc_3', name: 'Degree_Certificate_Computer_Science.pdf', category: 'Degree Certificate', uploadedAt: '2026-05-10', fileSize: '3.1 MB', status: 'Verified' },
-    { id: 'doc_4', name: 'NDA_Signed_Horizon_Fintech.pdf', category: 'Legal / NDA', uploadedAt: '2026-05-20', fileSize: '0.8 MB', status: 'Verified' },
-  ]);
+  const [documents, setDocuments] = useState<any[]>(profile?.documents && profile.documents.length > 0 ? profile.documents : []);
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [newDocName, setNewDocName] = useState('');
   const [newDocCategory, setNewDocCategory] = useState('CV / Resume');
@@ -3237,10 +3223,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Projects ──
-  const [projects, setProjects] = useState<any[]>(profile?.projects && profile.projects.length > 0 ? profile.projects : [
-    { id: 'proj_1', title: 'Nebula Core Ledger Sync', role: 'Lead Architect', client: 'Nebula Systems', duration: '6 Months', techStack: 'PostgreSQL, Go, Redis', links: 'https://github.com/nebula-systems/core-sync', description: 'Designed and implemented a low-latency transactions synchronization ledger engine handling 12,000 req/s with complete consistency guarantees.' },
-    { id: 'proj_2', title: 'Horizon Retain Portal', role: 'Senior Full-Stack Engineer', client: 'Horizon Fintech', duration: '4 Months', techStack: 'React, Node.js, AWS', links: 'https://horizon.com/portal', description: 'Rebuilt the customer payment retainer subsystem, decreasing subscription churn rate by 14% and resolving complex timezone alignment scheduling.' },
-  ]);
+  const [projects, setProjects] = useState<any[]>(profile?.projects && profile.projects.length > 0 ? profile.projects : []);
   const [isProjModalOpen, setIsProjModalOpen] = useState(false);
   const [isEditingProj, setIsEditingProj] = useState(false);
   const [projForm, setProjForm] = useState({ id: '', title: '', role: '', client: '', duration: '', techStack: '', links: '', description: '' });
@@ -3261,11 +3244,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   };
 
   // ── Certifications ──
-  const [certsList, setCertsList] = useState<any[]>(profile?.certsList && profile.certsList.length > 0 ? profile.certsList : [
-    { id: 'cert_1', name: 'AWS Certified Solutions Architect \u2013 Professional', issuer: 'Amazon Web Services', issueDate: '2024-03', expiryDate: '2027-03', verificationLink: 'https://aws.amazon.com/verification/12984-aws-cert', badgeImage: '' },
-    { id: 'cert_2', name: 'Google Cloud Professional Cloud Architect', issuer: 'Google Cloud', issueDate: '2023-11', expiryDate: '2025-11', verificationLink: 'https://cloud.google.com/verification/83942-gcp-cert', badgeImage: '' },
-    { id: 'cert_3', name: 'Certified Scrum Master (CSM)', issuer: 'Scrum Alliance', issueDate: '2023-06', expiryDate: '2025-06', verificationLink: 'https://scrumalliance.org/verify/1234567', badgeImage: '' },
-  ]);
+  const [certsList, setCertsList] = useState<any[]>(profile?.certsList && profile.certsList.length > 0 ? profile.certsList : []);
   const [isCertModalOpen, setIsCertModalOpen] = useState(false);
   const [isEditingCert, setIsEditingCert] = useState(false);
   const [certForm, setCertForm] = useState({ id: '', name: '', issuer: '', issueDate: '', expiryDate: '', verificationLink: '', badgeImage: '' });
@@ -3765,26 +3744,34 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
           {/* Assigned Manager */}
           <Card>
             <h3 style={{ fontSize: '13px', fontWeight: 800, color: '#1A2340', margin: '0 0 16px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Assigned Manager</h3>
-            <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', flexShrink: 0 }}>
-                {(profile?.assignedManager?.name || 'Sarah Chen')[0]}
+            {profile?.assignedManager?.name ? (
+              <>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', flexShrink: 0 }}>
+                    {profile.assignedManager.name[0]}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340' }}>{profile.assignedManager.name}</div>
+                    <div style={{ fontSize: '12px', color: '#6B7A99' }}>{profile.assignedManager.role || 'Talent Success Manager'}</div>
+                    <div style={{ fontSize: '11px', color: '#10B981', marginTop: '3px', fontWeight: 600 }}>● Online — Avg. response &lt;2h</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', color: '#6B7A99', borderTop: '1px solid #F1F5F9', paddingTop: '14px' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
+                    {profile.assignedManager.email}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.56 1.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.73a16 16 0 0 0 5.99 6l.92-.93a2 2 0 0 1 2.11-.45c.906.338 1.85.573 2.81.7A2 2 0 0 1 21.73 16z" /></svg>
+                    {profile.assignedManager.phone || 'N/A'}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: '13px', color: '#6B7A99', textAlign: 'center', padding: '16px 0', fontStyle: 'italic' }}>
+                No Success Manager assigned yet. Complete screening to trigger mapping.
               </div>
-              <div>
-                <div style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340' }}>{profile?.assignedManager?.name || 'Sarah Chen'}</div>
-                <div style={{ fontSize: '12px', color: '#6B7A99' }}>{profile?.assignedManager?.role || 'Senior Talent Success Manager'}</div>
-                <div style={{ fontSize: '11px', color: '#10B981', marginTop: '3px', fontWeight: 600 }}>\u25cf Online \u2014 Avg. response &lt;2h</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', color: '#6B7A99', borderTop: '1px solid #F1F5F9', paddingTop: '14px' }}>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
-                {profile?.assignedManager?.email || 's.chen@kongila.com'}
-              </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.56 1.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.73a16 16 0 0 0 5.99 6l.92-.93a2 2 0 0 1 2.11-.45c.906.338 1.85.573 2.81.7A2 2 0 0 1 21.73 16z" /></svg>
-                {profile?.assignedManager?.phone || '+44 20 7946 0958'}
-              </div>
-            </div>
+            )}
           </Card>
 
           {/* Account Status */}
