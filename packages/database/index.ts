@@ -971,391 +971,515 @@ function getSupabaseClient() {
 }
 
 export async function readDbAsync(): Promise<Schema> {
-  const supabase = getSupabaseClient();
-  
-  const [
-    rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs,
-    rRequests, rMatches, rProjects, rTasks, rContracts, rAssignments,
-    rInvoices, rPayments, rPayouts, rMessages, rNotifs, rAudit, rAgent,
-    rTickets, rSupportMessages
-  ] = await Promise.all([
-    supabase.from('users').select('*'),
-    supabase.from('organizations').select('*'),
-    supabase.from('client_profiles').select('*'),
-    supabase.from('talent_profiles').select('*'),
-    supabase.from('skills').select('*'),
-    supabase.from('talent_skills').select('*'),
-    supabase.from('documents').select('*'),
-    supabase.from('service_requests').select('*'),
-    supabase.from('matches').select('*'),
-    supabase.from('projects').select('*'),
-    supabase.from('tasks').select('*'),
-    supabase.from('contracts').select('*'),
-    supabase.from('assignments').select('*'),
-    supabase.from('invoices').select('*'),
-    supabase.from('payments').select('*'),
-    supabase.from('talent_payouts').select('*'),
-    supabase.from('messages').select('*'),
-    supabase.from('notifications').select('*'),
-    supabase.from('audit_logs').select('*'),
-    supabase.from('agent_logs').select('*'),
-    supabase.from('support_tickets').select('*'),
-    supabase.from('support_messages').select('*')
-  ]);
+  const localDb = readDb();
 
-  const users = (rUsers.data || []).map((u: any) => ({
-    id: u.id,
-    email: u.email,
-    role: u.role,
-    status: u.status,
-    emailVerified: u.email_verified,
-    createdAt: u.created_at,
-    updatedAt: u.updated_at
-  }));
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://bsmwuofugczuhdbintgs.supabase.co';
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-  const userMap = new Map<string, any>(users.map((u: any) => [u.id, u]));
-
-  const organizations = (rOrgs.data || []).map((o: any) => ({
-    id: o.id,
-    name: o.name,
-    created_by: o.created_by,
-    created_at: o.created_at
-  }));
-
-  const clientProfiles = (rClientProfiles.data || []).map((cp: any) => ({
-    id: cp.id,
-    userId: cp.user_id,
-    organizationId: cp.organization_id,
-    position: cp.position,
-    phone: cp.phone
-  }));
-
-  const skills = (rSkills.data || []).map((s: any) => ({
-    id: s.id,
-    name: s.name
-  }));
-
-  const talentSkills = (rTalentSkills.data || []).map((ts: any) => ({
-    id: ts.id,
-    talentId: ts.talent_id,
-    skillId: ts.skill_id,
-    level: ts.level
-  }));
-
-  const talentSkillsMap = new Map<string, string[]>();
-  for (const ts of talentSkills) {
-    const name = skills.find((s: any) => s.id === ts.skillId)?.name;
-    if (name) {
-      if (!talentSkillsMap.has(ts.talentId)) {
-        talentSkillsMap.set(ts.talentId, []);
-      }
-      talentSkillsMap.get(ts.talentId)!.push(name);
+    if (!supabaseAnonKey) {
+      console.warn("No Supabase Anon Key provided. Operating in local-only mode using db.json.");
+      return localDb;
     }
-  }
 
-  const documents = (rDocs.data || []).map((doc: any) => ({
-    id: doc.id,
-    userId: doc.user_id,
-    name: doc.name,
-    type: doc.type,
-    fileSize: doc.file_size,
-    status: doc.status,
-    uploadedAt: doc.uploaded_at
-  }));
+    const supabase = getSupabaseClient();
 
-  const talents = (rTalents.data || []).map((t: any) => {
-    let bio = t.bio || '';
-    let tags: string[] = [];
-    let vettingScores: any = {
-      technical: 90,
-      behavioral: 85,
-      personality: 88,
-      remoteReadiness: 90,
-      workSimulation: 85,
-      communication: 90,
-      experience: 80
-    };
-    
-    if (bio.startsWith('Tags:')) {
-      const lines = bio.split('\n\n');
-      const tagsLine = lines[0].replace('Tags:', '').trim();
-      tags = tagsLine ? tagsLine.split(', ').filter(Boolean) : [];
+    const [
+      rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs,
+      rRequests, rMatches, rProjects, rTasks, rContracts, rAssignments,
+      rInvoices, rPayments, rPayouts, rMessages, rNotifs, rAudit, rAgent,
+      rTickets, rSupportMessages
+    ] = await Promise.all([
+      supabase.from('users').select('*'),
+      supabase.from('organizations').select('*'),
+      supabase.from('client_profiles').select('*'),
+      supabase.from('talent_profiles').select('*'),
+      supabase.from('skills').select('*'),
+      supabase.from('talent_skills').select('*'),
+      supabase.from('documents').select('*'),
+      supabase.from('service_requests').select('*'),
+      supabase.from('matches').select('*'),
+      supabase.from('projects').select('*'),
+      supabase.from('tasks').select('*'),
+      supabase.from('contracts').select('*'),
+      supabase.from('assignments').select('*'),
+      supabase.from('invoices').select('*'),
+      supabase.from('payments').select('*'),
+      supabase.from('talent_payouts').select('*'),
+      supabase.from('messages').select('*'),
+      supabase.from('notifications').select('*'),
+      supabase.from('audit_logs').select('*'),
+      supabase.from('agent_logs').select('*'),
+      supabase.from('support_tickets').select('*'),
+      supabase.from('support_messages').select('*')
+    ]);
+
+    if (rUsers.error || rTalents.error) {
+      console.warn("Supabase queries failed. Operating in local-only mode using db.json.");
+      return localDb;
+    }
+
+    const users = (rUsers.data || []).map((u: any) => ({
+      id: u.id,
+      email: u.email,
+      role: u.role,
+      status: u.status,
+      emailVerified: u.email_verified,
+      createdAt: u.created_at,
+      updatedAt: u.updated_at
+    }));
+
+    const userMap = new Map<string, any>(users.map((u: any) => [u.id, u]));
+
+    const organizations = (rOrgs.data || []).map((o: any) => ({
+      id: o.id,
+      name: o.name,
+      created_by: o.created_by,
+      created_at: o.created_at
+    }));
+
+    const clientProfiles = (rClientProfiles.data || []).map((cp: any) => ({
+      id: cp.id,
+      userId: cp.user_id,
+      organizationId: cp.organization_id,
+      position: cp.position,
+      phone: cp.phone
+    }));
+
+    const skills = (rSkills.data || []).map((s: any) => ({
+      id: s.id,
+      name: s.name
+    }));
+
+    const talentSkills = (rTalentSkills.data || []).map((ts: any) => ({
+      id: ts.id,
+      talentId: ts.talent_id,
+      skillId: ts.skill_id,
+      level: ts.level
+    }));
+
+    const talentSkillsMap = new Map<string, string[]>();
+    for (const ts of talentSkills) {
+      const name = skills.find((s: any) => s.id === ts.skillId)?.name;
+      if (name) {
+        if (!talentSkillsMap.has(ts.talentId)) {
+          talentSkillsMap.set(ts.talentId, []);
+        }
+        talentSkillsMap.get(ts.talentId)!.push(name);
+      }
+    }
+
+    const documents = (rDocs.data || []).map((doc: any) => ({
+      id: doc.id,
+      userId: doc.user_id,
+      name: doc.name,
+      type: doc.type,
+      fileSize: doc.file_size,
+      status: doc.status,
+      uploadedAt: doc.uploaded_at
+    }));
+
+    const talents = (rTalents.data || []).map((t: any) => {
+      let bio = t.bio || '';
+      let tags: string[] = [];
+      let vettingScores: any = {
+        technical: 90,
+        behavioral: 85,
+        personality: 88,
+        remoteReadiness: 90,
+        workSimulation: 85,
+        communication: 90,
+        experience: 80
+      };
+      let telemetry: any = {};
       
-      if (lines[1] && lines[1].startsWith('Scores:')) {
-        try {
-          vettingScores = JSON.parse(lines[1].replace('Scores:', '').trim());
-        } catch (e) {}
+      if (bio.startsWith('Tags:')) {
+        const lines = bio.split('\n\n');
+        const tagsLine = lines[0].replace('Tags:', '').trim();
+        tags = tagsLine ? tagsLine.split(', ').filter(Boolean) : [];
+        
+        if (lines[1] && lines[1].startsWith('Scores:')) {
+          try {
+            vettingScores = JSON.parse(lines[1].replace('Scores:', '').trim());
+          } catch (e) {}
+        }
+        
+        if (lines[2] && lines[2].startsWith('Telemetry:')) {
+          try {
+            telemetry = JSON.parse(lines[2].replace('Telemetry:', '').trim());
+          } catch (e) {}
+          bio = lines.slice(3).join('\n\n').replace('Bio:', '').trim();
+        } else {
+          bio = lines.slice(2).join('\n\n').replace('Bio:', '').trim();
+        }
       }
-      bio = lines.slice(2).join('\n\n').replace('Bio:', '').trim();
+
+      const email = userMap.get(t.user_id)?.email || '';
+      const name = t.full_name;
+      const avatar = t.avatar_url;
+      const availability = t.availability_hours;
+
+      const talentDocs = documents.filter((d: any) => d.userId === t.user_id);
+
+      return {
+        id: t.id,
+        name,
+        email,
+        avatar,
+        title: t.level || 'Professional',
+        skills: talentSkillsMap.get(t.id) || [],
+        timezone: t.timezone,
+        salaryExpectation: Number(t.salary_expectation || t.salary_max || 0),
+        experienceYears: Number(t.experience_years || 0),
+        availability,
+        vettingStage: t.vetting_stage,
+        vettingStatus: t.vetting_status,
+        vettingScores,
+        grade: t.grade,
+        tags,
+        bio,
+        documents: talentDocs,
+        
+        // Onboarding and Personal Telemetry fields from database (stored inside bio text)
+        phone: t.phone || telemetry.phone || '',
+        city: telemetry.city || '',
+        country: t.country || telemetry.country || 'Nigeria',
+        seniorityLevel: telemetry.seniorityLevel || '',
+        employmentPreference: telemetry.employmentPreference || '',
+        currency: telemetry.currency || 'USD',
+        hourlyMonthly: telemetry.hourlyMonthly || 'Monthly',
+        portfolioUrl: telemetry.portfolioUrl || '',
+        certifications: telemetry.certifications || '',
+        internetQuality: telemetry.internetQuality || '',
+        workSetup: telemetry.workSetup || '',
+        devices: telemetry.devices || '',
+        communicationTools: telemetry.communicationTools || '',
+        dateOfBirth: telemetry.dateOfBirth || '',
+        gender: t.gender || telemetry.gender || '',
+        nationality: telemetry.nationality || '',
+        maritalStatus: telemetry.maritalStatus || '',
+        nationalId: telemetry.nationalId || '',
+        passportNo: telemetry.passportNo || '',
+        address: t.address || telemetry.address || '',
+        workExperience: telemetry.workExperience || []
+      } as any;
+    });
+
+    const clientRequests = (rRequests.data || []).map((r: any) => {
+      let roleDescription = r.description || '';
+      let requiredSkills: string[] = [];
+      let priority = 'Medium';
+      let timezone = 'GMT+1';
+      let budget = 0;
+      let clientName = 'Horizon Fintech';
+      
+      try {
+        const parsed = JSON.parse(r.description);
+        if (parsed && typeof parsed === 'object') {
+          roleDescription = parsed.roleDescription || '';
+          requiredSkills = parsed.requiredSkills || [];
+          priority = parsed.priority || 'Medium';
+          timezone = parsed.timezone || 'GMT+1';
+          budget = parsed.budget || 0;
+          clientName = parsed.clientName || 'Horizon Fintech';
+        }
+      } catch (e) {}
+
+      return {
+        id: r.id,
+        clientId: r.client_id,
+        clientName,
+        serviceType: r.service_type,
+        roleDescription,
+        requiredSkills,
+        duration: r.duration,
+        commitmentLevel: r.commitment_level,
+        numberOfHires: r.num_of_talents,
+        timezone,
+        startDate: r.start_date,
+        budget,
+        priority,
+        status: r.status === 'new' ? 'New Request' : 'Matching',
+        createdAt: r.created_at
+      };
+    });
+
+    const matches = (rMatches.data || []).map((m: any) => {
+      return {
+        id: m.id,
+        requestId: m.request_id,
+        talentId: m.talent_id,
+        status: m.status === 'proposed' ? 'Interview Scheduled' : m.status.charAt(0).toUpperCase() + m.status.slice(1),
+        score: 90,
+        breakdown: { skillFit: 92, cultureFit: 88, experienceFit: 90 },
+        createdAt: m.created_at || new Date().toISOString()
+      } as any;
+    });
+
+    const projects = (rProjects.data || []).map((p: any) => ({
+      id: p.id,
+      clientId: p.client_id,
+      name: p.name,
+      description: p.description,
+      startDate: p.start_date,
+      endDate: p.end_date,
+      status: p.status
+    }));
+
+    const tasks = (rTasks.data || []).map((t: any) => {
+      const proj = projects.find((p: any) => p.id === t.project_id);
+      const userRec = users.find((u: any) => u.id === t.assigned_to);
+      const talentRec = talents.find((tal: any) => tal.id === t.assigned_to || tal.email === userRec?.email);
+      
+      return {
+        id: t.id,
+        projectId: t.project_id,
+        projectName: proj?.name || 'General Project',
+        title: t.title,
+        description: t.description,
+        assigneeId: t.assigned_to,
+        assigneeName: talentRec?.name || userRec?.email || 'Unassigned',
+        status: t.status === 'in_progress' ? 'In Progress' : (t.status === 'done' ? 'Completed' : 'To Do'),
+        priority: 'Medium',
+        dueDate: new Date().toISOString().split('T')[0],
+        createdAt: new Date().toISOString()
+      } as any;
+    });
+
+    const contracts = (rContracts.data || []).map((c: any) => {
+      const talent = talents.find((t: any) => t.id === c.talent_id);
+      const clientUser = users.find((u: any) => u.id === c.client_id);
+      const clientProfile = clientProfiles.find((cp: any) => cp.userId === c.client_id);
+      const org = organizations.find((o: any) => o.id === clientProfile?.organizationId);
+
+      const clientName = org?.name || 'Horizon Fintech';
+      const talentName = talent?.name || 'Chidi Anya';
+
+      return {
+        id: c.id,
+        matchId: `match_${c.talent_id}`,
+        clientId: c.client_id,
+        clientName,
+        talentId: c.talent_id,
+        talentName,
+        role: c.service_type || 'Contractor',
+        salary: Number(c.rate_amount || 0),
+        startDate: c.start_date || 'Jan 12, 2024',
+        status: c.status === 'signed' ? 'Signed' : 'Pending',
+        signedAt: c.signed_at,
+        rateType: c.rate_type || 'Monthly',
+        rateAmount: Number(c.rate_amount || 0),
+        totalEarned: Number(c.total_earned || 0),
+        invoicedBalance: Number(c.invoiced_balance || 0),
+        nextPayout: Number(c.next_payout || 0),
+        nextPayoutDate: 'Friday, May 24',
+        endDate: c.end_date || 'Dec 21, 2024',
+        engagementModel: c.engagement_model || null,
+        rating: Number(c.rating || 5),
+        qualityOfWork: Number(c.quality_of_work || 5),
+        communication: Number(c.communication || 5),
+        timeliness: Number(c.timeliness || 5)
+      };
+    });
+
+    const assignments = (rAssignments.data || []).map((a: any) => ({
+      id: a.id,
+      talentId: a.talent_id,
+      projectId: a.project_id,
+      contractId: a.contract_id,
+      role: a.role,
+      status: a.status
+    }));
+
+    const invoices = (rInvoices.data || []).map((inv: any) => ({
+      id: inv.id,
+      clientId: inv.client_id,
+      amount: Number(inv.amount || 0),
+      status: inv.status,
+      dueDate: inv.due_date
+    }));
+
+    const payments = (rPayments.data || []).map((p: any) => ({
+      id: p.id,
+      invoiceId: p.invoice_id,
+      amount: Number(p.amount || 0),
+      paymentMethod: p.payment_method,
+      status: p.status,
+      paidAt: p.paid_at
+    }));
+
+    const talentPayouts = (rPayouts.data || []).map((tp: any) => ({
+      id: tp.id,
+      talentId: tp.talent_id,
+      contractId: tp.contract_id,
+      amount: Number(tp.amount || 0),
+      status: tp.status,
+      paidAt: tp.paid_at
+    }));
+
+    const messages = (rMessages.data || []).map((msg: any) => ({
+      id: msg.id,
+      senderId: msg.sender_id,
+      receiverId: msg.receiver_id,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      readStatus: msg.read_status
+    }));
+
+    const notifications = (rNotifs.data || []).map((n: any) => ({
+      id: n.id,
+      userId: n.user_id,
+      title: n.title,
+      message: n.message,
+      read: n.read,
+      createdAt: n.created_at
+    }));
+
+    const auditLogs = (rAudit.data || []).map((al: any) => ({
+      id: al.id,
+      actor: al.actor,
+      action: al.action,
+      details: al.details,
+      timestamp: al.timestamp
+    }));
+
+    const agentLogs = (rAgent.data || []).map((ag: any) => ({
+      id: ag.id,
+      agentName: ag.agent_name,
+      message: ag.message,
+      timestamp: ag.timestamp,
+      type: ag.type
+    }));
+
+    const supportTickets = (rTickets.data || []).map((st: any) => ({
+      id: st.id,
+      talentId: st.talent_id,
+      subject: st.subject,
+      category: st.category,
+      status: st.status,
+      priority: st.priority,
+      createdAt: st.created_at,
+      lastActivity: 'Active'
+    }));
+
+    const supportMessages = (rSupportMessages.data || []).map((sm: any) => ({
+      id: sm.id,
+      ticketId: sm.ticket_id,
+      senderName: sm.sender_name,
+      senderRole: sm.sender_role,
+      isSupport: sm.is_support,
+      avatarUrl: sm.avatar_url,
+      text: sm.text,
+      timestamp: sm.timestamp,
+      createdAt: sm.created_at
+    }));
+
+    // RESILIENT MERGE LAYER: Merge the local-only users, talents, organizations, clientRequests, and matches
+    // to guarantee they show up on Admin & Client dashboard even if Supabase sync had lag or errors!
+    const mergedUsers = [...users];
+    for (const lu of localDb.users || []) {
+      if (!mergedUsers.some(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase())) {
+        mergedUsers.push(lu);
+      }
     }
 
-    const email = userMap.get(t.user_id)?.email || '';
-    const name = t.full_name;
-    const avatar = t.avatar_url;
-    const availability = t.availability_hours;
-
-    const talentDocs = documents.filter((d: any) => d.userId === t.user_id);
-
-    return {
-      id: t.id,
-      name,
-      email,
-      avatar,
-      title: t.level || 'Professional',
-      skills: talentSkillsMap.get(t.id) || [],
-      timezone: t.timezone,
-      salaryExpectation: Number(t.salary_expectation || t.salary_max || 0),
-      experienceYears: Number(t.experience_years || 0),
-      availability,
-      vettingStage: t.vetting_stage,
-      vettingStatus: t.vetting_status,
-      vettingScores,
-      grade: t.grade,
-      tags,
-      bio,
-      documents: talentDocs
-    } as any;
-  });
-
-  const clientRequests = (rRequests.data || []).map((r: any) => {
-    let roleDescription = r.description || '';
-    let requiredSkills: string[] = [];
-    let priority = 'Medium';
-    let timezone = 'GMT+1';
-    let budget = 0;
-    let clientName = 'Horizon Fintech';
-    
-    try {
-      const parsed = JSON.parse(r.description);
-      if (parsed && typeof parsed === 'object') {
-        roleDescription = parsed.roleDescription || '';
-        requiredSkills = parsed.requiredSkills || [];
-        priority = parsed.priority || 'Medium';
-        timezone = parsed.timezone || 'GMT+1';
-        budget = parsed.budget || 0;
-        clientName = parsed.clientName || 'Horizon Fintech';
+    const mergedTalents = [...talents];
+    for (const lt of localDb.talents || []) {
+      const idx = mergedTalents.findIndex(t => t.id === lt.id || t.email.toLowerCase() === lt.email.toLowerCase());
+      if (idx > -1) {
+        // Merge the onboarding telemetry properties from local JSON
+        mergedTalents[idx] = {
+          ...lt,
+          ...mergedTalents[idx],
+          // Ensure we merge the custom onboarding telemetry fields
+          phone: mergedTalents[idx].phone || lt.phone,
+          city: mergedTalents[idx].city || lt.city,
+          country: mergedTalents[idx].country || lt.country,
+          seniorityLevel: mergedTalents[idx].seniorityLevel || lt.seniorityLevel,
+          employmentPreference: mergedTalents[idx].employmentPreference || lt.employmentPreference,
+          currency: mergedTalents[idx].currency || lt.currency,
+          hourlyMonthly: mergedTalents[idx].hourlyMonthly || lt.hourlyMonthly,
+          portfolioUrl: mergedTalents[idx].portfolioUrl || lt.portfolioUrl,
+          certifications: mergedTalents[idx].certifications || lt.certifications,
+          internetQuality: mergedTalents[idx].internetQuality || lt.internetQuality,
+          workSetup: mergedTalents[idx].workSetup || lt.workSetup,
+          devices: mergedTalents[idx].devices || lt.devices,
+          communicationTools: mergedTalents[idx].communicationTools || lt.communicationTools,
+          dateOfBirth: mergedTalents[idx].dateOfBirth || lt.dateOfBirth,
+          gender: mergedTalents[idx].gender || lt.gender,
+          nationality: mergedTalents[idx].nationality || lt.nationality,
+          maritalStatus: mergedTalents[idx].maritalStatus || lt.maritalStatus,
+          nationalId: mergedTalents[idx].nationalId || lt.nationalId,
+          passportNo: mergedTalents[idx].passportNo || lt.passportNo,
+          address: mergedTalents[idx].address || lt.address,
+          workExperience: mergedTalents[idx].workExperience || lt.workExperience
+        };
+      } else {
+        mergedTalents.push(lt);
       }
-    } catch (e) {}
+    }
+
+    const mergedOrgs = [...organizations];
+    for (const lo of localDb.organizations || []) {
+      if (!mergedOrgs.some(o => o.id === lo.id || o.name === lo.name)) {
+        mergedOrgs.push(lo);
+      }
+    }
+
+    const mergedClientProfiles = [...clientProfiles];
+    for (const lcp of localDb.clientProfiles || []) {
+      if (!mergedClientProfiles.some(cp => cp.id === lcp.id || cp.userId === lcp.userId)) {
+        mergedClientProfiles.push(lcp);
+      }
+    }
+
+    const mergedClientRequests = [...clientRequests];
+    for (const lr of localDb.clientRequests || []) {
+      if (!mergedClientRequests.some(r => r.id === lr.id)) {
+        mergedClientRequests.push(lr);
+      }
+    }
+
+    const mergedMatches = [...matches];
+    for (const lm of localDb.matches || []) {
+      if (!mergedMatches.some(m => m.id === lm.id)) {
+        mergedMatches.push(lm);
+      }
+    }
 
     return {
-      id: r.id,
-      clientId: r.client_id,
-      clientName,
-      serviceType: r.service_type,
-      roleDescription,
-      requiredSkills,
-      duration: r.duration,
-      commitmentLevel: r.commitment_level,
-      numberOfHires: r.num_of_talents,
-      timezone,
-      startDate: r.start_date,
-      budget,
-      priority,
-      status: r.status === 'new' ? 'New Request' : 'Matching',
-      createdAt: r.created_at
+      talents: mergedTalents,
+      clientRequests: mergedClientRequests,
+      matches: mergedMatches,
+      tasks: tasks.length > 0 ? tasks : (localDb.tasks || []),
+      contracts: contracts.length > 0 ? contracts : (localDb.contracts || []),
+      notifications: notifications.length > 0 ? notifications : (localDb.notifications || []),
+      auditLogs: auditLogs.length > 0 ? auditLogs : (localDb.auditLogs || []),
+      agentLogs: agentLogs.length > 0 ? agentLogs : (localDb.agentLogs || []),
+      users: mergedUsers,
+      organizations: mergedOrgs,
+      clientProfiles: mergedClientProfiles,
+      skills: skills.length > 0 ? skills : (localDb.skills || []),
+      talentSkills: talentSkills.length > 0 ? talentSkills : (localDb.talentSkills || []),
+      documents: documents.length > 0 ? documents : (localDb.documents || []),
+      projects: projects.length > 0 ? projects : (localDb.projects || []),
+      assignments: assignments.length > 0 ? assignments : (localDb.assignments || []),
+      invoices: invoices.length > 0 ? invoices : (localDb.invoices || []),
+      payments: payments.length > 0 ? payments : (localDb.payments || []),
+      talentPayouts: talentPayouts.length > 0 ? talentPayouts : (localDb.talentPayouts || []),
+      messages: messages.length > 0 ? messages : (localDb.messages || []),
+      roles: [],
+      userRoles: [],
+      supportTickets: supportTickets.length > 0 ? supportTickets : (localDb.supportTickets || []),
+      supportMessages: supportMessages.length > 0 ? supportMessages : (localDb.supportMessages || []),
+      interviews: localDb.interviews || [],
+      rehireRequests: localDb.rehireRequests || []
     };
-  });
 
-  const matches = (rMatches.data || []).map((m: any) => {
-    return {
-      id: m.id,
-      requestId: m.request_id,
-      talentId: m.talent_id,
-      status: m.status === 'proposed' ? 'Interview Scheduled' : m.status.charAt(0).toUpperCase() + m.status.slice(1),
-      score: 90,
-      breakdown: { skillFit: 92, cultureFit: 88, experienceFit: 90 },
-      createdAt: m.created_at || new Date().toISOString()
-    } as any;
-  });
-
-  const projects = (rProjects.data || []).map((p: any) => ({
-    id: p.id,
-    clientId: p.client_id,
-    name: p.name,
-    description: p.description,
-    startDate: p.start_date,
-    endDate: p.end_date,
-    status: p.status
-  }));
-
-  const tasks = (rTasks.data || []).map((t: any) => {
-    const proj = projects.find((p: any) => p.id === t.project_id);
-    const userRec = users.find((u: any) => u.id === t.assigned_to);
-    const talentRec = talents.find((tal: any) => tal.id === t.assigned_to || tal.email === userRec?.email);
-    
-    return {
-      id: t.id,
-      projectId: t.project_id,
-      projectName: proj?.name || 'General Project',
-      title: t.title,
-      description: t.description,
-      assigneeId: t.assigned_to,
-      assigneeName: talentRec?.name || userRec?.email || 'Unassigned',
-      status: t.status === 'in_progress' ? 'In Progress' : (t.status === 'done' ? 'Completed' : 'To Do'),
-      priority: 'Medium',
-      dueDate: new Date().toISOString().split('T')[0],
-      createdAt: new Date().toISOString()
-    } as any;
-  });
-
-  const contracts = (rContracts.data || []).map((c: any) => {
-    const talent = talents.find((t: any) => t.id === c.talent_id);
-    const clientUser = users.find((u: any) => u.id === c.client_id);
-    const clientProfile = clientProfiles.find((cp: any) => cp.userId === c.client_id);
-    const org = organizations.find((o: any) => o.id === clientProfile?.organizationId);
-
-    const clientName = org?.name || 'Horizon Fintech';
-    const talentName = talent?.name || 'Chidi Anya';
-
-    return {
-      id: c.id,
-      matchId: `match_${c.talent_id}`,
-      clientId: c.client_id,
-      clientName,
-      talentId: c.talent_id,
-      talentName,
-      role: c.service_type || 'Contractor',
-      salary: Number(c.rate_amount || 0),
-      startDate: c.start_date || 'Jan 12, 2024',
-      status: c.status === 'signed' ? 'Signed' : 'Pending',
-      signedAt: c.signed_at,
-      rateType: c.rate_type || 'Monthly',
-      rateAmount: Number(c.rate_amount || 0),
-      totalEarned: Number(c.total_earned || 0),
-      invoicedBalance: Number(c.invoiced_balance || 0),
-      nextPayout: Number(c.next_payout || 0),
-      nextPayoutDate: 'Friday, May 24',
-      endDate: c.end_date || 'Dec 21, 2024',
-      engagementModel: c.engagement_model || 'Remote / Full-time Retainer',
-      rating: Number(c.rating || 5),
-      qualityOfWork: Number(c.quality_of_work || 5),
-      communication: Number(c.communication || 5),
-      timeliness: Number(c.timeliness || 5)
-    };
-  });
-
-  const assignments = (rAssignments.data || []).map((a: any) => ({
-    id: a.id,
-    talentId: a.talent_id,
-    projectId: a.project_id,
-    contractId: a.contract_id,
-    role: a.role,
-    startDate: a.start_date,
-    endDate: a.end_date,
-    status: a.status
-  }));
-
-  const invoices = (rInvoices.data || []).map((inv: any) => ({
-    id: inv.id,
-    clientId: inv.client_id,
-    amount: Number(inv.amount || 0),
-    status: inv.status,
-    dueDate: inv.due_date
-  }));
-
-  const payments = (rPayments.data || []).map((p: any) => ({
-    id: p.id,
-    invoiceId: p.invoice_id,
-    amount: Number(p.amount || 0),
-    paymentMethod: p.payment_method,
-    status: p.status,
-    paidAt: p.paid_at
-  }));
-
-  const talentPayouts = (rPayouts.data || []).map((tp: any) => ({
-    id: tp.id,
-    talentId: tp.talent_id,
-    contractId: tp.contract_id,
-    amount: Number(tp.amount || 0),
-    status: tp.status,
-    paidAt: tp.paid_at
-  }));
-
-  const messages = (rMessages.data || []).map((msg: any) => ({
-    id: msg.id,
-    senderId: msg.sender_id,
-    receiverId: msg.receiver_id,
-    content: msg.content,
-    timestamp: msg.timestamp,
-    readStatus: msg.read_status
-  }));
-
-  const notifications = (rNotifs.data || []).map((n: any) => ({
-    id: n.id,
-    userId: n.user_id,
-    title: n.title,
-    message: n.message,
-    read: n.read,
-    createdAt: n.created_at
-  }));
-
-  const auditLogs = (rAudit.data || []).map((al: any) => ({
-    id: al.id,
-    actor: al.actor,
-    action: al.action,
-    details: al.details,
-    timestamp: al.timestamp
-  }));
-
-  const agentLogs = (rAgent.data || []).map((ag: any) => ({
-    id: ag.id,
-    agentName: ag.agent_name,
-    message: ag.message,
-    timestamp: ag.timestamp,
-    type: ag.type
-  }));
-
-  const supportTickets = (rTickets.data || []).map((st: any) => ({
-    id: st.id,
-    talentId: st.talent_id,
-    subject: st.subject,
-    category: st.category,
-    status: st.status,
-    priority: st.priority,
-    createdAt: st.created_at,
-    lastActivity: 'Active'
-  }));
-
-  const supportMessages = (rSupportMessages.data || []).map((sm: any) => ({
-    id: sm.id,
-    ticketId: sm.ticket_id,
-    senderName: sm.sender_name,
-    senderRole: sm.sender_role,
-    isSupport: sm.is_support,
-    avatarUrl: sm.avatar_url,
-    text: sm.text,
-    timestamp: sm.timestamp,
-    createdAt: sm.created_at
-  }));
-
-  return {
-    talents,
-    clientRequests,
-    matches,
-    tasks,
-    contracts,
-    notifications,
-    auditLogs,
-    agentLogs,
-    users,
-    organizations,
-    clientProfiles,
-    skills,
-    talentSkills,
-    documents,
-    projects,
-    assignments,
-    invoices,
-    payments,
-    talentPayouts,
-    messages,
-    roles: [],
-    userRoles: [],
-    supportTickets,
-    supportMessages,
-    interviews: readDb().interviews || [],
-    rehireRequests: readDb().rehireRequests || []
-  };
+  } catch (err) {
+    console.warn("Resilient read: error occurred while reading from Supabase. Falling back to local db.json baseline.", err);
+    return localDb;
+  }
 }
 
 export async function writeDbAsync(db: Schema): Promise<void> {
@@ -1368,308 +1492,338 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     console.error('Failed to write db.json in writeDbAsync:', e);
   }
 
-  const supabase = getSupabaseClient();
-  
-  if (db.users) {
-    const rows = db.users.map((u: any) => ({
-      id: u.id,
-      email: u.email,
-      password_hash: 'auth_managed',
-      role: u.role,
-      status: u.status || 'active',
-      email_verified: u.emailVerified || false
-    }));
-    await supabase.from('users').upsert(rows);
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!supabaseAnonKey) {
+    console.warn("No Supabase Anon Key provided. Storing changes locally in db.json.");
+    return;
   }
-  
-  if (db.organizations) {
-    const rows = db.organizations.map((o: any) => ({
-      id: o.id,
-      name: o.name,
-      created_by: o.created_by || null
-    }));
-    await supabase.from('organizations').upsert(rows);
-  }
-  
-  if (db.clientProfiles) {
-    const rows = db.clientProfiles.map((cp: any) => ({
-      id: cp.id,
-      user_id: cp.userId,
-      organization_id: cp.organizationId,
-      position: cp.position,
-      phone: cp.phone || null
-    }));
-    await supabase.from('client_profiles').upsert(rows);
-  }
-  
-  if (db.talents) {
-    const rows = db.talents.map((t: any) => {
-      const bioText = `Tags: ${(t.tags || []).join(', ')}\n\nScores: ${JSON.stringify(t.vettingScores || {})}\n\nBio: ${t.bio || ''}`;
-      const matchedUser = (db.users || []).find((u: any) => u.email.toLowerCase() === t.email.toLowerCase());
-      const userId = matchedUser ? matchedUser.id : (t.userId || null);
-      
-      return {
-        id: t.id,
-        user_id: userId,
-        full_name: t.name,
-        phone: t.phone || null,
-        country: t.country || 'Nigeria',
-        address: t.address || null,
-        gender: t.gender || null,
-        level: t.title || 'Professional',
-        availability_hours: t.availability || 40,
-        salary_max: t.salaryExpectation || null,
-        status: t.vettingStatus === 'Deployed' ? 'assigned' : 'active',
-        timezone: t.timezone || 'GMT+1 (Lagos)',
-        salary_expectation: t.salaryExpectation || null,
-        experience_years: t.experienceYears || null,
-        vetting_stage: t.vettingStage || 'Final Review',
-        vetting_status: t.vettingStatus || 'Vetted',
-        grade: t.grade || 'A',
-        bio: bioText,
-        avatar_url: t.avatar || null
-      };
-    });
-    await supabase.from('talent_profiles').upsert(rows);
-  }
-  
-  if (db.skills) {
-    const rows = db.skills.map((s: any) => ({
-      id: s.id,
-      name: s.name
-    }));
-    await supabase.from('skills').upsert(rows);
-  }
-  
-  if (db.talentSkills) {
-    const rows = db.talentSkills.map((ts: any) => ({
-      id: ts.id,
-      talent_id: ts.talentId,
-      skill_id: ts.skillId,
-      level: ts.level || 'intermediate'
-    }));
-    await supabase.from('talent_skills').upsert(rows);
-  }
-  
-  if (db.documents) {
-    const rows = db.documents.map((doc: any) => ({
-      id: doc.id,
-      user_id: doc.userId || null,
-      name: doc.name,
-      type: doc.type || doc.category || 'Other',
-      file_size: doc.fileSize || null,
-      status: doc.status || 'uploaded',
-      uploaded_at: doc.uploadedAt && !doc.uploadedAt.includes('ago') ? new Date(doc.uploadedAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('documents').upsert(rows);
-  }
-  
-  if (db.clientRequests) {
-    const rows = db.clientRequests.map((r: any) => {
-      const descText = JSON.stringify({
-        roleDescription: r.roleDescription,
-        requiredSkills: r.requiredSkills || [],
-        priority: r.priority || 'Medium',
-        timezone: r.timezone || 'GMT+1',
-        budget: r.budget || 0,
-        clientName: r.clientName || 'Horizon Fintech'
+
+  try {
+    const supabase = getSupabaseClient();
+    
+    if (db.users) {
+      const rows = db.users.map((u: any) => ({
+        id: u.id,
+        email: u.email,
+        password_hash: 'auth_managed',
+        role: u.role,
+        status: u.status || 'active',
+        email_verified: u.emailVerified || false
+      }));
+      await supabase.from('users').upsert(rows);
+    }
+    
+    if (db.organizations) {
+      const rows = db.organizations.map((o: any) => ({
+        id: o.id,
+        name: o.name,
+        created_by: o.created_by || null
+      }));
+      await supabase.from('organizations').upsert(rows);
+    }
+    
+    if (db.clientProfiles) {
+      const rows = db.clientProfiles.map((cp: any) => ({
+        id: cp.id,
+        user_id: cp.userId,
+        organization_id: cp.organizationId,
+        position: cp.position,
+        phone: cp.phone || null
+      }));
+      await supabase.from('client_profiles').upsert(rows);
+    }
+    
+    if (db.talents) {
+      const rows = db.talents.map((t: any) => {
+        const telemetryObj = {
+          city: t.city || '',
+          seniorityLevel: t.seniorityLevel || '',
+          employmentPreference: t.employmentPreference || '',
+          currency: t.currency || 'USD',
+          hourlyMonthly: t.hourlyMonthly || 'Monthly',
+          portfolioUrl: t.portfolioUrl || '',
+          certifications: t.certifications || '',
+          internetQuality: t.internetQuality || '',
+          workSetup: t.workSetup || '',
+          devices: t.devices || '',
+          communicationTools: t.communicationTools || '',
+          dateOfBirth: t.dateOfBirth || '',
+          nationality: t.nationality || '',
+          maritalStatus: t.maritalStatus || '',
+          nationalId: t.nationalId || '',
+          passportNo: t.passportNo || '',
+          workExperience: t.workExperience || []
+        };
+        
+        const bioText = `Tags: ${(t.tags || []).join(', ')}\n\nScores: ${JSON.stringify(t.vettingScores || {})}\n\nTelemetry: ${JSON.stringify(telemetryObj)}\n\nBio: ${t.bio || ''}`;
+        const matchedUser = (db.users || []).find((u: any) => u.email.toLowerCase() === t.email.toLowerCase());
+        const userId = matchedUser ? matchedUser.id : (t.userId || null);
+        
+        return {
+          id: t.id,
+          user_id: userId,
+          full_name: t.name,
+          phone: t.phone || null,
+          country: t.country || 'Nigeria',
+          address: t.address || null,
+          gender: t.gender || null,
+          level: t.title || 'Professional',
+          availability_hours: t.availability || 40,
+          salary_max: t.salaryExpectation || null,
+          status: t.vettingStatus === 'Deployed' ? 'assigned' : 'active',
+          timezone: t.timezone || 'GMT+1 (Lagos)',
+          salary_expectation: t.salaryExpectation || null,
+          experience_years: t.experienceYears || null,
+          vetting_stage: t.vettingStage || 'Final Review',
+          vetting_status: t.vettingStatus || 'Vetted',
+          grade: t.grade || 'A',
+          bio: bioText,
+          avatar_url: t.avatar || null
+        };
       });
-      
-      return {
-        id: r.id,
-        client_id: r.clientId || null,
-        service_type: r.serviceType || 'hire',
-        title: `${r.serviceType || 'hire'} request`,
-        description: descText,
-        num_of_talents: r.numberOfHires || 1,
-        duration: r.duration || null,
-        start_date: r.startDate ? new Date(r.startDate).toISOString().split('T')[0] : null,
-        commitment_level: r.commitmentLevel || null,
-        status: r.status === 'New Request' ? 'new' : 'matching'
-      };
-    });
-    await supabase.from('service_requests').upsert(rows);
-  }
-  
-  if (db.matches) {
-    const rows = db.matches.map((m: any) => ({
-      id: m.id,
-      request_id: m.requestId,
-      talent_id: m.talentId,
-      status: m.status === 'Interview Scheduled' || m.status === 'Offer Extended' ? 'proposed' : m.status.toLowerCase()
-    }));
-    await supabase.from('matches').upsert(rows);
-  }
-  
-  if (db.projects) {
-    const rows = db.projects.map((p: any) => ({
-      id: p.id,
-      client_id: p.clientId || null,
-      name: p.name,
-      description: p.description || null,
-      start_date: p.startDate ? new Date(p.startDate).toISOString().split('T')[0] : null,
-      end_date: p.endDate ? new Date(p.endDate).toISOString().split('T')[0] : null,
-      status: p.status || 'active'
-    }));
-    await supabase.from('projects').upsert(rows);
-  }
-  
-  if (db.tasks) {
-    const rows = db.tasks.map((t: any) => ({
-      id: t.id,
-      project_id: t.projectId || null,
-      assigned_to: t.assigneeId || null,
-      title: t.title,
-      description: t.description || null,
-      status: t.status === 'In Progress' ? 'in_progress' : (t.status === 'Completed' ? 'done' : 'todo')
-    }));
-    await supabase.from('tasks').upsert(rows);
-  }
-  
-  if (db.contracts) {
-    const rows = db.contracts.map((c: any) => ({
-      id: c.id,
-      client_id: c.clientId || null,
-      talent_id: c.talentId || null,
-      service_type: c.role || null,
-      start_date: null,
-      end_date: null,
-      status: c.status.toLowerCase() === 'signed' ? 'signed' : 'pending',
-      rate_type: c.rateType || 'Monthly',
-      rate_amount: c.rateAmount || c.salary || 0,
-      total_earned: c.totalEarned || 0,
-      invoiced_balance: c.invoicedBalance || 0,
-      next_payout: c.nextPayout || 0,
-      next_payout_date: null,
-      engagement_model: c.engagementModel || null,
-      signed_at: c.signedAt ? new Date(c.signedAt).toISOString() : null,
-      rating: c.rating || null,
-      quality_of_work: c.qualityOfWork || null,
-      communication: c.communication || null,
-      timeliness: c.timeliness || null
-    }));
-    await supabase.from('contracts').upsert(rows);
-  }
-  
-  if (db.assignments) {
-    const rows = db.assignments.map(a => ({
-      id: a.id,
-      talent_id: a.talentId,
-      project_id: a.projectId,
-      contract_id: a.contractId,
-      role: a.role,
-      status: a.status || 'active'
-    }));
-    await supabase.from('assignments').upsert(rows);
-  }
-  
-  if (db.invoices) {
-    const rows = db.invoices.map(inv => ({
-      id: inv.id,
-      client_id: inv.clientId,
-      amount: inv.amount,
-      status: inv.status || 'sent',
-      due_date: inv.dueDate ? new Date(inv.dueDate).toISOString().split('T')[0] : null
-    }));
-    await supabase.from('invoices').upsert(rows);
-  }
-  
-  if (db.payments) {
-    const rows = db.payments.map(p => ({
-      id: p.id,
-      invoice_id: p.invoiceId,
-      amount: p.amount,
-      payment_method: p.paymentMethod || 'ACH Bank Wire',
-      status: p.status || 'paid',
-      paid_at: p.paidAt ? new Date(p.paidAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('payments').upsert(rows);
-  }
-  
-  if (db.talentPayouts) {
-    const rows = db.talentPayouts.map(tp => ({
-      id: tp.id,
-      talent_id: tp.talentId,
-      contract_id: tp.contractId,
-      amount: tp.amount,
-      status: tp.status || 'paid',
-      paid_at: tp.paidAt ? new Date(tp.paidAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('talent_payouts').upsert(rows);
-  }
-  
-  if (db.messages) {
-    const rows = db.messages.map(msg => ({
-      id: msg.id,
-      sender_id: msg.senderId,
-      receiver_id: msg.receiverId,
-      content: msg.content,
-      read_status: msg.readStatus || false,
-      timestamp: msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('messages').upsert(rows);
-  }
-  
-  if (db.notifications) {
-    const rows = db.notifications.map(n => ({
-      id: n.id,
-      user_id: n.userId,
-      title: n.title,
-      message: n.message,
-      read: n.read || false,
-      created_at: n.createdAt ? new Date(n.createdAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('notifications').upsert(rows);
-  }
-  
-  if (db.auditLogs) {
-    const rows = db.auditLogs.map(al => ({
-      id: al.id,
-      actor: al.actor,
-      action: al.action,
-      details: al.details,
-      timestamp: al.timestamp ? new Date(al.timestamp).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('audit_logs').upsert(rows);
-  }
-  
-  if (db.agentLogs) {
-    const rows = db.agentLogs.map(ag => ({
-      id: ag.id,
-      agent_name: ag.agentName,
-      message: ag.message,
-      timestamp: ag.timestamp || new Date().toLocaleTimeString(),
-      type: ag.type || 'info'
-    }));
-    await supabase.from('agent_logs').upsert(rows);
-  }
-  
-  if (db.supportTickets) {
-    const rows = db.supportTickets.map(t => ({
-      id: t.id,
-      talent_id: t.talentId,
-      subject: t.subject,
-      category: t.category,
-      status: t.status || 'Open',
-      priority: t.priority || 'Medium',
-      created_at: t.createdAt && !t.createdAt.includes('ago') ? new Date(t.createdAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('support_tickets').upsert(rows);
-  }
-  
-  if (db.supportMessages) {
-    const rows = db.supportMessages.map(m => ({
-      id: m.id,
-      ticket_id: m.ticketId,
-      sender_name: m.senderName,
-      sender_role: m.senderRole,
-      is_support: m.isSupport || false,
-      avatar_url: m.avatarUrl || null,
-      text: m.text,
-      timestamp: m.timestamp || new Date().toLocaleTimeString(),
-      created_at: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString()
-    }));
-    await supabase.from('support_messages').upsert(rows);
+      await supabase.from('talent_profiles').upsert(rows);
+    }
+    
+    if (db.skills) {
+      const rows = db.skills.map((s: any) => ({
+        id: s.id,
+        name: s.name
+      }));
+      await supabase.from('skills').upsert(rows);
+    }
+    
+    if (db.talentSkills) {
+      const rows = db.talentSkills.map((ts: any) => ({
+        id: ts.id,
+        talent_id: ts.talentId,
+        skill_id: ts.skillId,
+        level: ts.level || 'intermediate'
+      }));
+      await supabase.from('talent_skills').upsert(rows);
+    }
+    
+    if (db.documents) {
+      const rows = db.documents.map((doc: any) => ({
+        id: doc.id,
+        user_id: doc.userId || null,
+        name: doc.name,
+        type: doc.type || doc.category || 'Other',
+        file_size: doc.fileSize || null,
+        status: doc.status || 'uploaded',
+        uploaded_at: doc.uploadedAt && !doc.uploadedAt.includes('ago') ? new Date(doc.uploadedAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('documents').upsert(rows);
+    }
+    
+    if (db.clientRequests) {
+      const rows = db.clientRequests.map((r: any) => {
+        const descText = JSON.stringify({
+          roleDescription: r.roleDescription,
+          requiredSkills: r.requiredSkills || [],
+          priority: r.priority || 'Medium',
+          timezone: r.timezone || 'GMT+1',
+          budget: r.budget || 0,
+          clientName: r.clientName || 'Horizon Fintech'
+        });
+        
+        return {
+          id: r.id,
+          client_id: r.clientId || null,
+          service_type: r.serviceType || 'hire',
+          title: `${r.serviceType || 'hire'} request`,
+          description: descText,
+          num_of_talents: r.numberOfHires || 1,
+          duration: r.duration || null,
+          start_date: r.startDate ? new Date(r.startDate).toISOString().split('T')[0] : null,
+          commitment_level: r.commitmentLevel || null,
+          status: r.status === 'New Request' ? 'new' : 'matching'
+        };
+      });
+      await supabase.from('service_requests').upsert(rows);
+    }
+    
+    if (db.matches) {
+      const rows = db.matches.map((m: any) => ({
+        id: m.id,
+        request_id: m.requestId,
+        talent_id: m.talentId,
+        status: m.status === 'Interview Scheduled' || m.status === 'Offer Extended' ? 'proposed' : m.status.toLowerCase()
+      }));
+      await supabase.from('matches').upsert(rows);
+    }
+    
+    if (db.projects) {
+      const rows = db.projects.map((p: any) => ({
+        id: p.id,
+        client_id: p.clientId || null,
+        name: p.name,
+        description: p.description || null,
+        start_date: p.startDate ? new Date(p.startDate).toISOString().split('T')[0] : null,
+        end_date: p.endDate ? new Date(p.endDate).toISOString().split('T')[0] : null,
+        status: p.status || 'active'
+      }));
+      await supabase.from('projects').upsert(rows);
+    }
+    
+    if (db.tasks) {
+      const rows = db.tasks.map((t: any) => ({
+        id: t.id,
+        project_id: t.projectId || null,
+        assigned_to: t.assigneeId || null,
+        title: t.title,
+        description: t.description || null,
+        status: t.status === 'In Progress' ? 'in_progress' : (t.status === 'Completed' ? 'done' : 'todo')
+      }));
+      await supabase.from('tasks').upsert(rows);
+    }
+    
+    if (db.contracts) {
+      const rows = db.contracts.map((c: any) => ({
+        id: c.id,
+        client_id: c.clientId || null,
+        talent_id: c.talentId || null,
+        service_type: c.role || null,
+        start_date: null,
+        end_date: null,
+        status: c.status.toLowerCase() === 'signed' ? 'signed' : 'pending',
+        rate_type: c.rateType || 'Monthly',
+        rate_amount: c.rateAmount || c.salary || 0,
+        total_earned: c.totalEarned || 0,
+        invoiced_balance: c.invoicedBalance || 0,
+        next_payout: c.nextPayout || 0,
+        next_payout_date: null,
+        engagement_model: c.engagementModel || null,
+        signed_at: c.signedAt ? new Date(c.signedAt).toISOString() : null,
+        rating: c.rating || null,
+        quality_of_work: c.qualityOfWork || null,
+        communication: c.communication || null,
+        timeliness: c.timeliness || null
+      }));
+      await supabase.from('contracts').upsert(rows);
+    }
+    
+    if (db.assignments) {
+      const rows = db.assignments.map(a => ({
+        id: a.id,
+        talent_id: a.talentId,
+        project_id: a.projectId,
+        contract_id: a.contractId,
+        role: a.role,
+        status: a.status || 'active'
+      }));
+      await supabase.from('assignments').upsert(rows);
+    }
+    
+    if (db.invoices) {
+      const rows = db.invoices.map(inv => ({
+        id: inv.id,
+        client_id: inv.clientId,
+        amount: inv.amount,
+        status: inv.status || 'sent',
+        due_date: inv.dueDate ? new Date(inv.dueDate).toISOString().split('T')[0] : null
+      }));
+      await supabase.from('invoices').upsert(rows);
+    }
+    
+    if (db.payments) {
+      const rows = db.payments.map(p => ({
+        id: p.id,
+        invoice_id: p.invoiceId,
+        amount: p.amount,
+        payment_method: p.paymentMethod || 'ACH Bank Wire',
+        status: p.status || 'paid',
+        paid_at: p.paidAt ? new Date(p.paidAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('payments').upsert(rows);
+    }
+    
+    if (db.talentPayouts) {
+      const rows = db.talentPayouts.map(tp => ({
+        id: tp.id,
+        talent_id: tp.talentId,
+        contract_id: tp.contractId,
+        amount: tp.amount,
+        status: tp.status || 'paid',
+        paid_at: tp.paidAt ? new Date(tp.paidAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('talent_payouts').upsert(rows);
+    }
+    
+    if (db.messages) {
+      const rows = db.messages.map(msg => ({
+        id: msg.id,
+        sender_id: msg.senderId,
+        receiver_id: msg.receiverId,
+        content: msg.content,
+        read_status: msg.readStatus || false,
+        timestamp: msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('messages').upsert(rows);
+    }
+    
+    if (db.notifications) {
+      const rows = db.notifications.map(n => ({
+        id: n.id,
+        user_id: n.userId,
+        title: n.title,
+        message: n.message,
+        read: n.read || false,
+        created_at: n.createdAt ? new Date(n.createdAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('notifications').upsert(rows);
+    }
+    
+    if (db.auditLogs) {
+      const rows = db.auditLogs.map(al => ({
+        id: al.id,
+        actor: al.actor,
+        action: al.action,
+        details: al.details,
+        timestamp: al.timestamp ? new Date(al.timestamp).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('audit_logs').upsert(rows);
+    }
+    
+    if (db.agentLogs) {
+      const rows = db.agentLogs.map(ag => ({
+        id: ag.id,
+        agent_name: ag.agentName,
+        message: ag.message,
+        timestamp: ag.timestamp || new Date().toLocaleTimeString(),
+        type: ag.type || 'info'
+      }));
+      await supabase.from('agent_logs').upsert(rows);
+    }
+    
+    if (db.supportTickets) {
+      const rows = db.supportTickets.map(t => ({
+        id: t.id,
+        talent_id: t.talentId,
+        subject: t.subject,
+        category: t.category,
+        status: t.status || 'Open',
+        priority: t.priority || 'Medium',
+        created_at: t.createdAt && !t.createdAt.includes('ago') ? new Date(t.createdAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('support_tickets').upsert(rows);
+    }
+    
+    if (db.supportMessages) {
+      const rows = db.supportMessages.map(m => ({
+        id: m.id,
+        ticket_id: m.ticketId,
+        sender_name: m.senderName,
+        sender_role: m.senderRole,
+        is_support: m.isSupport || false,
+        avatar_url: m.avatarUrl || null,
+        text: m.text,
+        timestamp: m.timestamp || new Date().toLocaleTimeString(),
+        created_at: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString()
+      }));
+      await supabase.from('support_messages').upsert(rows);
+    }
+  } catch (err) {
+    console.error("Resilient write: failed to sync changes to Supabase.", err);
   }
 }
 
