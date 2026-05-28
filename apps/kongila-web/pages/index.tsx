@@ -454,16 +454,31 @@ export default function KongilaWeb() {
           position: 'Admin'
         });
       } else {
-        // Create talent profile placeholder
-        await supabase.from('talent_profiles').upsert({
-          id: `talent_${Date.now()}`,
+        // Create talent profile placeholder — use auth UUID as the profile ID so onboarding
+        // can upsert by id without creating duplicate records
+        const { error: tpErr } = await supabase.from('talent_profiles').upsert({
+          id: authUserId,
           user_id: authUserId,
           full_name: nameInput,
           status: 'active',
-          vetting_stage: 'Application',
-          vetting_status: 'Pending'
-        });
+          vetting_stage: 'Application Screening',
+          vetting_status: 'Applied',
+          level: 'Operational Talent',
+          country: 'Nigeria',
+          timezone: 'GMT+1 (Lagos)',
+          availability_hours: 100,
+          bio: 'Tags: Progressive Entry, Assessment Pending\n\nScores: {"technical":0,"behavioral":0,"personality":0,"remoteReadiness":0,"workSimulation":0,"communication":0,"experience":0}\n\nBio: Talent profile created. Onboarding in progress.'
+        }, { onConflict: 'id' });
+        if (tpErr) console.error('[Signup] talent_profiles upsert error:', tpErr);
       }
+
+      // Always write to user_roles table
+      const { error: urErr } = await supabase.from('user_roles').upsert({
+        id: `ur_${authUserId}`,
+        user_id: authUserId,
+        role_id: authRole
+      }, { onConflict: 'id' });
+      if (urErr) console.warn('[Signup] user_roles upsert skipped (table may not exist or RLS):', urErr);
 
       const newUser = {
         id: authUserId,
@@ -725,6 +740,87 @@ export default function KongilaWeb() {
     setLoading(true);
 
     try {
+      const authUserId = currentUser?.id;
+      const talentName = talentOnboardingData.fullName || currentUser?.name || 'Talent';
+      const talentEmail = currentUser?.email || '';
+      const skillsList = talentOnboardingData.skills
+        ? talentOnboardingData.skills.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [];
+
+      const telemetryObj = {
+        city: talentOnboardingData.city || '',
+        seniorityLevel: talentOnboardingData.seniorityLevel || '',
+        employmentPreference: talentOnboardingData.employmentPreference || 'Full Time',
+        currency: talentOnboardingData.currency || 'USD',
+        hourlyMonthly: talentOnboardingData.hourlyMonthly || 'Monthly',
+        portfolioUrl: talentOnboardingData.portfolioUrl || '',
+        certifications: talentOnboardingData.certifications || '',
+        internetQuality: talentOnboardingData.internetQuality || '',
+        workSetup: talentOnboardingData.workSetup || '',
+        devices: talentOnboardingData.devices || '',
+        communicationTools: talentOnboardingData.communicationTools || '',
+        dateOfBirth: '',
+        nationality: '',
+        maritalStatus: '',
+        nationalId: '',
+        passportNo: '',
+        workExperience: []
+      };
+
+      const bioText = `Tags: Progressive Entry, Assessment Pending\n\nScores: {"technical":0,"behavioral":0,"personality":0,"remoteReadiness":0,"workSimulation":0,"communication":0,"experience":0}\n\nTelemetry: ${JSON.stringify(telemetryObj)}\n\nBio: Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}. Remote work setup confirmed.`;
+
+      // ── 1. Upsert full onboarding data directly into Supabase talent_profiles ──
+      if (authUserId) {
+        const supabasePayload = {
+          id: authUserId,
+          user_id: authUserId,
+          full_name: talentName,
+          phone: talentOnboardingData.phone || null,
+          country: talentOnboardingData.country || 'Nigeria',
+          address: null,
+          gender: null,
+          level: talentOnboardingData.primaryRole || 'Operational Talent',
+          availability_hours: Number(talentOnboardingData.availability) || 100,
+          salary_max: Number(talentOnboardingData.salaryExpectation) || null,
+          salary_expectation: Number(talentOnboardingData.salaryExpectation) || null,
+          experience_years: Number(talentOnboardingData.yearsExperience) || null,
+          vetting_stage: 'Application Screening',
+          vetting_status: 'Applied',
+          grade: 'B',
+          status: 'active',
+          timezone: talentOnboardingData.timezone || 'GMT+1 (Lagos)',
+          bio: bioText,
+          avatar_url: null
+        };
+
+        const { error: spErr } = await supabase
+          .from('talent_profiles')
+          .upsert(supabasePayload, { onConflict: 'id' });
+
+        if (spErr) {
+          console.error('[Onboarding] Supabase talent_profiles upsert error:', spErr);
+        } else {
+          console.log('[Onboarding] Saved talent profile to Supabase successfully.');
+        }
+
+        // ── 2. Upsert skills into talent_skills table ──
+        if (skillsList.length > 0) {
+          // First ensure skills exist in the skills table
+          for (const skillName of skillsList) {
+            const skillId = `skl_${skillName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+            await supabase.from('skills').upsert({ id: skillId, name: skillName }, { onConflict: 'id' });
+            await supabase.from('talent_skills').upsert(
+              { id: `ts_${authUserId}_${skillId}`, talent_id: authUserId, skill_id: skillId, level: 'intermediate' },
+              { onConflict: 'id' }
+            );
+          }
+        }
+
+        // ── 3. Update public.users with verified name ──
+        await supabase.from('users').update({ status: 'active' }).eq('id', authUserId);
+      }
+
+      // ── 4. Sync to local db.json for offline/admin panel fallback ──
       const res = await fetch('/api/db');
       if (res.ok) {
         const dbData = await res.json();
@@ -733,52 +829,46 @@ export default function KongilaWeb() {
         if (!dbData.auditLogs) dbData.auditLogs = [];
         if (!dbData.agentLogs) dbData.agentLogs = [];
 
-        // Check if talent already exists in dbData
-        const existingIndex = dbData.talents.findIndex((t: any) => t.id === currentUser?.id || t.email.toLowerCase() === currentUser?.email?.toLowerCase());
+        const existingIndex = dbData.talents.findIndex((t: any) =>
+          t.id === authUserId || (talentEmail && t.email?.toLowerCase() === talentEmail.toLowerCase())
+        );
 
         const baseTalent = existingIndex > -1 ? dbData.talents[existingIndex] : {};
 
         const updatedTalent: TalentProfile = {
           ...baseTalent,
-          id: currentUser?.id || baseTalent.id || `talent_${Date.now()}`,
-          name: talentOnboardingData.fullName || baseTalent.name || currentUser?.name || 'Tariq Ibrahim',
-          email: currentUser?.email || baseTalent.email || 'talent@onb-pool.dev',
+          id: authUserId || baseTalent.id || `talent_${Date.now()}`,
+          name: talentName,
+          email: talentEmail,
           avatar: baseTalent.avatar || 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
-          title: talentOnboardingData.primaryRole || baseTalent.title || 'Operational Talent',
-          skills: talentOnboardingData.skills ? talentOnboardingData.skills.split(',').map((s: string) => s.trim()) : (baseTalent.skills || []),
-          timezone: talentOnboardingData.timezone || baseTalent.timezone || 'GMT+1 (Lagos)',
-          salaryExpectation: Number(talentOnboardingData.salaryExpectation) || baseTalent.salaryExpectation || 4500,
-          experienceYears: Number(talentOnboardingData.yearsExperience) || baseTalent.experienceYears || 5,
-          availability: Number(talentOnboardingData.availability) || baseTalent.availability || 100,
-          vettingStage: baseTalent.vettingStage || 'Application Screening',
-          vettingStatus: baseTalent.vettingStatus || 'Applied',
+          title: talentOnboardingData.primaryRole || 'Operational Talent',
+          skills: skillsList.length > 0 ? skillsList : (baseTalent.skills || []),
+          timezone: talentOnboardingData.timezone || 'GMT+1 (Lagos)',
+          salaryExpectation: Number(talentOnboardingData.salaryExpectation) || 4500,
+          experienceYears: Number(talentOnboardingData.yearsExperience) || 5,
+          availability: Number(talentOnboardingData.availability) || 100,
+          vettingStage: 'Application Screening' as any,
+          vettingStatus: 'Applied' as any,
           vettingScores: baseTalent.vettingScores || {
-            technical: 0,
-            behavioral: 0,
-            personality: 0,
-            remoteReadiness: 0,
-            workSimulation: 0,
-            communication: 0,
-            experience: 0
+            technical: 0, behavioral: 0, personality: 0,
+            remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0
           },
-          grade: baseTalent.grade || 'B',
-          tags: baseTalent.tags || ['Progressive Entry', 'Assessment Pending'],
-          bio: `Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}. Readiness setups resolved.`,
-          
-          // Onboarding fields:
-          phone: talentOnboardingData.phone || baseTalent.phone || '',
-          country: talentOnboardingData.country || baseTalent.country || 'Nigeria',
-          city: talentOnboardingData.city || baseTalent.city || 'Lagos',
-          seniorityLevel: talentOnboardingData.seniorityLevel || baseTalent.seniorityLevel || 'Senior',
-          employmentPreference: talentOnboardingData.employmentPreference || baseTalent.employmentPreference || 'Full Time',
-          currency: talentOnboardingData.currency || baseTalent.currency || 'USD',
-          hourlyMonthly: talentOnboardingData.hourlyMonthly || baseTalent.hourlyMonthly || 'Monthly',
-          portfolioUrl: talentOnboardingData.portfolioUrl || baseTalent.portfolioUrl || '',
-          certifications: talentOnboardingData.certifications || baseTalent.certifications || '',
-          internetQuality: talentOnboardingData.internetQuality || baseTalent.internetQuality || '',
-          workSetup: talentOnboardingData.workSetup || baseTalent.workSetup || '',
-          devices: talentOnboardingData.devices || baseTalent.devices || '',
-          communicationTools: talentOnboardingData.communicationTools || baseTalent.communicationTools || '',
+          grade: 'B' as any,
+          tags: ['Progressive Entry', 'Assessment Pending'],
+          bio: `Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}.`,
+          phone: talentOnboardingData.phone || '',
+          country: talentOnboardingData.country || 'Nigeria',
+          city: talentOnboardingData.city || 'Lagos',
+          seniorityLevel: talentOnboardingData.seniorityLevel || 'Senior',
+          employmentPreference: talentOnboardingData.employmentPreference || 'Full Time',
+          currency: talentOnboardingData.currency || 'USD',
+          hourlyMonthly: talentOnboardingData.hourlyMonthly || 'Monthly',
+          portfolioUrl: talentOnboardingData.portfolioUrl || '',
+          certifications: talentOnboardingData.certifications || '',
+          internetQuality: talentOnboardingData.internetQuality || '',
+          workSetup: talentOnboardingData.workSetup || '',
+          devices: talentOnboardingData.devices || '',
+          communicationTools: talentOnboardingData.communicationTools || '',
           documents: baseTalent.documents || [],
           supportTickets: baseTalent.supportTickets || []
         };
@@ -793,7 +883,7 @@ export default function KongilaWeb() {
           id: `notif_${Date.now()}`,
           userId: updatedTalent.id,
           title: 'Application Intake Submitted',
-          message: 'Your talent application screening review is running. Complete your Node/Postgres coding assessment.',
+          message: 'Your talent application screening review is running. Complete your assessment.',
           read: false,
           createdAt: new Date().toISOString()
         });
@@ -802,14 +892,14 @@ export default function KongilaWeb() {
           id: `audit_${Date.now()}`,
           actor: updatedTalent.name,
           action: 'Progressive Onboarding Completed',
-          details: `Role expectations: ${updatedTalent.title}. Setup: ${talentOnboardingData.workSetup}`,
+          details: `Role: ${updatedTalent.title}. Setup: ${talentOnboardingData.workSetup}`,
           timestamp: new Date().toISOString()
         });
 
         dbData.agentLogs.push({
           id: `alog_talent_${Date.now()}`,
           agentName: 'Compliance Agent',
-          message: `Screening pipeline initiated for talent ${updatedTalent.name}. KYC & equipment logs verified.`,
+          message: `Screening pipeline initiated for ${updatedTalent.name}. KYC & equipment logs verified.`,
           timestamp: new Date().toLocaleTimeString(),
           type: 'info'
         });
@@ -818,7 +908,7 @@ export default function KongilaWeb() {
         setTalents(dbData.talents);
       }
     } catch (e) {
-      console.error("Failed to submit onboarding data", e);
+      console.error('[Onboarding] Failed to submit onboarding data:', e);
     }
 
     if (currentUser) {
@@ -828,7 +918,7 @@ export default function KongilaWeb() {
     setAuthView(null);
     setActiveTab('talent');
     setLoading(false);
-    triggerBanner('Progressive Onboarding Completed! Workspace deployed.', 'success');
+    triggerBanner('Onboarding Complete! Your profile is live. Workspace deployed.', 'success');
   };
 
   // Simulate Specialized Assessment Sandbox

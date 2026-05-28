@@ -212,6 +212,196 @@
       ],
       "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved.",
       "documents": []
+    },
+    {
+      "id": "talent_1779921547604",
+      "name": "benny eze",
+      "email": "theexceptionalpm@gmail.com",
+      "avatar": null,
+      "title": "Professional",
+      "skills": [],
+      "timezone": "GMT+1 (Lagos)",
+      "salaryExpectation": 0,
+      "experienceYears": 0,
+      "availability": 40,
+      "vettingStage": "Application",
+      "vettingStatus": "Pending",
+      "vettingScores": {
+        "technical": 90,
+        "behavioral": 85,
+        "personality": 88,
+        "remoteReadiness": 90,
+        "workSimulation": 85,
+        "communication": 90,
+        "experience": 80
+      },
+      "grade": "A",
+      "tags": [],
+      "bio": "",
+      "documents": []
+    },
+    {
+      "id": "talent_1779921556267",
+      "name": "benny eze",
+      "email": "theexceptionalpmm@gmail.com",
+      "avatar": null,
+      "title": "Professional",
+      "skills": [],
+      "timezone": "GMT+1 (Lagos)",
+      "salaryExpectation": 0,
+      "experienceYears": 0,
+      "availability": 40,
+      "vettingStage": "Application",
+      "vettingStatus": "Pending",
+      "vettingScores": {
+        "technical": 90,
+        "behavioral": 85,
+        "personality": 88,
+        "remoteReadiness": 90,
+        "workSimulation": 85,
+        "communication": 90,
+        "experience": 80
+      },
+      "grade": "A",
+      "tags": [],
+      "bio": "",
+      "documents": []
+    },
+    {
+      "id": "talent_1779921621101",
+      "name": "Benita Eze",
+      "email": "theexceptionalpmm@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [],
+      "timezone": "GMT+1",
+      "salaryExpectation": 1000,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
+      "vettingScores": {
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
+      },
+      "grade": "B",
+      "tags": [
+        "Progressive Entry",
+        "Assessment Pending"
+      ],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
+      "documents": []
+    },
+    {
+      "id": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
+      "name": "Benita Eze",
+      "email": "john@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [
+        "Operations Management",
+        "Logistics",
+        "Team Leadership",
+        "Process Optimization"
+      ],
+      "timezone": "GMT+1",
+      "salaryExpectation": 1000,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application",
+      "vettingStatus": "Pending",
+      "vettingScores": {
+        "technical": 90,
+        "behavioral": 85,
+        "personality": 88,
+        "remoteReadiness": 90,
+        "workSimulation": 85,
+        "communication": 90,
+        "experience": 80
+      },
+      "grade": "A",
+      "tags": [],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
+      "documents": [],
+      "phone": "08055667755",
+      "country": "Nigeria",
+      "city": "Lagos",
+      "seniorityLevel": "Mid-Level",
+      "employmentPreference": "Full Time",
+      "currency": "USD",
+      "hourlyMonthly": "Monthly",
+      "portfolioUrl": "https://github.com/talent-profile",
+      "certifications": "Certified Operations Professional",
+      "internetQuality": "Fiber Optic (Primary) + LTE (Backup)",
+      "workSetup": "Dedicated ergonomic workspace with battery backup",
+      "devices": "MacBook Pro 16\", dual 27\" 4K displays",
+      "communicationTools": "Slack, Teams, Zoom, Loom",
+      "supportTickets": []
+    },
+    {
+      "id": "talent_1779921626703",
+      "name": "Benita Eze",
+      "email": "theexceptionalpmm@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [],
+      "timezone": "GMT+1",
+      "salaryExpectation": 1000,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
+      "vettingScores": {
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
+      },
+      "grade": "B",
+      "tags": [
+        "Progressive Entry",
+        "Assessment Pending"
+      ],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
+      "documents": []
+    },
+    {
+      "id": "talent_1779921631488",
+      "name": "Benita Eze",
+      "email": "theexceptionalpmm@gmail.com",
+      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
+      "title": "Senior Operations Manager",
+      "skills": [],
+      "timezone": "GMT+1",
+      "salaryExpectation": 1000,
+      "experienceYears": 5,
+      "availability": 100,
+      "vettingStage": "Application Screening",
+      "vettingStatus": "Applied",
+      "vettingScores": {
+        "technical": 0,
+        "behavioral": 0,
+        "personality": 0,
+        "remoteReadiness": 0,
+        "workSimulation": 0,
+        "communication": 0,
+        "experience": 0
+      },
+      "grade": "B",
+      "tags": [
+        "Progressive Entry",
+        "Assessment Pending"
+      ],
+      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
+      "documents": []
     }
   ],
   "clientRequests": [
@@ -287,14 +477,23 @@
       "timeliness": 4.8
     }
   ],
-  "notifications": [],
+  "notifications": [
+    {
+      "id": "notif_1779922630280",
+      "userId": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
+      "title": "Application Intake Submitted",
+      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
+      "read": false,
+      "createdAt": "2026-05-27T22:57:10.280Z"
+    }
+  ],
   "auditLogs": [
     {
       "id": "audit_1779904351102",
       "actor": "Oluwadamilola Olukunle",
       "action": "Reschedule Interview",
       "details": "Interview \"Ops Manager\" with Kofi Mensah — new slot: 2026-05-30 at 10:00",
-      "timestamp": "2026-05-27T17:52:31.102Z"
+      "timestamp": "2026-05-27T17:52:31.102+00:00"
     },
     {
       "id": "audit_1779904329824",
@@ -365,16 +564,37 @@
       "action": "Progressive Onboarding Completed",
       "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
       "timestamp": "2026-05-26T23:37:31.893+00:00"
+    },
+    {
+      "id": "audit_1779921621101",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-27T22:40:21.101+00:00"
+    },
+    {
+      "id": "audit_1779921626703",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-27T22:40:26.703+00:00"
+    },
+    {
+      "id": "audit_1779921631488",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-27T22:40:31.488+00:00"
+    },
+    {
+      "id": "audit_1779922630280",
+      "actor": "Benita Eze",
+      "action": "Progressive Onboarding Completed",
+      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
+      "timestamp": "2026-05-27T22:57:10.280Z"
     }
   ],
   "agentLogs": [
-    {
-      "id": "alog_1779904351102",
-      "agentName": "Workflow Agent",
-      "message": "Rescheduled interview for Kofi Mensah. Calendar invite updated.",
-      "timestamp": "6:52:31 PM",
-      "type": "info"
-    },
     {
       "id": "alog_1",
       "agentName": "Context Agent",
@@ -387,6 +607,13 @@
       "agentName": "Workflow Agent",
       "message": "Work execution hooks registered. Active status listener loaded.",
       "timestamp": "2026-05-20T10:36:12.091+00:00",
+      "type": "info"
+    },
+    {
+      "id": "alog_talent_1779922630280",
+      "agentName": "Compliance Agent",
+      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
+      "timestamp": "23:57:10",
       "type": "info"
     }
   ],
@@ -502,6 +729,33 @@
       "emailVerified": false,
       "createdAt": "2026-05-26T23:36:09.895213+00:00",
       "updatedAt": "2026-05-26T23:36:09.895213+00:00"
+    },
+    {
+      "id": "cb940a68-2d49-46a0-8941-c2313334349c",
+      "email": "theexceptionalpm@gmail.com",
+      "role": "talent",
+      "status": "active",
+      "emailVerified": false,
+      "createdAt": "2026-05-27T22:39:08.094477+00:00",
+      "updatedAt": "2026-05-27T22:39:08.094477+00:00"
+    },
+    {
+      "id": "7557f57b-e5ce-42db-91c2-4c269b4fe4b2",
+      "email": "theexceptionalpmm@gmail.com",
+      "role": "talent",
+      "status": "active",
+      "emailVerified": false,
+      "createdAt": "2026-05-27T22:39:16.830372+00:00",
+      "updatedAt": "2026-05-27T22:39:16.830372+00:00"
+    },
+    {
+      "id": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
+      "email": "john@gmail.com",
+      "role": "talent",
+      "status": "active",
+      "emailVerified": false,
+      "createdAt": "2026-05-27T22:56:53.231356+00:00",
+      "updatedAt": "2026-05-27T22:56:53.231356+00:00"
     }
   ],
   "organizations": [

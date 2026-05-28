@@ -3270,6 +3270,56 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   const [isEditingCert, setIsEditingCert] = useState(false);
   const [certForm, setCertForm] = useState({ id: '', name: '', issuer: '', issueDate: '', expiryDate: '', verificationLink: '', badgeImage: '' });
 
+  // Sync state with incoming props to prevent displaying stale/hardcoded data when asynchronous data loads
+  useEffect(() => {
+    if (profile) {
+      if (profile.name) setFullName(profile.name);
+      if (profile.title) {
+        setTitle(profile.title);
+        setPrimaryRole(profile.title);
+      }
+      if (profile.bio) setBio(profile.bio);
+      if (profile.tags) setTagsInput(profile.tags.join(', '));
+      if (profile.phone) setPhone(profile.phone);
+      if (profile.city) setCity(profile.city);
+      if (profile.country) setCountry(profile.country);
+      if (profile.timezone) setTimezone(profile.timezone);
+      if (profile.dateOfBirth) setDateOfBirth(profile.dateOfBirth);
+      if (profile.gender) setGender(profile.gender);
+      if (profile.nationality) setNationality(profile.nationality);
+      if (profile.maritalStatus) setMaritalStatus(profile.maritalStatus);
+      if (profile.nationalId) setNationalId(profile.nationalId);
+      if (profile.passportNo) setPassportNo(profile.passportNo);
+      if (profile.address) setAddress(profile.address);
+      if (profile.seniorityLevel) setSeniorityLevel(profile.seniorityLevel);
+      if (profile.experienceYears !== undefined) setYearsExperience(profile.experienceYears);
+      if (profile.skills) setSkills(Array.isArray(profile.skills) ? profile.skills.join(', ') : profile.skills);
+      if (profile.employmentPreference) setEmploymentPreference(profile.employmentPreference);
+      if (profile.salaryExpectation !== undefined) setSalaryExpectation(profile.salaryExpectation);
+      if (profile.currency) setCurrency(profile.currency);
+      if (profile.hourlyMonthly) setHourlyMonthly(profile.hourlyMonthly);
+      if (profile.availability !== undefined) setAvailability(profile.availability);
+      if (profile.linkedIn) setLinkedIn(profile.linkedIn);
+      if (profile.portfolioUrl) setPortfolioUrl(profile.portfolioUrl);
+      if (profile.internetQuality) setInternetQuality(profile.internetQuality);
+      if (profile.workSetup) setWorkSetup(profile.workSetup);
+      if (profile.devices) setDevices(profile.devices);
+      if (profile.communicationTools) setCommunicationTools(profile.communicationTools);
+      if (profile.workExperience && profile.workExperience.length > 0) setWorkExperience(profile.workExperience);
+      if (profile.educationList && profile.educationList.length > 0) setEducationList(profile.educationList);
+      if (profile.languagesList && profile.languagesList.length > 0) setLanguagesList(profile.languagesList);
+      if (profile.emergencyContact) {
+        if (profile.emergencyContact.name) setEmergencyName(profile.emergencyContact.name);
+        if (profile.emergencyContact.relation) setEmergencyRelation(profile.emergencyContact.relation);
+        if (profile.emergencyContact.phone) setEmergencyPhone(profile.emergencyContact.phone);
+        if (profile.emergencyContact.email) setEmergencyEmail(profile.emergencyContact.email);
+      }
+      if (profile.documents && profile.documents.length > 0) setDocuments(profile.documents);
+      if (profile.projects && profile.projects.length > 0) setProjects(profile.projects);
+      if (profile.certsList && profile.certsList.length > 0) setCertsList(profile.certsList);
+    }
+  }, [profile]);
+
   const handleCertSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     let updated;
