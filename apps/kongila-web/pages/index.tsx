@@ -389,6 +389,8 @@ export default function KongilaWeb() {
         setCurrentUser(null);
         setAuthView('login');
         setActiveTab('home');
+      } else if (event === 'SIGNED_IN') {
+        await initSession();
       }
     });
 
