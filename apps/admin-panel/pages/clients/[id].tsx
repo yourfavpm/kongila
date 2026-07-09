@@ -103,37 +103,27 @@ export default function ClientProfileView() {
     const newAm = adminUsers.find(u => u.id === reassignForm.newAmId);
     
     try {
-      // Create mock audit log and update the organization via DB API
-      const resDb = await fetch('/api/db');
-      const db = await resDb.json();
-      
-      const updatedOrgs = db.organizations.map((o: any) => {
-        if (o.id === id) {
-          return {
-            ...o,
-            accountManagerId: newAm.id,
-            accountManagerName: newAm.name || newAm.email
-          };
-        }
-        return o;
-      });
-      
-      const newAuditLog = {
-        id: `audit_${Date.now()}`,
-        actor: 'Super Admin', // Mocked role
-        action: 'Reassign Account Manager',
-        details: `Reassigned AM from ${client.accountManagerName || 'None'} to ${newAm.name || newAm.email}. Reason: ${reassignForm.reason}`,
-        timestamp: new Date().toISOString()
-      };
-      
-      await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          organizations: updatedOrgs,
-          auditLogs: [newAuditLog, ...(db.auditLogs || [])]
+      // Update the organization in Supabase
+      const { error: orgError } = await supabase
+        .from('organizations')
+        .update({
+          account_manager_id: newAm.id
         })
+        .eq('id', id);
+
+      if (orgError) throw orgError;
+      
+      // Real audit log in Supabase
+      const actorName = 'Super Admin';
+      const actionDesc = `Reassigned AM from ${client.accountManagerName || 'None'} to ${newAm.name || newAm.email}. Reason: ${reassignForm.reason}`;
+      
+      const { error: auditError } = await supabase.from('audit_logs').insert({
+        actor: actorName,
+        action: 'Reassign Account Manager',
+        details: actionDesc
       });
+      
+      if (auditError) console.error('Failed to write audit log:', auditError);
       
       setClient({ ...client, accountManagerId: newAm.id, accountManagerName: newAm.name || newAm.email });
       setShowReassignModal(false);

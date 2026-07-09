@@ -461,6 +461,13 @@ export default function KongilaWeb() {
 
     const updatedRequests = [...requests, newReq];
     const updatedMatches = [...matches, ...calculatedMatches];
+    
+    // Insert real audit log
+    await supabase.from('audit_logs').insert({
+      actor: currentUser ? currentUser.name : 'Guest Client',
+      action: 'Intake Submitted',
+      details: `Requested ${formData.numberOfHires}x ${formData.serviceType} role. Budget: $${formData.budget}/mo`
+    });
 
     // Log action
     const updatedDb = {
@@ -477,15 +484,6 @@ export default function KongilaWeb() {
           message: `Your talent request for a ${formData.serviceType} is submitted! Vetted matching scanned.`,
           read: false,
           createdAt: new Date().toISOString()
-        }
-      ],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Guest Client',
-          action: 'Intake Submitted',
-          details: `Requested ${formData.numberOfHires}x ${formData.serviceType} role. Budget: $${formData.budget}/mo`,
-          timestamp: new Date().toISOString()
         }
       ],
       agentLogs: [

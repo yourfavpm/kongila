@@ -6,6 +6,7 @@ import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton, AgentBadge, Chip } from '@kongila/ui';
 import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
+import AdminLogin from '../components/AdminLogin';
 import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
 import { calculateCompositeVettingGrade, generateMatchesForRequest, VETTING_STAGES, advanceTalentStage, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
@@ -173,6 +174,9 @@ const REMOTAN_NAV = [
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
 export default function AdminPanel() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+
   // ── Core data
   const [talents, setTalents] = useState<TalentProfile[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -297,9 +301,12 @@ export default function AdminPanel() {
         const { data: supabaseClientProfiles } = await supabase.from('client_profiles').select('*');
         setClientProfiles(supabaseClientProfiles || []);
         
+        // Fetch audit logs from Supabase
+        const { data: supabaseAuditLogs } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
+        setAuditLogs(supabaseAuditLogs || []);
+        
         setContracts(db.contracts || []);
         setContractTemplates(db.contractTemplates || []);
-        setAuditLogs(db.auditLogs || []);
         setAgentLogs(db.agentLogs || []);
         setRehireRequests(db.rehireRequests || []);
         setUsers(db.users || []);
@@ -353,6 +360,32 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+        if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
+          setIsAuthenticated(true);
+        } else {
+          await supabase.auth.signOut();
+        }
+      }
+      setAuthChecking(false);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+        if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
+          setIsAuthenticated(true);
+        } else {
+          await supabase.auth.signOut();
+          setIsAuthenticated(false);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setIsAuthenticated(false);
+      }
+    });
+
     syncFromDb();
     const interval = setInterval(syncFromDb, 4000);
     
@@ -369,6 +402,7 @@ export default function AdminPanel() {
       clearInterval(interval);
       supabase.removeChannel(reqChannel);
       supabase.removeChannel(orgChannel);
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
@@ -3116,9 +3150,41 @@ export default function AdminPanel() {
         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Logged in as</div>
         <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>Super Admin</div>
         <div style={{ fontSize: '11px', color: 'var(--accent-teal)', marginTop: '2px' }}>Kongila + Remotan</div>
+        <button
+          onClick={async () => {
+            await supabase.auth.signOut();
+            setIsAuthenticated(false);
+          }}
+          style={{
+            marginTop: '12px',
+            background: 'none',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: 'var(--text-secondary)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            width: '100%'
+          }}
+        >
+          Sign Out
+        </button>
       </div>
     </>
   );
+
+  // Render check
+  if (authChecking) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
+        <p style={{ color: 'var(--text-secondary)' }}>Loading Admin Portal...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AdminLogin onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div className="app-shell">

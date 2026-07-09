@@ -258,7 +258,14 @@ export function hasCoreTalentProfileChanges(previous: Partial<TalentProfile> | n
   return fieldsToWatch.some(field => normalize(previous[field]) !== normalize(next[field]));
 }
 
-export type ServiceType = 'Hire Talent' | 'Outsource Talent' | 'Managed Workforce' | 'Project Execution';
+export type ServiceType = 'Hire Talent' | 'Outsource Talent' | 'Managed Workforce' | 'Project Execution' | 'placement' | 'outsourcing' | 'managed_workforce' | 'project';
+
+export type UrgencyType = 'asap' | 'within_2_weeks' | 'flexible' | 'no_rush';
+
+export interface RoleCount {
+  role: string;
+  count: number;
+}
 
 export type RequestStatus =
   | 'New Request'
@@ -270,10 +277,13 @@ export type RequestStatus =
   | 'Onboarding';
 
 export interface ServiceRequest {
-  id: string;
+  id: string; // request_id UUID
+  referenceNumber?: string; // Format KNG-REQ-YYYYMMDD-NNNN
   clientId: string;
   clientName: string;
   serviceType: ServiceType;
+  
+  // Legacy / Backwards compatibility fields
   roleDescription: string;
   requiredSkills: string[];
   duration: string;
@@ -283,6 +293,55 @@ export interface ServiceRequest {
   startDate: string;
   budget: number;
   priority: 'Low' | 'Medium' | 'High';
+  
+  // New generalized fields
+  title?: string;
+  description?: string;
+  numOfTalents?: number;
+  
+  // Step 2A — Hire Talent (Placement)
+  roleTitle?: string;
+  seniorityLevel?: string;
+  keyResponsibilities?: string[];
+  mustHaveQualifications?: string;
+  
+  // Step 2B & 2C — Outsource Talent & Managed Workforce
+  teamSize?: number;
+  rolesRequired?: RoleCount[];
+  coverageType?: string;
+  customHours?: string;
+  teamDescription?: string;
+  reportingStructure?: string;
+  supervisionLevel?: string;
+  performanceMetrics?: string[];
+  serviceDescription?: string;
+
+  // Step 2D — Project Execution
+  projectName?: string;
+  projectDescription?: string;
+  keyDeliverables?: string[];
+  estimatedScope?: string;
+  projectDeadline?: string;
+  referenceFiles?: any[];
+  
+  // Step 3 — Engagement Details
+  engagementType?: string;
+  partTimeHours?: number;
+  durationType?: string;
+  durationMonths?: number;
+  preferredTimezones?: string[];
+  
+  // Step 4 — Budget
+  budgetMinUsd?: number;
+  budgetMaxUsd?: number;
+  budgetUnknown?: boolean;
+  currency?: string;
+  
+  // Step 5 — Priority & Notes
+  urgencyLevel?: UrgencyType;
+  roleCriticality?: string;
+  additionalNotes?: string;
+
   status: RequestStatus;
   createdAt: string;
   urgency?: 'Standard' | 'ASAP';
