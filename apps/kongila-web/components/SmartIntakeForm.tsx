@@ -550,7 +550,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
 
   return (
     <div style={{ padding: '24px', boxSizing: 'border-box' }}>
-      <GlassCard className="intake-card" style={{ maxWidth: '650px', width: '100%', margin: '0 auto' }}>
+      <GlassCard className="intake-card" style={{ maxWidth: step === 1 ? '650px' : '850px', width: '100%', margin: '0 auto', transition: 'max-width 0.3s ease' }}>
         {/* Header step counter */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
