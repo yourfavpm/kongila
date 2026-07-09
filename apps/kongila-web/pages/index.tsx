@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabaseClient';
 import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES } from '../lib/onboarding-constants';
 import TalentDashboard from '../components/TalentDashboard';
 import ClientDashboard from '../components/ClientDashboard';
+import SmartIntakeForm from '../components/SmartIntakeForm';
 
 // Custom Reusable High-Fidelity SVG Brand Logo component
 const KongilaLogo = ({ size = 32, showText = true, textColor = '#1A2340' }) => (
@@ -284,8 +285,8 @@ export default function KongilaWeb() {
            query = query.eq('client_id', session.user.id);
         }
         
-        const { data: supabaseRequests } = await query;
-        if (supabaseRequests && supabaseRequests.length > 0) {
+        const { data: supabaseRequests, error: reqErr } = await query;
+        if (supabaseRequests) {
           const mappedRequests = supabaseRequests.map(r => r.payload);
           setRequests(mappedRequests);
         } else {
@@ -694,183 +695,7 @@ export default function KongilaWeb() {
     }
   };
 
-  const simulateGoogleLogin = (role: 'talent' | 'client') => {
-    const googleUser = {
-      id: `google_${Date.now()}`,
-      name: role === 'talent' ? 'Tariq Ibrahim' : 'Marcus Thorne',
-      email: role === 'talent' ? 'tariq.ibrahim@google-auth.dev' : 'marcus@thorne-invest.com',
-      role: role,
-      onboardingStatus: 'incomplete',
-      emailVerified: true, // Google accounts automatically verified
-      companyName: role === 'client' ? 'Thorne Enterprises' : undefined,
-      createdAt: new Date().toISOString()
-    };
 
-    setCurrentUser(googleUser);
-    syncAuthSignupToDb(googleUser);
-    triggerBanner('Authenticated with Google OAuth!', 'success');
-
-    if (role === 'talent') {
-      setTalentOnboardingData(prev => ({
-        ...prev,
-        fullName: googleUser.name,
-      }));
-      setAuthView('onboarding');
-      setTalentWizardStep(1);
-    } else {
-      // Smart intake already completed?
-      if (clientIntakeActive && clientIntakeStep === 5) {
-        completeClientSmartIntake(googleUser);
-      } else {
-        setAuthView(null);
-        setActiveTab('client');
-      }
-    }
-  };
-
-  const simulateLinkedInLogin = () => {
-    // LinkedIn is especially valuable for Talent experience import
-    const linkedInUser = {
-      id: `linkedin_${Date.now()}`,
-      name: 'Adama Keita',
-      email: 'adama.keita@linkedin-auth.dev',
-      role: 'talent' as const,
-      onboardingStatus: 'incomplete',
-      emailVerified: true,
-      createdAt: new Date().toISOString()
-    };
-
-    syncAuthSignupToDb(linkedInUser);
-    setTalentOnboardingData(prev => ({
-      ...prev,
-      fullName: linkedInUser.name,
-      primaryRole: '',
-      yearsExperience: '',
-      skills: [],
-      portfolioUrl: ''
-    }));
-
-    setCurrentUser(linkedInUser);
-    setAuthView('onboarding');
-    setTalentWizardStep(1);
-    triggerBanner('Imported profile details successfully from LinkedIn!', 'success');
-  };
-
-  const simulateEmailVerification = async () => {
-    if (!currentUser) return;
-    setLoading(true);
-
-    const verifiedUser = { ...currentUser, emailVerified: true };
-    setCurrentUser(verifiedUser);
-    setLoading(false);
-
-    triggerBanner('Email verification simulated successfully via Resend!', 'success');
-
-    if (verifiedUser.role === 'talent') {
-      setAuthView('onboarding');
-      setTalentWizardStep(1);
-    } else {
-      if (clientIntakeActive && clientIntakeStep === 5) {
-        completeClientSmartIntake(verifiedUser);
-      } else {
-        setAuthView(null);
-        setActiveTab('client');
-      }
-    }
-  };
-
-  const completeClientSmartIntake = async (user: any) => {
-    await syncAuthSignupToDb(user);
-    setLoading(true);
-    const newReq: ServiceRequest = {
-      id: `req_${Date.now()}`,
-      clientId: user.id,
-      clientName: `${user.name} (${user.companyName || 'Vanguard Corp'})`,
-      serviceType: formData.serviceType,
-      roleDescription: formData.roleDescription,
-      requiredSkills: formData.requiredSkills.split(',').map(s => s.trim()),
-      duration: formData.duration,
-      commitmentLevel: formData.commitmentLevel,
-      numberOfHires: formData.numberOfHires,
-      timezone: formData.timezone,
-      startDate: formData.startDate,
-      budget: Number(String(formData.budget).replace(/[^0-9.-]/g, '')) || 0,
-      priority: formData.priority,
-      status: 'New Request',
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      const { error } = await supabase.from('talent_requests').insert([{
-        client_id: user.id,
-        service_type: formData.serviceType,
-        payload: newReq
-      }]);
-      if (error) {
-        console.error("Supabase storage error:", error);
-        triggerBanner('Error saving to database. Please try again.', 'error');
-        setLoading(false);
-        return;
-      }
-    } catch (err) {
-      console.error("Failed to connect to Supabase", err);
-      triggerBanner('Connection error. Please try again.', 'error');
-      setLoading(false);
-      return;
-    }
-
-    const calculatedMatches = generateMatchesForRequest(newReq, talents);
-    const updatedRequests = [...requests, newReq];
-    const updatedMatches = [...matches, ...calculatedMatches];
-
-    const updatedDb = {
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      tasks: [],
-      contracts,
-      notifications: [
-        {
-          id: `notif_${Date.now()}`,
-          userId: user.id,
-          title: 'Organization Profile Created',
-          message: `Created organization matching your intake request: ${user.companyName}. Scanning vetting databases.`,
-          read: false,
-          createdAt: new Date().toISOString()
-        }
-      ],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: user.name,
-          action: 'Talent Request Completed & Authenticated',
-          details: `Service Request generated. Linked to organization ${user.companyName}.`,
-          timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_client_${Date.now()}`,
-          agentName: 'Context Agent',
-          message: `Organization profile and EOR accounts initiated for client ${user.name} (${user.companyName}).`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        }
-      ]
-    };
-
-    setRequests(updatedRequests);
-    setMatches(updatedMatches);
-    await saveToDb(updatedDb);
-
-    setSelectedRequest(newReq);
-    setClientIntakeActive(false);
-    setAuthView(null);
-    setClientSubTab('matching');
-    setActiveTab('client');
-    setLoading(false);
-    triggerBanner('Talent Request and Client organization established! Vetting scans initialized.', 'success');
-  };
 
   const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
     return supabase.storage.from(bucket).upload(fileName, file, { upsert: true });
@@ -2844,7 +2669,7 @@ export default function KongilaWeb() {
         {/* CLIENT SMART INTAKE FLOW (Smart Intake FIRST) */}
         {/* ====================================================================== */}
         {clientIntakeActive && (
-          <div className="intake-container" style={{
+          <div style={{
             minHeight: '100vh',
             width: '100%',
             backgroundColor: 'var(--bg-primary, #F5F7FA)',
@@ -2853,385 +2678,18 @@ export default function KongilaWeb() {
             justifyContent: 'center',
             boxSizing: 'border-box'
           }}>
-            <GlassCard className="intake-card" style={{ maxWidth: '650px', width: '100%' }}>
-            {/* Header step counter */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', color: 'var(--accent-purple)' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
-                </span>
-                <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)' }}>Talent Request</h2>
-              </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Step {clientIntakeStep} of 5</div>
-            </div>
-
-            {/* Progress lines */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '32px' }}>
-              {[1, 2, 3, 4, 5].map(s => (
-                <div 
-                  key={s} 
-                  style={{
-                    flex: 1, 
-                    height: '4px', 
-                    borderRadius: '2px', 
-                    background: clientIntakeStep >= s ? 'var(--accent-purple)' : 'var(--border-glass)',
-                    transition: 'all 0.3s ease'
-                  }}
-                />
-              ))}
-            </div>
-
-            {/* Screen 1: Service Selection */}
-            {clientIntakeStep === 1 && (
-              <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>What service level do you require?</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Select an engagement structure scaled to your operational backing.</p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-                  {[
-                    { id: 'Managed Workforce', title: 'Managed Workforce', desc: 'Kongila manages performance, systems and EOR directly. High supervision.' },
-                    { id: 'Outsource Talent', title: 'Outsource Talent', desc: 'Kongila pays talent; client manages execution directly. Lighter oversight.' },
-                    { id: 'Hire Talent', title: 'Direct Placement', desc: 'Full sourcing and vetting engine. recommended shortlist deployable instantly.' },
-                    { id: 'Project Execution', title: 'Project Execution', desc: 'Client prepays project milestone scopes. Direct delivery manager assigned.' }
-                  ].map(item => (
-                    <div 
-                      key={item.id}
-                      onClick={() => setFormData({ ...formData, serviceType: item.id as ServiceType })}
-                      style={{
-                        padding: '16px',
-                        borderRadius: '10px',
-                        border: `1.5px solid ${formData.serviceType === item.id ? 'var(--accent-purple)' : 'var(--border-glass)'}`,
-                        background: formData.serviceType === item.id ? 'var(--accent-purple-glow)' : 'var(--bg-secondary)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        gap: '16px',
-                        alignItems: 'center',
-                        transition: 'var(--transition-smooth)'
-                      }}
-                    >
-                      <span style={{ 
-                        fontSize: '24px', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center',
-                        color: formData.serviceType === item.id ? 'var(--accent-purple)' : 'var(--text-secondary)'
-                      }}>
-                        {item.id === 'Managed Workforce' ? (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                        ) : item.id === 'Outsource Talent' ? (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                        ) : item.id === 'Hire Talent' ? (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        ) : (
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-                        )}
-                      </span>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{item.title}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{item.desc}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                  <NeonButton variant="ghost" onClick={() => setClientIntakeActive(false)}>Cancel</NeonButton>
-                  <NeonButton onClick={() => setClientIntakeStep(2)}>Continue to Details</NeonButton>
-                </div>
-              </div>
-            )}
-
-            {/* Screen 2: Requirement Details */}
-            {clientIntakeStep === 2 && (
-              <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>Describe your requirement details</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Provide operational description to scan matching engine profiles.</p>
-
-                <div className="form-group">
-                  <label className="form-label">Role Title & Core Focus</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={formData.roleDescription}
-                    onChange={e => setFormData({ ...formData, roleDescription: e.target.value })}
-                    placeholder="e.g. Senior Operations Specialist to optimize workload pipelines"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Required Skills (Comma separated)</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={formData.requiredSkills}
-                    onChange={e => setFormData({ ...formData, requiredSkills: e.target.value })}
-                  />
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    Example: React, Node.js, TypeScript, PostgreSQL
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setClientIntakeStep(1)}>Back</NeonButton>
-                  <NeonButton onClick={() => setClientIntakeStep(3)}>Continue to Schedule</NeonButton>
-                </div>
-              </div>
-            )}
-
-            {/* Screen 3: Schedule, Timezone & Budget */}
-            {clientIntakeStep === 3 && (
-              <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>Schedule, Commitment & Budget</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Enter work schedule parameters and monthly USD allowance.</p>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
-                  <div>
-                    <label className="form-label">Timezone Alignment</label>
-                    <select 
-                      className="form-select"
-                      value={formData.timezone}
-                      onChange={e => setFormData({ ...formData, timezone: e.target.value })}
-                    >
-                      <option>GMT+1 (Lagos / London)</option>
-                      <option>GMT (Dakar / Accra)</option>
-                      <option>EST (New York / Boston)</option>
-                      <option>PST (San Francisco)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="form-label">Commitment Scale</label>
-                    <select 
-                      className="form-select"
-                      value={formData.commitmentLevel}
-                      onChange={e => setFormData({ ...formData, commitmentLevel: e.target.value })}
-                    >
-                      <option>Full Time (40h/week)</option>
-                      <option>Part Time (20h/week)</option>
-                      <option>Hourly / Freelance</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
-                  <div>
-                    <label className="form-label">Target Start Date</label>
-                    <input 
-                      type="date" 
-                      className="form-input" 
-                      value={formData.startDate}
-                      onChange={e => setFormData({ ...formData, startDate: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="form-label">No. of Hires</label>
-                    <input 
-                      type="number" 
-                      className="form-input" 
-                      value={formData.numberOfHires}
-                      onChange={e => setFormData({ ...formData, numberOfHires: parseInt(e.target.value) || 1 })}
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
-                  <div>
-                    <label className="form-label">Monthly USD Budget</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      value={formData.budget}
-                      onChange={e => setFormData({ ...formData, budget: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="form-label">Deployment Urgency</label>
-                    <select 
-                      className="form-select"
-                      value={formData.priority}
-                      onChange={e => setFormData({ ...formData, priority: e.target.value as any })}
-                    >
-                      <option>High</option>
-                      <option>Medium</option>
-                      <option>Low</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setClientIntakeStep(2)}>Back</NeonButton>
-                  <NeonButton onClick={() => setClientIntakeStep(4)}>Continue to Account</NeonButton>
-                </div>
-              </div>
-            )}
-
-            {/* Screen 4: Client Account Creation (Smart Intake FIRST!) */}
-            {clientIntakeStep === 4 && (
-              <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>Secure your account to match</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Provide company credentials to generate active sourcing requests.</p>
-
-                {/* Google Sign in shortcut */}
-                <button 
-                  type="button"
-                  onClick={() => simulateGoogleLogin('client')}
-                  style={{
-                    width: '100%', 
-                    height: '44px', 
-                    borderRadius: '8px', 
-                    background: 'var(--bg-secondary)', 
-                    color: 'var(--text-primary)', 
-                    border: '1px solid var(--border-glass)', 
-                    fontWeight: 600, 
-                    fontSize: '13px', 
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '10px',
-                    marginBottom: '24px',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center' }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ verticalAlign: 'middle' }}><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/></svg>
-                  </span> Continue with Google
-                </button>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '20px 0', color: 'var(--text-muted)' }}>
-                  <div style={{ flexGrow: 1, height: '1px', background: 'var(--border-glass)' }} />
-                  <span style={{ fontSize: '11px', textTransform: 'uppercase' }}>or use email credentials</span>
-                  <div style={{ flexGrow: 1, height: '1px', background: 'var(--border-glass)' }} />
-                </div>
-
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!emailInput || !passwordInput || !nameInput || !companyInput) {
-                    triggerBanner('Please complete all authentication fields.', 'error');
-                    return;
-                  }
-                  const clientUser = {
-                    id: `user_${Date.now()}`,
-                    name: nameInput,
-                    email: emailInput,
-                    role: 'client' as const,
-                    onboardingStatus: 'incomplete',
-                    emailVerified: false,
-                    companyName: companyInput,
-                    createdAt: new Date().toISOString()
-                  };
-                  setCurrentUser(clientUser);
-                  setClientIntakeStep(5);
-                  triggerBanner('Verification email triggered via Resend.', 'info');
-                }}>
-                  <div className="form-group">
-                    <label className="form-label">Full Name</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      value={nameInput}
-                      onChange={e => setNameInput(e.target.value)}
-                      placeholder="Alex Mercer"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Company Name</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      value={companyInput}
-                      onChange={e => setCompanyInput(e.target.value)}
-                      placeholder="Vanguard Tech Corp"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Email Address</label>
-                    <input 
-                      type="email" 
-                      className="form-input" 
-                      value={emailInput}
-                      onChange={e => setEmailInput(e.target.value)}
-                      placeholder="alex@vanguard.com"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Password</label>
-                    <div style={{ position: 'relative' }}>
-                      <input 
-                        type={showPassword ? "text" : "password"} 
-                        className="form-input" 
-                        value={passwordInput}
-                        onChange={e => setPasswordInput(e.target.value)}
-                        placeholder="••••••••"
-                        style={{ paddingRight: '60px' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        style={{
-                          position: 'absolute',
-                          right: '12px',
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          background: 'none',
-                          border: 'none',
-                          color: 'var(--text-secondary, #6B7A99)',
-                          cursor: 'pointer',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          padding: '4px',
-                        }}
-                      >
-                        {showPassword ? 'Hide' : 'Show'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px' }}>
-                    <NeonButton variant="secondary" type="button" onClick={() => setClientIntakeStep(3)}>Back</NeonButton>
-                    <NeonButton type="submit">Complete Intake & Register</NeonButton>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* Screen 5: Progressive Email Verification (For Client flow) */}
-            {clientIntakeStep === 5 && (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px', color: 'var(--accent-purple)' }}>✉</div>
-                <h3 style={{ fontSize: '20px', marginBottom: '8px', color: 'var(--text-primary)' }}>Verify email to initialize scans</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.6, marginBottom: '32px' }}>
-                  We sent a secure verification link to <strong>{emailInput}</strong> via Resend. Please verify to finalize your request.
-                </p>
-
-                <GlassCard style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-glass)', padding: '20px', marginBottom: '32px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>DEVELOPMENT TEST HELPER</div>
-                  <button 
-                    onClick={simulateEmailVerification}
-                    style={{
-                      background: 'var(--accent-purple-glow)', 
-                      color: 'var(--accent-purple)', 
-                      border: '1.5px solid var(--accent-purple)', 
-                      borderRadius: '8px', 
-                      height: '38px', 
-                      padding: '0 20px', 
-                      fontSize: '12px', 
-                      fontWeight: 700, 
-                      cursor: 'pointer',
-                      width: '100%',
-                      transition: 'var(--transition-smooth)'
-                    }}
-                  >
-                    Simulate Email Verification (Resend Webhook)
-                  </button>
-                </GlassCard>
-
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Didn't receive the email? <span style={{ color: 'var(--accent-purple)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => triggerBanner('Resent verification email successfully.', 'info')}>Click here to resend</span>
-                </div>
-              </div>
-            )}
-
-          </GlassCard>
+            <SmartIntakeForm 
+              onComplete={(req) => {
+                const calculatedMatches = generateMatchesForRequest(req, talents);
+                setRequests([...requests, req]);
+                setMatches([...matches, ...calculatedMatches]);
+                setClientIntakeActive(false);
+                setAuthView(null);
+                setActiveTab('client');
+                triggerBanner('Service Request Created Successfully', 'success');
+              }}
+              onCancel={() => setClientIntakeActive(false)}
+            />
           </div>
         )}
 
@@ -3239,7 +2697,7 @@ export default function KongilaWeb() {
         {/* UNIFIED AUTHENTICATION VIEWS (Sign-Up / Sign-In / Verification Modal) */}
         {/* ====================================================================== */}
         {/* Auth two-panel: only login / signup / verify — NOT onboarding */}
-        {(authView === 'login' || authView === 'signup' || authView === 'verify') && !clientIntakeActive && (
+        {(authView === 'login' || authView === 'signup') && !clientIntakeActive && (
           <div style={{
             minHeight: '100vh',
             width: '100%',
@@ -3427,55 +2885,7 @@ export default function KongilaWeb() {
                   Access premium remote EOR opportunities globally.
                 </p>
 
-                {/* OAuth Mock buttons */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
-                  <button 
-                    type="button"
-                    onClick={() => simulateGoogleLogin('talent')}
-                    style={{
-                      height: '40px', 
-                      borderRadius: '8px', 
-                      background: '#fff', 
-                      color: '#000', 
-                      border: 'none', 
-                      fontWeight: 700, 
-                      fontSize: '13px', 
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    🔴 Continue with Google
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={simulateLinkedInLogin}
-                    style={{
-                      height: '40px', 
-                      borderRadius: '8px', 
-                      background: '#0077b5', 
-                      color: '#fff', 
-                      border: 'none', 
-                      fontWeight: 700, 
-                      fontSize: '13px', 
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    🔵 Continue with LinkedIn
-                  </button>
-                </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '20px 0', color: 'var(--text-muted)' }}>
-                  <div style={{ flexGrow: 1, height: '1px', background: 'var(--border-glass)' }} />
-                  <span style={{ fontSize: '11px', textTransform: 'uppercase' }}>or credentials</span>
-                  <div style={{ flexGrow: 1, height: '1px', background: 'var(--border-glass)' }} />
-                </div>
 
                 {/* Form */}
                 <form onSubmit={handleSignUpSubmit}>
@@ -3678,41 +3088,6 @@ export default function KongilaWeb() {
               </div>
             )}
 
-            {/* View: Email Verification screen (Resend Simulation) */}
-            {authView === 'verify' && (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>✉</div>
-                <h3 style={{ fontSize: '20px', marginBottom: '8px', color: '#fff' }}>Verify email credentials</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.6, marginBottom: '32px' }}>
-                  We dispatched a secure authentication key to <strong>{emailInput || 'your email'}</strong> via Resend. Check your inbox to unlock onboarding.
-                </p>
-
-                <GlassCard style={{ background: 'rgba(0, 255, 204, 0.02)', padding: '20px', marginBottom: '32px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>DEVELOPMENT SANDBOX WEBHOOK</div>
-                  <button 
-                    onClick={simulateEmailVerification}
-                    style={{
-                      background: 'rgba(0, 255, 204, 0.1)', 
-                      color: 'var(--accent-cyan)', 
-                      border: '1.5px solid var(--accent-cyan)', 
-                      borderRadius: '8px', 
-                      height: '38px', 
-                      padding: '0 20px', 
-                      fontSize: '12px', 
-                      fontWeight: 700, 
-                      cursor: 'pointer',
-                      width: '100%'
-                    }}
-                  >
-                    Simulate Email Verification (Resend Trigger)
-                  </button>
-                </GlassCard>
-
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Refuse link? <span style={{ color: 'var(--accent-magenta)', cursor: 'pointer', textDecoration: 'underline' }} onClick={handleSignOut}>Cancel</span>
-                </div>
-              </div>
-            )}
 
 
 
