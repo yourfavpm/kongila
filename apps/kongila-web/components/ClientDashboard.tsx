@@ -257,16 +257,16 @@ export default function ClientDashboard({
   const [showIntakeModal, setShowIntakeModal] = useState(false);
   const [intakeStep, setIntakeStep] = useState(1);
   const [intakeForm, setIntakeForm] = useState({
-    serviceType: 'Managed Workforce',
+    serviceType: '',
     roleDescription: '',
     requiredSkills: '',
-    duration: '6 Months',
-    commitmentLevel: 'Full-Time',
+    duration: '',
+    commitmentLevel: '',
     numberOfHires: 1,
-    timezone: 'GMT -5 (EST)',
-    startDate: 'Immediate',
-    budget: '$80 - $120 / hr',
-    priority: 'High'
+    timezone: '',
+    startDate: '',
+    budget: '',
+    priority: ''
   });
   
   // Talent Matching Premium States
@@ -4920,27 +4920,16 @@ export default function ClientDashboard({
                       };
 
                       try {
-                        const mappedType = intakeForm.serviceType === 'Managed Workforce' ? 'managed' :
-                                           intakeForm.serviceType === 'Outsource Talent' ? 'outsource' :
-                                           intakeForm.serviceType === 'Direct Placement' || intakeForm.serviceType === 'Hire Talent' ? 'hire' : 'project';
-                                           
-                        const budgetParts = intakeForm.budget.replace(/[^0-9.-]/g, '').split('-');
-                        const minBudget = parseFloat(budgetParts[0]) || 80;
-                        const maxBudget = parseFloat(budgetParts[1]) || minBudget || 120;
-
-                        await supabase.from('service_requests').insert({
-                          id: reqId,
+                        const { error: dbError } = await supabase.from('talent_requests').insert([{
                           client_id: currentUser.id,
-                          service_type: mappedType,
-                          title: intakeForm.serviceType + ' - ' + (intakeForm.roleDescription.split(' ')[0] || 'Talent'),
-                          description: intakeForm.roleDescription,
-                          num_of_talents: Number(intakeForm.numberOfHires),
-                          duration: intakeForm.duration,
-                          commitment_level: intakeForm.commitmentLevel,
-                          budget_min: minBudget,
-                          budget_max: maxBudget,
-                          status: 'new'
-                        });
+                          service_type: intakeForm.serviceType,
+                          payload: newReq
+                        }]);
+                        
+                        if (dbError) {
+                          alert(`Error saving to database: ${dbError.message}`);
+                          return;
+                        }
 
                         if (onAddRequest) {
                           await onAddRequest(newReq);
@@ -4949,19 +4938,19 @@ export default function ClientDashboard({
                         setShowIntakeModal(false);
                         setIntakeStep(1);
                         setIntakeForm({
-                          serviceType: 'Managed Workforce',
+                          serviceType: '',
                           roleDescription: '',
                           requiredSkills: '',
-                          duration: '6 Months',
-                          commitmentLevel: 'Full-Time',
+                          duration: '',
+                          commitmentLevel: '',
                           numberOfHires: 1,
-                          timezone: 'GMT -5 (EST)',
-                          startDate: 'Immediate',
-                          budget: '$80 - $120 / hr',
-                          priority: 'High'
+                          timezone: '',
+                          startDate: '',
+                          budget: '',
+                          priority: ''
                         });
-                      } catch (err) {
-                        alert('Submission succeeded and synchronized.');
+                      } catch (err: any) {
+                        alert('Submission failed: ' + err.message);
                         setShowIntakeModal(false);
                       }
                     }}

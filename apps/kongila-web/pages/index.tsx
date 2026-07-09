@@ -221,8 +221,8 @@ export default function KongilaWeb() {
     numberOfHires: 1,
     timezone: '',
     startDate: '',
-    budget: 0,
-    priority: 'Medium' as 'Low' | 'Medium' | 'High'
+    budget: '',
+    priority: '' as 'Low' | 'Medium' | 'High'
   });
 
   // Sandbox Challenge State
@@ -277,7 +277,14 @@ export default function KongilaWeb() {
         setTalents(dbData.talents || []);
         
         // Fetch service requests from Supabase
-        const { data: supabaseRequests } = await supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
+        let query = supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
+        // If current session user is a client, we should scope the query
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.user_metadata?.role === 'client') {
+           query = query.eq('client_id', session.user.id);
+        }
+        
+        const { data: supabaseRequests } = await query;
         if (supabaseRequests && supabaseRequests.length > 0) {
           const mappedRequests = supabaseRequests.map(r => r.payload);
           setRequests(mappedRequests);
@@ -420,7 +427,7 @@ export default function KongilaWeb() {
       numberOfHires: formData.numberOfHires,
       timezone: formData.timezone,
       startDate: formData.startDate,
-      budget: formData.budget,
+      budget: Number(String(formData.budget).replace(/[^0-9.-]/g, '')) || 0,
       priority: formData.priority,
       status: 'New Request',
       createdAt: new Date().toISOString()
@@ -532,10 +539,10 @@ export default function KongilaWeb() {
 
       if (error) throw error;
 
-      const authUserId = data.user?.id || `user_${Date.now()}`;
+      const authUserId = data.user?.id || crypto.randomUUID();
 
       // Write to public.users table
-      await supabase.from('users').upsert({
+      const { error: userErr } = await supabase.from('users').upsert({
         id: authUserId,
         email: emailInput,
         password_hash: 'auth_managed',
@@ -543,23 +550,26 @@ export default function KongilaWeb() {
         status: authRole === 'talent' ? 'onboarding' : 'active',
         email_verified: false
       });
+      if (userErr) throw new Error(`User DB Error: ${userErr.message}`);
 
       if (authRole === 'client') {
         // Create organization record
-        const orgId = `org_${Date.now()}`;
-        await supabase.from('organizations').upsert({
+        const orgId = crypto.randomUUID();
+        const { error: orgErr } = await supabase.from('organizations').upsert({
           id: orgId,
           name: companyInput || `${nameInput}'s Company`,
           created_by: authUserId
         });
+        if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
 
         // Create client profile
-        await supabase.from('client_profiles').upsert({
-          id: `clp_${Date.now()}`,
+        const { error: clpErr } = await supabase.from('client_profiles').upsert({
+          id: crypto.randomUUID(),
           user_id: authUserId,
           organization_id: orgId,
           position: 'Admin'
         });
+        if (clpErr) throw new Error(`Client Profile DB Error: ${clpErr.message}`);
       } else {
         // Create talent profile placeholder — use auth UUID as the profile ID so onboarding
         // can upsert by id without creating duplicate records
@@ -581,7 +591,7 @@ export default function KongilaWeb() {
 
       // Always write to user_roles table
       const { error: urErr } = await supabase.from('user_roles').upsert({
-        id: `ur_${authUserId}`,
+        id: crypto.randomUUID(),
         user_id: authUserId,
         role_id: authRole
       }, { onConflict: 'id' });
@@ -784,7 +794,7 @@ export default function KongilaWeb() {
       numberOfHires: formData.numberOfHires,
       timezone: formData.timezone,
       startDate: formData.startDate,
-      budget: formData.budget,
+      budget: Number(String(formData.budget).replace(/[^0-9.-]/g, '')) || 0,
       priority: formData.priority,
       status: 'New Request',
       createdAt: new Date().toISOString()
@@ -3027,10 +3037,10 @@ export default function KongilaWeb() {
                   <div>
                     <label className="form-label">Monthly USD Budget</label>
                     <input 
-                      type="number" 
+                      type="text" 
                       className="form-input" 
                       value={formData.budget}
-                      onChange={e => setFormData({ ...formData, budget: parseInt(e.target.value) || 2000 })}
+                      onChange={e => setFormData({ ...formData, budget: e.target.value })}
                     />
                   </div>
                   <div>
@@ -4835,6 +4845,7 @@ export default function KongilaWeb() {
             signingContractId={signingContractId}
             selectedRequest={selectedRequest}
             setSelectedRequest={setSelectedRequest}
+            setRequests={setRequests}
             setInvoices={setInvoices}
             setMessages={setMessages}
             setNotifications={setNotifications}
