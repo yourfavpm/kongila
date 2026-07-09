@@ -361,20 +361,28 @@ export default function AdminPanel() {
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).single();
-        if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
-          setIsAuthenticated(true);
-        } else {
-          await supabase.auth.signOut();
+      try {
+        if (session?.user) {
+          const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
+          if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
+            setIsAuthenticated(true);
+          } else {
+            await supabase.auth.signOut();
+          }
         }
+      } catch (err) {
+        console.error('Auth check failed', err);
+      } finally {
+        setAuthChecking(false);
       }
+    }).catch(err => {
+      console.error('getSession failed', err);
       setAuthChecking(false);
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
         if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
           setIsAuthenticated(true);
         } else {
