@@ -41,34 +41,49 @@ export default function ClientProfileView() {
 
   const fetchClientData = async () => {
     try {
-      const res = await fetch('/api/db');
-      const db = await res.json();
-      
-      const org = db.organizations?.find((o: any) => o.id === id);
+      setLoading(true);
+      // Fetch organization from Supabase
+      const { data: orgs } = await supabase.from('organizations').select('*').eq('id', id);
+      const org = orgs && orgs.length > 0 ? orgs[0] : null;
+
       if (org) {
         setClient(org);
         
-        const orgClients = (db.clientProfiles || []).filter((cp: any) => cp.organizationId === org.id);
-        const orgUserIds = orgClients.map((cp: any) => cp.userId);
+        // Fetch client profiles
+        const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
+        const orgUserIds = (profiles || []).map((cp: any) => cp.user_id);
         
-        const requests = (db.clientRequests || db.requests || []).filter((r: any) => orgUserIds.includes(r.clientId) || r.clientName === org.name);
-        const contracts = (db.contracts || []).filter((c: any) => orgUserIds.includes(c.clientId) || c.clientName === org.name);
-        const invoices = (db.invoices || []).filter((i: any) => orgUserIds.includes(i.clientId));
-        const payments = (db.payments || []).filter((p: any) => invoices.map((i:any) => i.id).includes(p.invoiceId));
+        // Fetch real requests
+        let requests: any[] = [];
+        if (orgUserIds.length > 0) {
+          const { data: supabaseRequests } = await supabase.from('talent_requests').select('*').in('client_id', orgUserIds);
+          if (supabaseRequests) {
+            requests = supabaseRequests.map((r: any) => ({ ...r.payload, dbId: r.id }));
+          }
+        }
         
-        // Find tickets and messages related to this client
-        const tickets = (db.supportTickets || []).filter((t: any) => orgUserIds.includes(t.clientId) || orgUserIds.includes(t.userId));
-        const ticketIds = tickets.map((t: any) => t.id);
-        const messages = (db.supportMessages || []).filter((m: any) => ticketIds.includes(m.ticketId));
+        // Fetch real contracts, invoices, payments, support_tickets if they exist in Supabase
+        const { data: contracts } = await supabase.from('contracts').select('*').in('client_id', orgUserIds);
+        const { data: invoices } = await supabase.from('invoices').select('*').in('client_id', orgUserIds);
+        const invoiceIds = (invoices || []).map((i: any) => i.id);
+        
+        let payments: any[] = [];
+        if (invoiceIds.length > 0) {
+          const { data: supabasePayments } = await supabase.from('payments').select('*').in('invoice_id', invoiceIds);
+          if (supabasePayments) payments = supabasePayments;
+        }
+
+        const { data: tickets } = await supabase.from('support_tickets').select('*').in('client_id', orgUserIds);
         
         setClientRequests(requests);
-        setClientContracts(contracts);
-        setClientInvoices(invoices);
-        setClientPayments(payments);
-        setClientMessages(messages);
+        setClientContracts(contracts || []);
+        setClientInvoices(invoices || []);
+        setClientPayments(payments || []);
+        setClientMessages([]); // We'll keep messages empty until there's a messages table
         
-        const admins = (db.users || []).filter((u: any) => u.role === 'admin' || u.role === 'ops_manager');
-        setAdminUsers(admins);
+        // Fetch admins
+        const { data: admins } = await supabase.from('users').select('*').in('role', ['admin', 'ops_manager']);
+        setAdminUsers(admins || []);
       }
     } catch (err) {
       console.error(err);

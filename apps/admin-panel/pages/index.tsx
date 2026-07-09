@@ -281,28 +281,28 @@ export default function AdminPanel() {
 
         // Fetch organizations from Supabase
         const { data: supabaseOrgs } = await supabase.from('organizations').select('*');
-        if (supabaseOrgs && supabaseOrgs.length > 0) {
-          setOrganizations(supabaseOrgs);
-        } else {
-          setOrganizations(db.organizations || []);
-        }
+        setOrganizations(supabaseOrgs || []);
 
         // Fetch client requests from Supabase
         const { data: supabaseRequests } = await supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
         if (supabaseRequests && supabaseRequests.length > 0) {
           setRequests(supabaseRequests.map(r => r.payload));
         } else {
-          setRequests(db.clientRequests || []);
+          setRequests([]);
         }
 
         setMatches(db.matches || []);
+        
+        // Fetch client profiles
+        const { data: supabaseClientProfiles } = await supabase.from('client_profiles').select('*');
+        setClientProfiles(supabaseClientProfiles || []);
+        
         setContracts(db.contracts || []);
         setContractTemplates(db.contractTemplates || []);
         setAuditLogs(db.auditLogs || []);
         setAgentLogs(db.agentLogs || []);
         setRehireRequests(db.rehireRequests || []);
         setUsers(db.users || []);
-        setClientProfiles(db.clientProfiles || []);
         setDocuments(db.documents || []);
         setSupportTickets(db.supportTickets || []);
         setSupportMessages(db.supportMessages || []);
