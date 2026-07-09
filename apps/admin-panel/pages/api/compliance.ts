@@ -7,7 +7,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!db.documents) db.documents = [];
 
   if (req.method === 'GET') {
-    return res.status(200).json(db.documents);
+    // Only return non-hidden documents
+    const visibleDocs = db.documents.filter((d: any) => !d.isHidden);
+    return res.status(200).json(visibleDocs);
   }
 
   if (req.method === 'POST') {
@@ -17,6 +19,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       id: `doc_${Date.now()}`,
       status: body.status || 'pending_signature',
       uploadedAt: new Date().toISOString(),
+      isHidden: false,
     };
     db.documents.push(newDoc);
 
@@ -25,13 +28,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         id: `audit_${Date.now()}`,
         actor: 'Admin Operator',
         action: 'Create Compliance Document',
-        details: `Created "${newDoc.name}" (${newDoc.type}) for user ${newDoc.userId || 'N/A'}.`,
+        details: `Created "${newDoc.name}" (${newDoc.type}) for ${newDoc.isMandatory ? 'All Talents' : (newDoc.userId || 'N/A')}.`,
         timestamp: new Date().toISOString(),
       },
       ...(db.auditLogs || []),
     ];
 
-    if (newDoc.userId) {
+    if (newDoc.userId && !newDoc.isMandatory) {
       db.notifications = [
         {
           id: `notif_${Date.now()}`,
@@ -79,10 +82,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json(updated);
   }
 
+  if (req.method === 'PUT') {
+    const { id, isHidden } = req.body;
+    const docIndex = db.documents.findIndex((d: any) => d.id === id);
+    if (docIndex > -1) {
+      db.documents[docIndex].isHidden = isHidden;
+      await writeDbAsync(db);
+      return res.status(200).json(db.documents[docIndex]);
+    }
+    return res.status(404).json({ error: 'Document not found' });
+  }
+
   if (req.method === 'DELETE') {
     const { id } = req.query;
-    db.documents = db.documents.filter((d: any) => d.id !== id);
-    await writeDbAsync(db);
+    // Instead of deleting, mark as hidden
+    let hidden: any = null;
+    db.documents = db.documents.map((d: any) => {
+      if (d.id === id) {
+        hidden = { ...d, isHidden: true, updatedAt: new Date().toISOString() };
+        return hidden;
+      }
+      return d;
+    });
+    
+    if (hidden) {
+      db.auditLogs = [
+        {
+          id: `audit_${Date.now()}`,
+          actor: 'Admin Operator',
+          action: 'Hide Compliance Document',
+          details: `Document "${hidden.name}" was hidden.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...(db.auditLogs || []),
+      ];
+      await writeDbAsync(db);
+    }
     return res.status(200).json({ success: true });
   }
 

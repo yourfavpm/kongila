@@ -5,9 +5,10 @@ import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
 import { generateMatchesForRequest } from '@kongila/matching-engine';
 import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
 import { 
-  TalentProfile, ServiceRequest, Match, Contract, ServiceType
+  TalentProfile, ServiceRequest, Match, Contract, ServiceType, calculateTalentProfileCompletion, hasCoreTalentProfileChanges
 } from '@kongila/shared-types';
 import { supabase } from '../lib/supabaseClient';
+import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES } from '../lib/onboarding-constants';
 import TalentDashboard from '../components/TalentDashboard';
 import ClientDashboard from '../components/ClientDashboard';
 
@@ -40,6 +41,57 @@ const KongilaLogo = ({ size = 32, showText = true, textColor = '#1A2340' }) => (
   </div>
 );
 
+const SECONDARY_SKILL_OPTIONS = [
+  'Communication',
+  'Empathy',
+  'Active Listening',
+  'Collaboration',
+  'Teamwork',
+  'Adaptability',
+  'Problem Solving',
+  'Critical Thinking',
+  'Time Management',
+  'Emotional Intelligence',
+  'Conflict Resolution',
+  'Stakeholder Management',
+  'Presentation Skills',
+  'Negotiation',
+  'Customer Service',
+  'Attention to Detail',
+  'Leadership',
+  'Accountability',
+  'Resilience',
+  'Creativity',
+  'Initiative',
+  'Organization',
+  'Decision Making',
+  'Coaching',
+  'Mentoring',
+  'Facilitation',
+  'Work Ethic',
+  'Self-Motivation',
+  'Cross-Cultural Communication',
+  'Relationship Building',
+] as const;
+
+const NOTICE_PERIOD_OPTIONS = [
+  'Immediate Start',
+  'Two Weeks Notice',
+  'One Month Notice',
+  'One Month Plus',
+] as const;
+
+const isTalentProfileOnboardingComplete = (profileRow: any) => {
+  if (!profileRow?.bio || typeof profileRow.bio !== 'string') return false;
+  try {
+    const envelope = JSON.parse(profileRow.bio);
+    const telemetry = envelope?.telemetry || {};
+    return envelope?.__kongila === true && Number(telemetry.profileCompletionPercent || 0) >= 100;
+  } catch (e) {
+    return false;
+  }
+};
+
 export default function KongilaWeb() {
   // DB States
   const [talents, setTalents] = useState<TalentProfile[]>([]);
@@ -52,6 +104,13 @@ export default function KongilaWeb() {
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Assessment state for talent-side
+  const [assessments, setAssessments] = useState<any[]>([]);
+  const [assessmentCategories, setAssessmentCategories] = useState<any[]>([]);
+  const [assessmentQuestions, setAssessmentQuestions] = useState<any[]>([]);
+  const [talentSkillAssessments, setTalentSkillAssessments] = useState<any[]>([]);
+  const [skillAssessmentResults, setSkillAssessmentResults] = useState<any[]>([]);
+
   // Identity & Unified Auth Progressive States
   const [currentUser, setCurrentUser] = useState<any>(null); // { id, name, email, role, onboardingStatus, emailVerified, organizationId }
   const [authView, setAuthView] = useState<'login' | 'signup' | 'verify' | 'onboarding' | null>(null);
@@ -62,47 +121,108 @@ export default function KongilaWeb() {
   const [passwordInput, setPasswordInput] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [companyInput, setCompanyInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   
   // Talent Wizard Steps (1 to 6)
   const [talentWizardStep, setTalentWizardStep] = useState(1);
   const [talentOnboardingData, setTalentOnboardingData] = useState({
     fullName: '',
+    phoneCode: '+1',
     phone: '',
-    country: 'Nigeria',
-    city: 'Lagos',
-    timezone: 'GMT+1',
-    primaryRole: 'Senior Operations Manager',
-    yearsExperience: 5,
-    seniorityLevel: 'Senior',
-    skills: 'Operations Management, Logistics, Team Leadership, Process Optimization',
-    employmentPreference: 'Full Time',
-    availability: 100,
-    salaryExpectation: 4500,
+    profilePhotoUrl: '',
+    profilePhotoName: '',
+    profilePhotoSize: 0,
+    dateOfBirth: '',
+    gender: '',
+    nationality: '',
+    country: '',
+    city: '',
+    timezone: '',
+    primaryRole: '',
+    primaryRoleCategory: '',
+    seniorityLevel: '',
+    bio: '',
+    yearsExperience: '',
+    skills: [] as string[],
+    secondarySkills: '',
+    skillLevels: {} as Record<string, 'Beginner' | 'Intermediate' | 'Expert'>,
+    employmentPreference: '',
+    preferredEngagementType: '',
+    preferredWorkHours: '',
+    preferredProjectType: '',
+    noticePeriod: '',
+    availableStartDate: '',
+    availability: '',
+    salaryExpectationMin: '',
+    salaryExpectationMax: '',
     hourlyMonthly: 'Monthly',
     currency: 'USD',
-    cvName: 'CV_Operations_Lead.pdf',
-    portfolioUrl: 'https://github.com/talent-profile',
-    certifications: 'Certified Operations Professional',
-    internetQuality: 'Fiber Optic (Primary) + LTE (Backup)',
-    workSetup: 'Dedicated ergonomic workspace with battery backup',
-    devices: 'MacBook Pro 16", dual 27" 4K displays',
-    communicationTools: 'Slack, Teams, Zoom, Loom'
+    cvName: '',
+    cvUrl: '',
+    cvSize: 0,
+    certificationFiles: [] as Array<{ name: string; url: string; size: number; type: string }>,
+    portfolioUrl: '',
+    linkedInUrl: '',
+    githubUrl: '',
+    websiteUrl: '',
+    certifications: '',
+    internetQuality: '',
+    workSetup: '',
+    devices: '',
+    communicationTools: ''
   });
+
+  const [skillSearch, setSkillSearch] = useState('');
+  const [showSkillDropdown, setShowSkillDropdown] = useState(false);
+  const [secondarySkillSearch, setSecondarySkillSearch] = useState('');
+  const selectedSecondarySkills = String(talentOnboardingData.secondarySkills || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const toggleSecondarySkill = (skill: string) => {
+    const exists = selectedSecondarySkills.includes(skill);
+    const nextSkills = exists
+      ? selectedSecondarySkills.filter(item => item !== skill)
+      : [...selectedSecondarySkills, skill];
+    setTalentOnboardingData(prev => ({
+      ...prev,
+      secondarySkills: nextSkills.slice(0, 10).join(', ')
+    }));
+  };
+
+  useEffect(() => {
+    if (authView === 'onboarding' && currentUser?.name && !talentOnboardingData.fullName) {
+      setTalentOnboardingData(prev => ({
+        ...prev,
+        fullName: currentUser.name,
+      }));
+    }
+  }, [authView, currentUser?.name, talentOnboardingData.fullName]);
+
+  useEffect(() => {
+    const needsOnboarding = currentUser?.role === 'talent' && currentUser?.onboardingStatus !== 'complete';
+    if (needsOnboarding) {
+      if (authView !== 'onboarding') {
+        setAuthView('onboarding');
+      }
+    }
+  }, [currentUser?.role, currentUser?.onboardingStatus, authView]);
 
   // Client Smart Intake (Smart Intake FIRST flow)
   const [clientIntakeActive, setClientIntakeActive] = useState(false);
   const [clientIntakeStep, setClientIntakeStep] = useState(1);
   const [formData, setFormData] = useState({
-    serviceType: 'Managed Workforce' as ServiceType,
-    roleDescription: 'Senior Operations Specialist to optimize enterprise processes.',
-    requiredSkills: 'React, Node.js, TypeScript, PostgreSQL',
-    duration: '6 Months',
-    commitmentLevel: 'Full Time (40h/week)',
+    serviceType: '' as ServiceType,
+    roleDescription: '',
+    requiredSkills: '',
+    duration: '',
+    commitmentLevel: '',
     numberOfHires: 1,
-    timezone: 'GMT+1 (Lagos / London)',
-    startDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    budget: 4500,
-    priority: 'High' as 'Low' | 'Medium' | 'High'
+    timezone: '',
+    startDate: '',
+    budget: 0,
+    priority: 'Medium' as 'Low' | 'Medium' | 'High'
   });
 
   // Sandbox Challenge State
@@ -131,6 +251,7 @@ export default function KongilaWeb() {
   const [activeTab, setActiveTab] = useState<'home' | 'talent' | 'client'>('home');
   const [clientSubTab, setClientSubTab] = useState<'intake' | 'requests' | 'matching'>('intake');
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
+  const [documents, setDocuments] = useState<any[]>([]);
 
   // Custom Notifications & Banners
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
@@ -154,13 +275,29 @@ export default function KongilaWeb() {
       if (res.ok) {
         const dbData = await res.json();
         setTalents(dbData.talents || []);
-        setRequests(dbData.clientRequests || []);
+        
+        // Fetch service requests from Supabase
+        const { data: supabaseRequests } = await supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
+        if (supabaseRequests && supabaseRequests.length > 0) {
+          const mappedRequests = supabaseRequests.map(r => r.payload);
+          setRequests(mappedRequests);
+        } else {
+          setRequests(dbData.clientRequests || []);
+        }
+
         setMatches(dbData.matches || []);
         setContracts(dbData.contracts || []);
         setInvoices(dbData.invoices || []);
         setMessages(dbData.messages || []);
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
+        setDocuments(dbData.documents || []);
+        // Assessment data for talent side
+        setAssessments(dbData.assessments || []);
+        setAssessmentCategories(dbData.assessmentCategories || []);
+        setAssessmentQuestions(dbData.assessmentQuestions || []);
+        setTalentSkillAssessments(dbData.talentSkillAssessments || []);
+        setSkillAssessmentResults(dbData.skillAssessmentResults || []);
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
@@ -182,75 +319,12 @@ export default function KongilaWeb() {
   };
 
   const syncAuthSignupToDb = async (user: any) => {
-    try {
-      const res = await fetch('/api/db');
-      if (res.ok) {
-        const dbData = await res.json();
-        if (!dbData.users) dbData.users = [];
-        if (!dbData.organizations) dbData.organizations = [];
-        if (!dbData.clientProfiles) dbData.clientProfiles = [];
-        if (!dbData.talents) dbData.talents = [];
-
-        // Check if user already exists
-        if (!dbData.users.some((u: any) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase())) {
-          dbData.users.push({
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-            createdAt: user.createdAt || new Date().toISOString()
-          });
-        }
-
-        if (user.role === 'client') {
-          const orgId = user.organizationId || `org_${Date.now()}`;
-          if (!dbData.organizations.some((o: any) => o.id === orgId || o.name === user.companyName)) {
-            dbData.organizations.push({
-              id: orgId,
-              name: user.companyName || `${user.name}'s Company`,
-              createdBy: user.id,
-              createdAt: new Date().toISOString()
-            });
-          }
-          if (!dbData.clientProfiles.some((cp: any) => cp.userId === user.id)) {
-            dbData.clientProfiles.push({
-              id: `clp_${Date.now()}`,
-              userId: user.id,
-              organizationId: orgId,
-              position: 'Admin',
-              createdAt: new Date().toISOString()
-            });
-          }
-        } else if (user.role === 'talent') {
-          // If a progressive talent is logged, add a placeholder talent profile so admin can see it immediately
-          if (!dbData.talents.some((t: any) => t.id === user.id || t.email.toLowerCase() === user.email.toLowerCase())) {
-            dbData.talents.push({
-              id: user.id,
-              name: user.name,
-              email: user.email,
-              avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=80',
-              title: 'Operational Talent',
-              skills: ['Operations', 'Team Coordination'],
-              timezone: 'GMT+1 (Lagos)',
-              salaryExpectation: 4000,
-              experienceYears: 4,
-              availability: 100,
-              vettingStage: 'Application Screening',
-              vettingStatus: 'Applied',
-              vettingScores: { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0 },
-              grade: 'B',
-              tags: ['Progressive Entry', 'Sourcing Scan Active'],
-              bio: 'Vetted operational specialist registered via Kongila talent workspace. Screening initiated.'
-            });
-          }
-        }
-
-        await saveToDb(dbData);
-      }
-    } catch (err) {
-      console.error("Failed to sync signup to db.json", err);
-    }
+    // Legacy sync method disabled to fix long load times and use direct Supabase writes.
   };
+
+  useEffect(() => {
+    setShowPassword(false);
+  }, [authView, clientIntakeStep, clientIntakeActive]);
 
   useEffect(() => {
     // Restore session on page load
@@ -266,20 +340,35 @@ export default function KongilaWeb() {
           .single();
 
         const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
+        let isOnboardingComplete = dbUser?.status === 'active';
+        if (role === 'talent') {
+          const { data: dbTalentProfile } = await supabase
+            .from('talent_profiles')
+            .select('id,bio')
+            .eq('id', dbUser?.id || authUser.id)
+            .maybeSingle();
+          isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+        }
+        
         const restoredUser = {
           id: dbUser?.id || authUser.id,
           name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
           email: authUser.email || '',
           role,
-          onboardingStatus: 'complete',
+          onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
           emailVerified: true,
           companyName: authUser.user_metadata?.company_name,
           createdAt: authUser.created_at
         };
         setCurrentUser(restoredUser);
-        setAuthView(null);
-        if (role === 'talent') setActiveTab('talent');
-        else setActiveTab('client');
+        
+        if (!isOnboardingComplete && role === 'talent') {
+          setAuthView('onboarding');
+        } else {
+          setAuthView(null);
+          if (role === 'talent') setActiveTab('talent');
+          else setActiveTab('client');
+        }
       }
       await syncFromDb();
     };
@@ -297,9 +386,19 @@ export default function KongilaWeb() {
 
     // Poll DB every 5 seconds for updates
     const interval = setInterval(syncFromDb, 5000);
+    
+    // Realtime subscription to talent_requests
+    const requestChannel = supabase
+      .channel('public:talent_requests')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'talent_requests' }, payload => {
+        syncFromDb();
+      })
+      .subscribe();
+
     return () => {
       clearInterval(interval);
       subscription.unsubscribe();
+      supabase.removeChannel(requestChannel);
     };
   }, []);
 
@@ -312,7 +411,7 @@ export default function KongilaWeb() {
     const newReq: ServiceRequest = {
       id: `req_${Date.now()}`,
       clientId: currentUser?.id || 'user_client_1',
-      clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Vanguard Corp'})` : 'Alex Mercer (Vanguard Corp)',
+      clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client',
       serviceType: formData.serviceType,
       roleDescription: formData.roleDescription,
       requiredSkills: formData.requiredSkills.split(',').map(s => s.trim()),
@@ -327,16 +426,24 @@ export default function KongilaWeb() {
       createdAt: new Date().toISOString()
     };
 
-    // Parallel save to Supabase Postgres backend
+    // Save to Supabase Postgres backend
     try {
       const { error } = await supabase.from('talent_requests').insert([{
         client_id: currentUser?.id || 'anon_client',
         service_type: formData.serviceType,
         payload: newReq
       }]);
-      if (error) console.error("Supabase storage error:", error);
+      if (error) {
+        console.error("Supabase storage error:", error);
+        triggerBanner('Error saving to database. Please try again.', 'error');
+        setLoading(false);
+        return;
+      }
     } catch (err) {
-      console.warn("Supabase not fully configured yet, falling back to local DB", err);
+      console.error("Failed to connect to Supabase", err);
+      triggerBanner('Connection error. Please try again.', 'error');
+      setLoading(false);
+      return;
     }
 
     // Calculate matches instantly
@@ -365,7 +472,7 @@ export default function KongilaWeb() {
       auditLogs: [
         {
           id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Alex Mercer',
+          actor: currentUser ? currentUser.name : 'Guest Client',
           action: 'Intake Submitted',
           details: `Requested ${formData.numberOfHires}x ${formData.serviceType} role. Budget: $${formData.budget}/mo`,
           timestamp: new Date().toISOString()
@@ -433,7 +540,7 @@ export default function KongilaWeb() {
         email: emailInput,
         password_hash: 'auth_managed',
         role: authRole,
-        status: 'active',
+        status: authRole === 'talent' ? 'onboarding' : 'active',
         email_verified: false
       });
 
@@ -463,11 +570,11 @@ export default function KongilaWeb() {
           status: 'active',
           vetting_stage: 'Application Screening',
           vetting_status: 'Applied',
-          level: 'Operational Talent',
-          country: 'Nigeria',
-          timezone: 'GMT+1 (Lagos)',
-          availability_hours: 100,
-          bio: 'Tags: Progressive Entry, Assessment Pending\n\nScores: {"technical":0,"behavioral":0,"personality":0,"remoteReadiness":0,"workSimulation":0,"communication":0,"experience":0}\n\nBio: Talent profile created. Onboarding in progress.'
+          level: null,
+          country: null,
+          timezone: null,
+          availability_hours: null,
+          bio: ''
         }, { onConflict: 'id' });
         if (tpErr) console.error('[Signup] talent_profiles upsert error:', tpErr);
       }
@@ -495,6 +602,10 @@ export default function KongilaWeb() {
       await syncAuthSignupToDb(newUser);
 
       if (authRole === 'talent') {
+        setTalentOnboardingData(prev => ({
+          ...prev,
+          fullName: nameInput,
+        }));
         setAuthView('onboarding');
       } else {
         setAuthView(null);
@@ -532,25 +643,38 @@ export default function KongilaWeb() {
         .single();
 
       const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
+      let isOnboardingComplete = dbUser?.status === 'active';
+      if (role === 'talent') {
+        const { data: dbTalentProfile } = await supabase
+          .from('talent_profiles')
+          .select('id,bio')
+          .eq('id', dbUser?.id || data.user?.id)
+          .maybeSingle();
+        isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+      }
 
       const loggedInUser = {
         id: dbUser?.id || data.user?.id || `user_${Date.now()}`,
         name: data.user?.user_metadata?.full_name || emailInput,
         email: emailInput,
         role,
-        onboardingStatus: 'complete',
+        onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
         emailVerified: true,
         companyName: data.user?.user_metadata?.company_name,
         createdAt: data.user?.created_at || new Date().toISOString()
       };
 
       setCurrentUser(loggedInUser);
-      setAuthView(null);
-
-      if (role === 'talent') {
-        setActiveTab('talent');
+      
+      if (!isOnboardingComplete && role === 'talent') {
+        setAuthView('onboarding');
       } else {
-        setActiveTab('client');
+        setAuthView(null);
+        if (role === 'talent') {
+          setActiveTab('talent');
+        } else {
+          setActiveTab('client');
+        }
       }
       triggerBanner(`Welcome back! Logged in successfully.`, 'success');
     } catch (error: any) {
@@ -577,6 +701,10 @@ export default function KongilaWeb() {
     triggerBanner('Authenticated with Google OAuth!', 'success');
 
     if (role === 'talent') {
+      setTalentOnboardingData(prev => ({
+        ...prev,
+        fullName: googleUser.name,
+      }));
       setAuthView('onboarding');
       setTalentWizardStep(1);
     } else {
@@ -603,15 +731,13 @@ export default function KongilaWeb() {
     };
 
     syncAuthSignupToDb(linkedInUser);
-    // Pre-populate talent profile details from LinkedIn profile import
     setTalentOnboardingData(prev => ({
       ...prev,
-      fullName: 'Adama Keita',
-      primaryRole: 'Lead Python Data Analyst',
-      yearsExperience: 7,
-      skills: 'Python, SQL, Django, Pandas, PostgreSQL, Docker',
-      seniorityLevel: 'Senior',
-      portfolioUrl: 'https://linkedin.com/in/adama-keita'
+      fullName: linkedInUser.name,
+      primaryRole: '',
+      yearsExperience: '',
+      skills: [],
+      portfolioUrl: ''
     }));
 
     setCurrentUser(linkedInUser);
@@ -663,6 +789,25 @@ export default function KongilaWeb() {
       status: 'New Request',
       createdAt: new Date().toISOString()
     };
+
+    try {
+      const { error } = await supabase.from('talent_requests').insert([{
+        client_id: user.id,
+        service_type: formData.serviceType,
+        payload: newReq
+      }]);
+      if (error) {
+        console.error("Supabase storage error:", error);
+        triggerBanner('Error saving to database. Please try again.', 'error');
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to connect to Supabase", err);
+      triggerBanner('Connection error. Please try again.', 'error');
+      setLoading(false);
+      return;
+    }
 
     const calculatedMatches = generateMatchesForRequest(newReq, talents);
     const updatedRequests = [...requests, newReq];
@@ -717,22 +862,143 @@ export default function KongilaWeb() {
     triggerBanner('Talent Request and Client organization established! Vetting scans initialized.', 'success');
   };
 
-  // Mock upload trigger for Talent Docs onboarding step
-  const triggerMockUpload = () => {
-    if (mockUploading) return;
+  const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
+    return supabase.storage.from(bucket).upload(fileName, file, { upsert: true });
+  };
+
+  const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      triggerBanner('Profile photo must be an image file.', 'error');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      triggerBanner('Profile photo must be smaller than 2MB.', 'error');
+      return;
+    }
+    const imageUrl = await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          if (img.width < 200 || img.height < 200) {
+            triggerBanner('Profile photo must be at least 200x200px.', 'error');
+            resolve(null);
+            return;
+          }
+          resolve(String(reader.result || ''));
+        };
+        img.onerror = () => {
+          triggerBanner('Could not read profile photo.', 'error');
+          resolve(null);
+        };
+        img.src = String(reader.result || '');
+      };
+      reader.readAsDataURL(file);
+    });
+    if (!imageUrl) return;
+
     setMockUploading(true);
-    setUploadProgress(0);
-    const interval = setInterval(() => {
-      setUploadProgress(p => {
-        if (p >= 100) {
-          clearInterval(interval);
-          setMockUploading(false);
-          triggerBanner('CV & Work Portfolio documents securely uploaded and encrypted.', 'success');
-          return 100;
+    const fileName = `${currentUser?.id || Date.now()}-profile-${file.name}`;
+    try {
+      const bucketsToTry = ['profile-assets', 'documents'];
+      let uploadResult: any = null;
+      let uploadedBucket = 'profile-assets';
+      let lastError: any = null;
+
+      for (const bucket of bucketsToTry) {
+        const result = await uploadToBucket(bucket, fileName, file);
+        if (!result.error) {
+          uploadResult = result;
+          uploadedBucket = bucket;
+          break;
         }
-        return p + 25;
-      });
-    }, 200);
+        lastError = result.error;
+      }
+
+      if (!uploadResult?.data) throw lastError || new Error('Profile photo upload failed.');
+
+      const publicUrl = supabase.storage.from(uploadedBucket).getPublicUrl(uploadResult.data.path).data.publicUrl;
+      setTalentOnboardingData(prev => ({
+        ...prev,
+        profilePhotoUrl: publicUrl,
+        profilePhotoName: file.name,
+        profilePhotoSize: file.size
+      }));
+      triggerBanner('Profile photo uploaded.', 'success');
+    } catch (err: any) {
+      triggerBanner('Profile photo upload failed: ' + err.message, 'error');
+    } finally {
+      setMockUploading(false);
+    }
+  };
+
+  const handleCvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      triggerBanner('CV upload accepts PDF files only.', 'error');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      triggerBanner('CV must be 5MB or smaller.', 'error');
+      return;
+    }
+
+    setMockUploading(true);
+    setUploadProgress(10);
+    
+    try {
+      const fileName = `${currentUser?.id || Date.now()}-cv-${file.name}`;
+
+      const { data, error } = await uploadToBucket('documents', fileName, file);
+
+      if (error) {
+        throw error;
+      }
+      
+      setUploadProgress(100);
+      const publicUrl = supabase.storage.from('documents').getPublicUrl(data.path).data.publicUrl;
+      setTalentOnboardingData(prev => ({ ...prev, cvName: data.path, cvUrl: publicUrl, cvSize: file.size }));
+      triggerBanner('CV successfully uploaded.', 'success');
+    } catch (err: any) {
+      triggerBanner('Upload failed: ' + err.message, 'error');
+    } finally {
+      setTimeout(() => {
+        setMockUploading(false);
+      }, 500);
+    }
+  };
+
+  const handleCertificationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const nextFiles: Array<{ name: string; url: string; size: number; type: string }> = [];
+    setMockUploading(true);
+    try {
+      for (const file of files) {
+        const isAllowed = file.type === 'application/pdf' || file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png' || /\.(pdf|jpe?g|png)$/i.test(file.name);
+        if (!isAllowed) {
+          triggerBanner(`Unsupported certification format: ${file.name}`, 'error');
+          continue;
+        }
+        const fileName = `${currentUser?.id || Date.now()}-cert-${file.name}`;
+        const { data, error } = await uploadToBucket('documents', fileName, file);
+        if (error) throw error;
+        const publicUrl = supabase.storage.from('documents').getPublicUrl(data.path).data.publicUrl;
+        nextFiles.push({ name: file.name, url: publicUrl, size: file.size, type: file.type });
+      }
+      if (nextFiles.length > 0) {
+        setTalentOnboardingData(prev => ({ ...prev, certificationFiles: [...prev.certificationFiles, ...nextFiles] }));
+        triggerBanner('Certification files uploaded.', 'success');
+      }
+    } catch (err: any) {
+      triggerBanner('Certification upload failed: ' + err.message, 'error');
+    } finally {
+      setMockUploading(false);
+    }
   };
 
   // Submit Talent Onboarding Wizard
@@ -743,31 +1009,139 @@ export default function KongilaWeb() {
       const authUserId = currentUser?.id;
       const talentName = talentOnboardingData.fullName || currentUser?.name || 'Talent';
       const talentEmail = currentUser?.email || '';
-      const skillsList = talentOnboardingData.skills
-        ? talentOnboardingData.skills.split(',').map((s: string) => s.trim()).filter(Boolean)
+      const primarySkills = Array.isArray(talentOnboardingData.skills)
+        ? talentOnboardingData.skills.filter(Boolean).slice(0, 5)
         : [];
+      const secondarySkills = String(talentOnboardingData.secondarySkills || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .slice(0, 10);
+      const skillsList = [...primarySkills, ...secondarySkills];
 
-      const telemetryObj = {
+      const salaryCurrency = talentOnboardingData.currency || 'USD';
+      let usdRate = 1;
+      if (salaryCurrency !== 'USD') {
+        try {
+          const rateRes = await fetch(`/api/exchange-rate?base=${encodeURIComponent(salaryCurrency)}&target=USD`);
+          if (rateRes.ok) {
+            const rateData = await rateRes.json();
+            usdRate = Number(rateData.rate) || 1;
+          }
+        } catch (e) {
+          usdRate = 1;
+        }
+      }
+
+      const salaryMinLocal = Number(talentOnboardingData.salaryExpectationMin || 0);
+      const salaryMaxLocal = Number(talentOnboardingData.salaryExpectationMax || 0);
+      const resolvedSalaryLocal = salaryMaxLocal || salaryMinLocal || 0;
+      const resolvedSalaryUsd = Math.round(resolvedSalaryLocal * usdRate);
+      const resolvedSalaryMinUsd = salaryMinLocal > 0 ? Math.round(salaryMinLocal * usdRate) : resolvedSalaryUsd || 0;
+      const resolvedSalaryMaxUsd = salaryMaxLocal > 0 ? Math.round(salaryMaxLocal * usdRate) : resolvedSalaryUsd || 0;
+      const bioText = talentOnboardingData.bio || '';
+
+      const onboardingTelemetry = {
+        createdAt: new Date().toISOString(),
+        fullName: talentName,
+        profilePhotoUrl: talentOnboardingData.profilePhotoUrl || '',
+        profilePhotoName: talentOnboardingData.profilePhotoName || '',
+        profilePhotoSize: talentOnboardingData.profilePhotoSize || 0,
+        phoneCode: talentOnboardingData.phoneCode || '',
+        phone: talentOnboardingData.phone || '',
+        country: talentOnboardingData.country || '',
         city: talentOnboardingData.city || '',
-        seniorityLevel: talentOnboardingData.seniorityLevel || '',
-        employmentPreference: talentOnboardingData.employmentPreference || 'Full Time',
-        currency: talentOnboardingData.currency || 'USD',
-        hourlyMonthly: talentOnboardingData.hourlyMonthly || 'Monthly',
+        timezone: talentOnboardingData.timezone || '',
+        dateOfBirth: talentOnboardingData.dateOfBirth || '',
+        gender: talentOnboardingData.gender || '',
+        nationality: talentOnboardingData.nationality || '',
+        title: talentOnboardingData.primaryRole || '',
+        yearsExperience: Number(talentOnboardingData.yearsExperience) || 0,
+        primaryRoleCategory: talentOnboardingData.primaryRoleCategory || '',
+        seniorityLevel: talentOnboardingData.seniorityLevel || talentOnboardingData.primaryRoleCategory || '',
+        employmentPreference: talentOnboardingData.employmentPreference || '',
+        preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
+        preferredWorkHours: talentOnboardingData.hourlyMonthly || talentOnboardingData.preferredWorkHours || '',
+        preferredProjectType: talentOnboardingData.preferredProjectType || '',
+        noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+        availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+        currency: salaryCurrency,
+        salaryExpectationUsd: resolvedSalaryUsd,
+        salaryExpectationMinUsd: resolvedSalaryMinUsd,
+        salaryExpectationMaxUsd: resolvedSalaryMaxUsd,
+        salaryExpectationCurrency: salaryCurrency,
         portfolioUrl: talentOnboardingData.portfolioUrl || '',
+        linkedIn: talentOnboardingData.linkedInUrl || '',
+        linkedinUrl: talentOnboardingData.linkedInUrl || '',
+        githubUrl: talentOnboardingData.githubUrl || '',
+        websiteUrl: talentOnboardingData.websiteUrl || '',
         certifications: talentOnboardingData.certifications || '',
+        certificationFiles: talentOnboardingData.certificationFiles || [],
+        cvUrl: talentOnboardingData.cvUrl || '',
+        cvName: talentOnboardingData.cvName || '',
+        cvSize: talentOnboardingData.cvSize || 0,
+        primarySkills,
+        secondarySkills,
+        skillLevels: talentOnboardingData.skillLevels || {},
+        skills: skillsList,
+        bio: bioText,
         internetQuality: talentOnboardingData.internetQuality || '',
         workSetup: talentOnboardingData.workSetup || '',
         devices: talentOnboardingData.devices || '',
         communicationTools: talentOnboardingData.communicationTools || '',
-        dateOfBirth: '',
-        nationality: '',
-        maritalStatus: '',
-        nationalId: '',
-        passportNo: '',
-        workExperience: []
+        workExperience: [],
+        profileCompletionPercent: 0,
+        requiresReReview: false,
+        vettingPipeline: [],
+        onboardingVideoSeenAt: null,
+        onboardingVideoUrl: 'https://www.w3schools.com/html/mov_bbb.mp4'
       };
 
-      const bioText = `Tags: Progressive Entry, Assessment Pending\n\nScores: {"technical":0,"behavioral":0,"personality":0,"remoteReadiness":0,"workSimulation":0,"communication":0,"experience":0}\n\nTelemetry: ${JSON.stringify(telemetryObj)}\n\nBio: Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}. Remote work setup confirmed.`;
+      let packedBio = '';
+
+      const completionCheck = calculateTalentProfileCompletion({
+        name: talentName,
+        email: talentEmail,
+        avatar: talentOnboardingData.profilePhotoUrl || '',
+        title: talentOnboardingData.primaryRole || '',
+        primaryRoleCategory: talentOnboardingData.primaryRoleCategory || '',
+        seniorityLevel: talentOnboardingData.seniorityLevel || talentOnboardingData.primaryRoleCategory || '',
+        experienceYears: Number(talentOnboardingData.yearsExperience) || 0,
+        primarySkills,
+        skills: skillsList,
+        preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
+        preferredWorkHours: talentOnboardingData.preferredWorkHours || talentOnboardingData.hourlyMonthly || '',
+        preferredProjectType: talentOnboardingData.preferredProjectType || '',
+        noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+        availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+        salaryExpectationUsd: resolvedSalaryUsd || 0,
+        bio: bioText,
+        phone: talentOnboardingData.phone || '',
+        country: talentOnboardingData.country || '',
+        city: talentOnboardingData.city || '',
+        timezone: talentOnboardingData.timezone || '',
+        dateOfBirth: talentOnboardingData.dateOfBirth || '',
+        gender: talentOnboardingData.gender || '',
+        nationality: talentOnboardingData.nationality || '',
+        profilePhotoUrl: talentOnboardingData.profilePhotoUrl || '',
+        cvUrl: talentOnboardingData.cvUrl || '',
+        documents: []
+      });
+
+      if (completionCheck.percent < 100) {
+        triggerBanner(`Complete your profile before finishing onboarding. Missing: ${completionCheck.incomplete.join(', ')}`, 'error');
+        setLoading(false);
+        return;
+      }
+
+      onboardingTelemetry.profileCompletionPercent = completionCheck.percent;
+      packedBio = JSON.stringify({
+        __kongila: true,
+        tags: primarySkills,
+        scores: {},
+        telemetry: onboardingTelemetry,
+        bio: bioText
+      });
 
       // ── 1. Upsert full onboarding data directly into Supabase talent_profiles ──
       if (authUserId) {
@@ -776,21 +1150,21 @@ export default function KongilaWeb() {
           user_id: authUserId,
           full_name: talentName,
           phone: talentOnboardingData.phone || null,
-          country: talentOnboardingData.country || 'Nigeria',
+          country: talentOnboardingData.country || null,
           address: null,
-          gender: null,
-          level: talentOnboardingData.primaryRole || 'Operational Talent',
-          availability_hours: Number(talentOnboardingData.availability) || 100,
-          salary_max: Number(talentOnboardingData.salaryExpectation) || null,
-          salary_expectation: Number(talentOnboardingData.salaryExpectation) || null,
+          gender: talentOnboardingData.gender || null,
+          level: talentOnboardingData.primaryRole || null,
+          availability_hours: Number(talentOnboardingData.availability) || null,
+          salary_max: resolvedSalaryUsd || null,
+          salary_expectation: resolvedSalaryUsd || null,
           experience_years: Number(talentOnboardingData.yearsExperience) || null,
           vetting_stage: 'Application Screening',
           vetting_status: 'Applied',
-          grade: 'B',
+          grade: 'Ungraded',
           status: 'active',
-          timezone: talentOnboardingData.timezone || 'GMT+1 (Lagos)',
-          bio: bioText,
-          avatar_url: null
+          timezone: talentOnboardingData.timezone || null,
+          bio: packedBio,
+          avatar_url: talentOnboardingData.profilePhotoUrl || null
         };
 
         const { error: spErr } = await supabase
@@ -799,6 +1173,7 @@ export default function KongilaWeb() {
 
         if (spErr) {
           console.error('[Onboarding] Supabase talent_profiles upsert error:', spErr);
+          throw spErr;
         } else {
           console.log('[Onboarding] Saved talent profile to Supabase successfully.');
         }
@@ -810,7 +1185,7 @@ export default function KongilaWeb() {
             const skillId = `skl_${skillName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
             await supabase.from('skills').upsert({ id: skillId, name: skillName }, { onConflict: 'id' });
             await supabase.from('talent_skills').upsert(
-              { id: `ts_${authUserId}_${skillId}`, talent_id: authUserId, skill_id: skillId, level: 'intermediate' },
+              { id: `ts_${authUserId}_${skillId}`, talent_id: authUserId, skill_id: skillId, level: talentOnboardingData.skillLevels?.[skillName] ? String(talentOnboardingData.skillLevels[skillName]).toLowerCase() : 'intermediate' },
               { onConflict: 'id' }
             );
           }
@@ -840,35 +1215,67 @@ export default function KongilaWeb() {
           id: authUserId || baseTalent.id || `talent_${Date.now()}`,
           name: talentName,
           email: talentEmail,
-          avatar: baseTalent.avatar || 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
-          title: talentOnboardingData.primaryRole || 'Operational Talent',
+          avatar: talentOnboardingData.profilePhotoUrl || baseTalent.avatar || 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
+          title: talentOnboardingData.primaryRole || '',
           skills: skillsList.length > 0 ? skillsList : (baseTalent.skills || []),
-          timezone: talentOnboardingData.timezone || 'GMT+1 (Lagos)',
-          salaryExpectation: Number(talentOnboardingData.salaryExpectation) || 4500,
-          experienceYears: Number(talentOnboardingData.yearsExperience) || 5,
-          availability: Number(talentOnboardingData.availability) || 100,
+          primarySkills,
+          secondarySkills,
+          skillLevels: talentOnboardingData.skillLevels || {},
+          timezone: talentOnboardingData.timezone || '',
+          salaryExpectation: resolvedSalaryUsd || 0,
+          salaryExpectationUsd: resolvedSalaryUsd || 0,
+          salaryExpectationMinUsd: resolvedSalaryMinUsd || 0,
+          salaryExpectationMaxUsd: resolvedSalaryMaxUsd || 0,
+          salaryExpectationCurrency: salaryCurrency,
+          experienceYears: Number(talentOnboardingData.yearsExperience) || 0,
+          seniorityLevel: talentOnboardingData.seniorityLevel || talentOnboardingData.primaryRoleCategory || '',
+          availability: Number(talentOnboardingData.availability) || 0,
           vettingStage: 'Application Screening' as any,
           vettingStatus: 'Applied' as any,
           vettingScores: baseTalent.vettingScores || {
             technical: 0, behavioral: 0, personality: 0,
             remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0
           },
-          grade: 'B' as any,
-          tags: ['Progressive Entry', 'Assessment Pending'],
-          bio: `Highly skilled professional targeting global opportunities. Experience level: ${talentOnboardingData.seniorityLevel}.`,
+          grade: 'Ungraded' as any,
+          tags: primarySkills,
+          bio: talentOnboardingData.bio || '',
           phone: talentOnboardingData.phone || '',
-          country: talentOnboardingData.country || 'Nigeria',
-          city: talentOnboardingData.city || 'Lagos',
-          seniorityLevel: talentOnboardingData.seniorityLevel || 'Senior',
-          employmentPreference: talentOnboardingData.employmentPreference || 'Full Time',
-          currency: talentOnboardingData.currency || 'USD',
-          hourlyMonthly: talentOnboardingData.hourlyMonthly || 'Monthly',
+          country: talentOnboardingData.country || '',
+          city: talentOnboardingData.city || '',
+          dateOfBirth: talentOnboardingData.dateOfBirth || '',
+          gender: talentOnboardingData.gender || '',
+          nationality: talentOnboardingData.nationality || '',
+          primaryRoleCategory: talentOnboardingData.primaryRoleCategory || '',
+          employmentPreference: talentOnboardingData.employmentPreference || '',
+          preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
+          preferredWorkHours: talentOnboardingData.hourlyMonthly || talentOnboardingData.preferredWorkHours || '',
+          preferredProjectType: talentOnboardingData.preferredProjectType || '',
+          noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+          availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
+          currency: salaryCurrency,
+          hourlyMonthly: talentOnboardingData.hourlyMonthly || '',
           portfolioUrl: talentOnboardingData.portfolioUrl || '',
+          linkedIn: talentOnboardingData.linkedInUrl || '',
+          linkedinUrl: talentOnboardingData.linkedInUrl || '',
+          githubUrl: talentOnboardingData.githubUrl || '',
+          websiteUrl: talentOnboardingData.websiteUrl || '',
           certifications: talentOnboardingData.certifications || '',
+          certificationFiles: talentOnboardingData.certificationFiles || [],
           internetQuality: talentOnboardingData.internetQuality || '',
           workSetup: talentOnboardingData.workSetup || '',
           devices: talentOnboardingData.devices || '',
           communicationTools: talentOnboardingData.communicationTools || '',
+          profilePhotoUrl: talentOnboardingData.profilePhotoUrl || '',
+          profilePhotoName: talentOnboardingData.profilePhotoName || '',
+          profilePhotoSize: talentOnboardingData.profilePhotoSize || 0,
+          cvUrl: talentOnboardingData.cvUrl || '',
+          cvName: talentOnboardingData.cvName || '',
+          cvSize: talentOnboardingData.cvSize || 0,
+          createdAt: baseTalent.createdAt || new Date().toISOString(),
+          onboardingVideoSeenAt: baseTalent.onboardingVideoSeenAt ?? null,
+          onboardingVideoUrl: baseTalent.onboardingVideoUrl || 'https://www.w3schools.com/html/mov_bbb.mp4',
+          profileCompletionPercent: completionCheck.percent,
+          requiresReReview: false,
           documents: baseTalent.documents || [],
           supportTickets: baseTalent.supportTickets || []
         };
@@ -909,6 +1316,9 @@ export default function KongilaWeb() {
       }
     } catch (e) {
       console.error('[Onboarding] Failed to submit onboarding data:', e);
+      triggerBanner('We could not save your onboarding profile yet. Please try again so your profile data is not lost.', 'error');
+      setLoading(false);
+      return;
     }
 
     if (currentUser) {
@@ -1079,7 +1489,7 @@ export default function KongilaWeb() {
       auditLogs: [
         {
           id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Alex Mercer',
+          actor: currentUser ? currentUser.name : 'Guest Client',
           action: 'Schedule Interview',
           details: `Booked video interview with ${selectedTalent.name} on ${meetingDate} at ${meetingTime}`,
           timestamp: new Date().toISOString()
@@ -1118,7 +1528,7 @@ export default function KongilaWeb() {
       id: `contract_${Date.now()}`,
       matchId: `match_${selectedRequest.id.split('_')[1]}_${talent.id.split('_')[1]}`,
       clientId: currentUser?.id || 'user_client_1',
-      clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Vanguard Corp'})` : 'Alex Mercer (Vanguard Corp)',
+      clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client',
       talentId: talent.id,
       talentName: talent.name,
       role: selectedRequest.roleDescription,
@@ -1139,7 +1549,7 @@ export default function KongilaWeb() {
       r.id === selectedRequest.id ? { ...r, status: 'Candidates Ready' as const } : r
     );
 
-    const ndaText = generateNDATemplate(talent.name, currentUser ? `${currentUser.name} (${currentUser.companyName})` : 'Alex Mercer (Vanguard Corp)');
+    const ndaText = generateNDATemplate(talent.name, currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client');
     setActiveNDA(ndaText);
     setSigningContractId(newContract.id);
 
@@ -1153,7 +1563,7 @@ export default function KongilaWeb() {
       auditLogs: [
         {
           id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Alex Mercer',
+          actor: currentUser ? currentUser.name : 'Guest Client',
           action: 'Extend Job Offer',
           details: `Extended EOR contract for ${talent.name} ($${selectedRequest.budget}/mo)`,
           timestamp: new Date().toISOString()
@@ -1275,7 +1685,14 @@ export default function KongilaWeb() {
   };
 
   const handleUpdateProfile = async (updatedProfile: any) => {
-    const updatedTalents = talents.map(t => t.id === updatedProfile.id ? updatedProfile : t);
+    const previousProfile = talents.find(t => t.id === updatedProfile.id);
+    const requiresReReview = Boolean(
+      previousProfile &&
+      ['Vetted', 'Matched', 'Deployed'].includes(previousProfile.vettingStatus) &&
+      hasCoreTalentProfileChanges(previousProfile, updatedProfile)
+    );
+    const nextProfile = requiresReReview ? { ...updatedProfile, requiresReReview: true } : updatedProfile;
+    const updatedTalents = talents.map(t => t.id === nextProfile.id ? nextProfile : t);
     setTalents(updatedTalents);
 
     try {
@@ -2379,6 +2796,9 @@ export default function KongilaWeb() {
                                 } else {
                                   setAuthView('signup');
                                   setAuthRole('talent');
+                                  setNameInput('');
+                                  setEmailInput('');
+                                  setPasswordInput('');
                                 }
                               }}
                               style={{ fontSize: '13px', color: 'var(--text-secondary)', textDecoration: 'none', cursor: 'pointer', transition: 'var(--transition-smooth)' }}
@@ -2725,13 +3145,35 @@ export default function KongilaWeb() {
                   </div>
                   <div className="form-group">
                     <label className="form-label">Password</label>
-                    <input 
-                      type="password" 
-                      className="form-input" 
-                      value={passwordInput}
-                      onChange={e => setPasswordInput(e.target.value)}
-                      placeholder="••••••••"
-                    />
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type={showPassword ? "text" : "password"} 
+                        className="form-input" 
+                        value={passwordInput}
+                        onChange={e => setPasswordInput(e.target.value)}
+                        placeholder="••••••••"
+                        style={{ paddingRight: '60px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-secondary, #6B7A99)',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          padding: '4px',
+                        }}
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px' }}>
@@ -2975,51 +3417,11 @@ export default function KongilaWeb() {
                   Access premium remote EOR opportunities globally.
                 </p>
 
-                {/* Role Switch */}
-                <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-tertiary)', padding: '4px', borderRadius: '8px', marginBottom: '24px' }}>
-                  <button 
-                    type="button"
-                    onClick={() => setAuthRole('talent')}
-                    style={{
-                      flex: 1, 
-                      height: '32px', 
-                      background: authRole === 'talent' ? 'var(--accent-cyan)' : 'transparent',
-                      color: authRole === 'talent' ? '#000' : 'var(--text-secondary)',
-                      border: 'none', 
-                      borderRadius: '6px', 
-                      fontWeight: 700, 
-                      fontSize: '12px', 
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    Find Remote Work
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setAuthRole('client')}
-                    style={{
-                      flex: 1, 
-                      height: '32px', 
-                      background: authRole === 'client' ? 'var(--accent-cyan)' : 'transparent',
-                      color: authRole === 'client' ? '#000' : 'var(--text-secondary)',
-                      border: 'none', 
-                      borderRadius: '6px', 
-                      fontWeight: 700, 
-                      fontSize: '12px', 
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    Hire Vetted Talent
-                  </button>
-                </div>
-
                 {/* OAuth Mock buttons */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
                   <button 
                     type="button"
-                    onClick={() => simulateGoogleLogin(authRole)}
+                    onClick={() => simulateGoogleLogin('talent')}
                     style={{
                       height: '40px', 
                       borderRadius: '8px', 
@@ -3037,28 +3439,26 @@ export default function KongilaWeb() {
                   >
                     🔴 Continue with Google
                   </button>
-                  {authRole === 'talent' && (
-                    <button 
-                      type="button"
-                      onClick={simulateLinkedInLogin}
-                      style={{
-                        height: '40px', 
-                        borderRadius: '8px', 
-                        background: '#0077b5', 
-                        color: '#fff', 
-                        border: 'none', 
-                        fontWeight: 700, 
-                        fontSize: '13px', 
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px'
-                      }}
-                    >
-                      🔵 Continue with LinkedIn
-                    </button>
-                  )}
+                  <button 
+                    type="button"
+                    onClick={simulateLinkedInLogin}
+                    style={{
+                      height: '40px', 
+                      borderRadius: '8px', 
+                      background: '#0077b5', 
+                      color: '#fff', 
+                      border: 'none', 
+                      fontWeight: 700, 
+                      fontSize: '13px', 
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    🔵 Continue with LinkedIn
+                  </button>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '20px 0', color: 'var(--text-muted)' }}>
@@ -3106,13 +3506,35 @@ export default function KongilaWeb() {
 
                   <div className="form-group">
                     <label className="form-label">Password</label>
-                    <input 
-                      type="password" 
-                      className="form-input" 
-                      value={passwordInput}
-                      onChange={e => setPasswordInput(e.target.value)}
-                      placeholder="••••••••"
-                    />
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type={showPassword ? "text" : "password"} 
+                        className="form-input" 
+                        value={passwordInput}
+                        onChange={e => setPasswordInput(e.target.value)}
+                        placeholder="••••••••"
+                        style={{ paddingRight: '60px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-secondary, #6B7A99)',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          padding: '4px',
+                        }}
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
                   </div>
 
                   <button
@@ -3177,13 +3599,35 @@ export default function KongilaWeb() {
 
                   <div className="form-group">
                     <label className="form-label">Password</label>
-                    <input 
-                      type="password" 
-                      className="form-input" 
-                      value={passwordInput}
-                      onChange={e => setPasswordInput(e.target.value)}
-                      placeholder="••••••••"
-                    />
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type={showPassword ? "text" : "password"} 
+                        className="form-input" 
+                        value={passwordInput}
+                        onChange={e => setPasswordInput(e.target.value)}
+                        placeholder="••••••••"
+                        style={{ paddingRight: '60px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-secondary, #6B7A99)',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          padding: '4px',
+                        }}
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
                   </div>
 
                   <button
@@ -3219,7 +3663,7 @@ export default function KongilaWeb() {
                 </form>
 
                 <div style={{ fontSize: '12px', textAlign: 'center', marginTop: '24px', color: 'var(--text-secondary)' }}>
-                  Don't have an account? <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setAuthView('signup')}>Sign Up</span>
+                  Don't have an account? <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => { setAuthView('signup'); setAuthRole('talent'); }}>Sign Up</span>
                 </div>
               </div>
             )}
@@ -3301,40 +3745,123 @@ export default function KongilaWeb() {
             {/* Step 1: Basic Profile */}
             {talentWizardStep === 1 && (
               <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>1. Basic Contact Profile</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Let's start simple. Enter your primary location and availability metrics.</p>
+                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>1. Personal Information</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>We use this to verify your identity and personalize your dashboard experience.</p>
+
+                <div className="form-group">
+                  <label className="form-label">Profile Photo</label>
+                  <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{
+                      width: '72px',
+                      height: '72px',
+                      borderRadius: '50%',
+                      overflow: 'hidden',
+                      background: '#1F2937',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontWeight: 800,
+                      fontSize: '22px'
+                    }}>
+                      {talentOnboardingData.profilePhotoUrl ? (
+                        <img src={talentOnboardingData.profilePhotoUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        talentOnboardingData.fullName?.[0]?.toUpperCase() || 'U'
+                      )}
+                    </div>
+                    <label style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-glass)',
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      fontSize: '13px'
+                    }}>
+                      {talentOnboardingData.profilePhotoName ? 'Replace Photo' : 'Upload Photo'}
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleProfilePhotoUpload} />
+                    </label>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      JPG or PNG, at least 200x200px, under 2MB.
+                    </div>
+                  </div>
+                </div>
 
                 <div className="form-group">
                   <label className="form-label">Full Name</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.fullName}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, fullName: e.target.value })}
-                    placeholder="Chidi Anya"
-                  />
+                  {talentOnboardingData.fullName ? (
+                    <div style={{
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--border-glass)',
+                      background: 'var(--bg-tertiary)',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      fontWeight: 700
+                    }}>
+                      {talentOnboardingData.fullName}
+                    </div>
+                  ) : (
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      value={talentOnboardingData.fullName}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, fullName: e.target.value })}
+                      placeholder="Chidi Anya"
+                    />
+                  )}
                 </div>
 
                 <div className="form-group">
                   <label className="form-label">Mobile Phone Number</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.phone}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, phone: e.target.value })}
-                    placeholder="+234 803 929 1827"
-                  />
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select 
+                      className="form-input" 
+                      style={{ width: '120px' }}
+                      value={talentOnboardingData.phoneCode}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, phoneCode: e.target.value })}
+                    >
+                      {COUNTRIES_AND_CODES.map(c => (
+                        <option key={c.name} value={c.code}>{c.code} ({c.name})</option>
+                      ))}
+                    </select>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      style={{ flex: 1 }}
+                      value={talentOnboardingData.phone}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, phone: e.target.value })}
+                      placeholder="e.g. 803 929 1827"
+                    />
+                  </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
                     <label className="form-label">Country</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      value={talentOnboardingData.country}
-                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, country: e.target.value })}
-                    />
+                    <select
+                      className="form-input"
+                      value={talentOnboardingData.country || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        const matched = COUNTRIES_AND_CODES.find(c => c.name === val);
+                        setTalentOnboardingData({ 
+                          ...talentOnboardingData, 
+                          country: val,
+                          phoneCode: matched ? matched.code : talentOnboardingData.phoneCode
+                        });
+                      }}
+                    >
+                      <option value="" disabled>Select a country</option>
+                      {COUNTRIES_AND_CODES.map(c => (
+                        <option key={c.name} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="form-label">City</label>
@@ -3343,22 +3870,74 @@ export default function KongilaWeb() {
                       className="form-input" 
                       value={talentOnboardingData.city}
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, city: e.target.value })}
+                      placeholder="e.g. Lagos"
                     />
                   </div>
                 </div>
 
                 <div className="form-group">
+                  <label className="form-label">Date of Birth</label>
+                  <input type="date" className="form-input" value={talentOnboardingData.dateOfBirth} onChange={e => setTalentOnboardingData({ ...talentOnboardingData, dateOfBirth: e.target.value })} />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
+                  <div>
+                    <label className="form-label">Gender</label>
+                    <select className="form-input" value={talentOnboardingData.gender} onChange={e => setTalentOnboardingData({ ...talentOnboardingData, gender: e.target.value })}>
+                      <option value="">Select gender</option>
+                      <option>Male</option>
+                      <option>Female</option>
+                      <option>Non-binary</option>
+                      <option>Prefer not to say</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Nationality</label>
+                    <input type="text" className="form-input" value={talentOnboardingData.nationality} onChange={e => setTalentOnboardingData({ ...talentOnboardingData, nationality: e.target.value })} placeholder="e.g. Nigerian" />
+                  </div>
+                </div>
+
+                <div className="form-group">
                   <label className="form-label">Timezone Alignment</label>
-                  <select 
-                    className="form-select"
+                  <input 
+                    type="text"
+                    list="timezone-list"
+                    className="form-input"
                     value={talentOnboardingData.timezone}
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, timezone: e.target.value })}
-                  >
-                    <option>GMT+1 (Lagos / London)</option>
-                    <option>GMT (Dakar / Accra)</option>
-                    <option>GMT+2 (Johannesburg)</option>
-                    <option>GMT+3 (Nairobi)</option>
-                  </select>
+                    placeholder="e.g. Africa/Lagos (GMT+1)"
+                  />
+                  <datalist id="timezone-list">
+                    <option value="Africa/Lagos (GMT+1)" />
+                    <option value="Africa/Johannesburg (GMT+2)" />
+                    <option value="Africa/Nairobi (GMT+3)" />
+                    <option value="Africa/Cairo (GMT+2)" />
+                    <option value="Africa/Accra (GMT)" />
+                    <option value="Europe/London (GMT)" />
+                    <option value="Europe/Paris (GMT+1)" />
+                    <option value="Europe/Berlin (GMT+1)" />
+                    <option value="Europe/Madrid (GMT+1)" />
+                    <option value="Europe/Moscow (GMT+3)" />
+                    <option value="America/New_York (EST/EDT)" />
+                    <option value="America/Chicago (CST/CDT)" />
+                    <option value="America/Los_Angeles (PST/PDT)" />
+                    <option value="America/Denver (MST/MDT)" />
+                    <option value="America/Toronto (EST/EDT)" />
+                    <option value="America/Sao_Paulo (BRT)" />
+                    <option value="America/Mexico_City (CST/CDT)" />
+                    <option value="Asia/Kolkata (IST)" />
+                    <option value="Asia/Singapore (SGT)" />
+                    <option value="Asia/Tokyo (JST)" />
+                    <option value="Asia/Dubai (GST)" />
+                    <option value="Asia/Shanghai (CST)" />
+                    <option value="Asia/Hong_Kong (HKT)" />
+                    <option value="Asia/Seoul (KST)" />
+                    <option value="Asia/Bangkok (ICT)" />
+                    <option value="Australia/Sydney (AEST/AEDT)" />
+                    <option value="Australia/Perth (AWST)" />
+                    <option value="Australia/Brisbane (AEST)" />
+                    <option value="Pacific/Auckland (NZST/NZDT)" />
+                  </datalist>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
@@ -3371,8 +3950,8 @@ export default function KongilaWeb() {
             {/* Step 2: Professional Info */}
             {talentWizardStep === 2 && (
               <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>2. Professional Experience</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Map your professional skill footprint and primary career titles.</p>
+                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>2. Professional Details</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Tell us about your current role, specialization, and seniority.</p>
 
                 <div className="form-group">
                   <label className="form-label">Primary Professional Title</label>
@@ -3381,42 +3960,271 @@ export default function KongilaWeb() {
                     className="form-input" 
                     value={talentOnboardingData.primaryRole}
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, primaryRole: e.target.value })}
+                    placeholder="e.g. Senior Operations Manager"
                   />
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
-                    <label className="form-label">Years of Relevant Experience</label>
-                    <input 
-                      type="number" 
-                      className="form-input" 
-                      value={talentOnboardingData.yearsExperience}
-                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, yearsExperience: parseInt(e.target.value) || 0 })}
-                    />
+                    <label className="form-label">Primary Role Category</label>
+                    <select
+                      className="form-input"
+                      value={talentOnboardingData.primaryRoleCategory}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, primaryRoleCategory: e.target.value })}
+                    >
+                      <option value="">Select category</option>
+                      <option>Operations</option>
+                      <option>Product</option>
+                      <option>Engineering</option>
+                      <option>Design</option>
+                      <option>Marketing</option>
+                      <option>Finance</option>
+                      <option>Sales</option>
+                      <option>Support</option>
+                      <option>Project Management</option>
+                      <option>Administration</option>
+                    </select>
                   </div>
                   <div>
-                    <label className="form-label">Seniority Grade</label>
-                    <select 
-                      className="form-select"
+                    <label className="form-label">Seniority Level</label>
+                    <select
+                      className="form-input"
                       value={talentOnboardingData.seniorityLevel}
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, seniorityLevel: e.target.value })}
                     >
-                      <option>Junior</option>
-                      <option>Mid-Level</option>
-                      <option>Senior</option>
-                      <option>Principal / Lead</option>
+                      <option value="">Select level</option>
+                      <option>Associate</option>
+                      <option>Specialist</option>
+                      <option>Consultant</option>
+                      <option>Manager</option>
+                      <option>Director</option>
                     </select>
                   </div>
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Skills (Comma separated)</label>
+                  <label className="form-label">Years of Relevant Experience</label>
                   <input 
-                    type="text" 
+                    type="number" 
                     className="form-input" 
-                    value={talentOnboardingData.skills}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, skills: e.target.value })}
+                    value={talentOnboardingData.yearsExperience}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, yearsExperience: e.target.value })}
+                    placeholder="e.g. 5"
                   />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Short Bio</label>
+                  <textarea
+                    className="form-input"
+                    rows={4}
+                    maxLength={500}
+                    value={talentOnboardingData.bio}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, bio: e.target.value })}
+                    placeholder="Write a short professional summary (max 500 characters)"
+                  />
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    {talentOnboardingData.bio.length}/500
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Primary Skills</label>
+                  <div style={{ position: 'relative' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px', border: '1px solid var(--border-glass)', borderRadius: '8px', background: 'var(--bg-tertiary)', minHeight: '42px', alignItems: 'center' }}>
+                      {talentOnboardingData.skills.map(s => (
+                        <span key={s} style={{ background: 'var(--kongila-blue-glow)', color: 'var(--kongila-blue)', padding: '6px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span>{s}</span>
+                          <select
+                            value={talentOnboardingData.skillLevels[s] || 'Intermediate'}
+                            onChange={e => setTalentOnboardingData({
+                              ...talentOnboardingData,
+                              skillLevels: { ...talentOnboardingData.skillLevels, [s]: e.target.value as 'Beginner' | 'Intermediate' | 'Expert' }
+                            })}
+                            style={{ border: 'none', background: 'rgba(255,255,255,0.4)', borderRadius: '999px', padding: '2px 8px', fontSize: '11px', fontWeight: 700, color: '#0F172A' }}
+                          >
+                            <option>Beginner</option>
+                            <option>Intermediate</option>
+                            <option>Expert</option>
+                          </select>
+                          <button onClick={() => setTalentOnboardingData({
+                            ...talentOnboardingData,
+                            skills: talentOnboardingData.skills.filter(sk => sk !== s),
+                            skillLevels: Object.fromEntries(Object.entries(talentOnboardingData.skillLevels).filter(([key]) => key !== s))
+                          })} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontSize: '14px', lineHeight: 1 }}>&times;</button>
+                        </span>
+                      ))}
+                      <input 
+                        type="text" 
+                        value={skillSearch}
+                        onChange={e => { setSkillSearch(e.target.value); setShowSkillDropdown(true); }}
+                        onFocus={() => setShowSkillDropdown(true)}
+                        onBlur={() => setTimeout(() => setShowSkillDropdown(false), 200)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && skillSearch.trim()) {
+                            e.preventDefault();
+                            if (!talentOnboardingData.skills.includes(skillSearch.trim()) && talentOnboardingData.skills.length < 5) {
+                              setTalentOnboardingData({
+                                ...talentOnboardingData,
+                                skills: [...talentOnboardingData.skills, skillSearch.trim()],
+                                skillLevels: { ...talentOnboardingData.skillLevels, [skillSearch.trim()]: 'Intermediate' }
+                              });
+                            }
+                            setSkillSearch('');
+                            setShowSkillDropdown(false);
+                          }
+                        }}
+                        placeholder={talentOnboardingData.skills.length === 0 ? "Type and press Enter to add..." : ""}
+                        style={{ flex: 1, minWidth: '150px', background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', fontSize: '14px' }}
+                      />
+                    </div>
+                    {showSkillDropdown && skillSearch.trim() && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '8px', marginTop: '4px', zIndex: 10, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                        {SUGGESTED_SKILLS
+                          .filter(s => s.toLowerCase().includes(skillSearch.toLowerCase()) && !talentOnboardingData.skills.includes(s))
+                          .slice(0, 10)
+                          .map(s => (
+                            <div 
+                              key={s} 
+                              onClick={() => {
+                                if (talentOnboardingData.skills.length < 5) {
+                                  setTalentOnboardingData({
+                                    ...talentOnboardingData,
+                                    skills: [...talentOnboardingData.skills, s],
+                                    skillLevels: { ...talentOnboardingData.skillLevels, [s]: 'Intermediate' }
+                                  });
+                                }
+                                setSkillSearch('');
+                                setShowSkillDropdown(false);
+                              }}
+                              style={{ padding: '10px 16px', cursor: 'pointer', borderBottom: '1px solid var(--border-glass)', fontSize: '14px', color: 'var(--text-primary)' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              {s}
+                            </div>
+                          ))}
+                          {skillSearch.trim() && !talentOnboardingData.skills.includes(skillSearch.trim()) && (
+                             <div 
+                                onClick={() => {
+                                  if (talentOnboardingData.skills.length < 5) {
+                                    setTalentOnboardingData({
+                                      ...talentOnboardingData,
+                                      skills: [...talentOnboardingData.skills, skillSearch.trim()],
+                                      skillLevels: { ...talentOnboardingData.skillLevels, [skillSearch.trim()]: 'Intermediate' }
+                                    });
+                                  }
+                                  setSkillSearch('');
+                                  setShowSkillDropdown(false);
+                                }}
+                                style={{ padding: '10px 16px', cursor: 'pointer', fontSize: '14px', color: 'var(--kongila-blue)', fontWeight: 600 }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              >
+                                Add "{skillSearch.trim()}"
+                              </div>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    Up to 5 primary skills. Each skill includes a proficiency level.
+                  </div>
+                </div>
+                {talentOnboardingData.skills.length >= 5 && (
+                  <div style={{ fontSize: '12px', color: '#FBBF24', marginTop: '-8px', marginBottom: '8px' }}>
+                    You have reached the primary skills limit.
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label className="form-label">Secondary Skills</label>
+                  <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '14px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                      {selectedSecondarySkills.map(skill => (
+                        <button
+                          key={skill}
+                          type="button"
+                          onClick={() => toggleSecondarySkill(skill)}
+                          style={{
+                            background: 'rgba(0, 71, 204, 0.14)',
+                            color: '#fff',
+                            border: '1px solid rgba(0, 71, 204, 0.35)',
+                            borderRadius: '999px',
+                            padding: '8px 12px',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {skill} ×
+                        </button>
+                      ))}
+                      {selectedSecondarySkills.length === 0 && (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          Pick up to 10 soft skills.
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={secondarySkillSearch}
+                      onChange={e => setSecondarySkillSearch(e.target.value)}
+                      placeholder="Search or add a soft skill"
+                    />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                      {SECONDARY_SKILL_OPTIONS
+                        .filter(skill => skill.toLowerCase().includes(secondarySkillSearch.toLowerCase()) && !selectedSecondarySkills.includes(skill))
+                        .slice(0, 18)
+                        .map(skill => (
+                          <button
+                            key={skill}
+                            type="button"
+                            onClick={() => {
+                              toggleSecondarySkill(skill);
+                              setSecondarySkillSearch('');
+                            }}
+                            style={{
+                              background: 'transparent',
+                              color: 'var(--text-primary)',
+                              border: '1px solid var(--border-glass)',
+                              borderRadius: '999px',
+                              padding: '8px 12px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            + {skill}
+                          </button>
+                        ))}
+                      {secondarySkillSearch.trim() && !SECONDARY_SKILL_OPTIONS.some(skill => skill.toLowerCase() === secondarySkillSearch.trim().toLowerCase()) && !selectedSecondarySkills.includes(secondarySkillSearch.trim()) && selectedSecondarySkills.length < 10 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            toggleSecondarySkill(secondarySkillSearch.trim());
+                            setSecondarySkillSearch('');
+                          }}
+                          style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            color: 'var(--accent-cyan)',
+                            border: '1px solid rgba(0,255,204,0.25)',
+                            borderRadius: '999px',
+                            padding: '8px 12px',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Add "{secondarySkillSearch.trim()}"
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    Select up to 10 secondary soft skills.
+                  </div>
                 </div>
 
                 <div className="form-group">
@@ -3426,6 +4234,7 @@ export default function KongilaWeb() {
                     value={talentOnboardingData.employmentPreference}
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, employmentPreference: e.target.value })}
                   >
+                    <option value="">Select preference...</option>
                     <option>Full Time</option>
                     <option>Part Time</option>
                     <option>Hourly / Contract</option>
@@ -3442,17 +4251,79 @@ export default function KongilaWeb() {
             {/* Step 3: Compensation */}
             {talentWizardStep === 3 && (
               <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>3. Compensation Expectation</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>State your gross financial targets inside supported currencies.</p>
+                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>3. Preferences</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Help us match you to the right engagement and availability window.</p>
+
+                <div className="form-group">
+                  <label className="form-label">Preferred Engagement Type</label>
+                  <select
+                    className="form-select"
+                    value={talentOnboardingData.preferredEngagementType}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, preferredEngagementType: e.target.value })}
+                  >
+                    <option value="">Select engagement type</option>
+                    <option>Full-time</option>
+                    <option>Part-time</option>
+                    <option>Either</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Work Hours Format</label>
+                  <select
+                    className="form-select"
+                    value={talentOnboardingData.hourlyMonthly}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, hourlyMonthly: e.target.value })}
+                  >
+                    <option value="Hourly">Hourly</option>
+                    <option value="Monthly">Monthly</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Notice Period</label>
+                  <select
+                    className="form-select"
+                    value={talentOnboardingData.noticePeriod}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, noticePeriod: e.target.value })}
+                  >
+                    <option value="">Select notice period</option>
+                    {NOTICE_PERIOD_OPTIONS.map(option => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Preferred Project Type</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={talentOnboardingData.preferredProjectType}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, preferredProjectType: e.target.value })}
+                    placeholder="e.g. Product operations, client delivery, or platform support"
+                  />
+                </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }} className="form-group">
-                  <div style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">Expectation Value</label>
-                    <input 
-                      type="number" 
-                      className="form-input" 
-                      value={talentOnboardingData.salaryExpectation}
-                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, salaryExpectation: parseInt(e.target.value) || 0 })}
+                  <div>
+                    <label className="form-label">Salary Range Min</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={talentOnboardingData.salaryExpectationMin}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, salaryExpectationMin: e.target.value })}
+                      placeholder="e.g. 3500"
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Salary Range Max</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={talentOnboardingData.salaryExpectationMax}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, salaryExpectationMax: e.target.value })}
+                      placeholder="e.g. 5000"
                     />
                   </div>
                   <div>
@@ -3460,25 +4331,11 @@ export default function KongilaWeb() {
                     <select 
                       className="form-select"
                       value={talentOnboardingData.currency}
-                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, currency: e.target.value })}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, currency: e.target.value })}
                     >
-                      <option>USD ($)</option>
-                      <option>EUR (€)</option>
-                      <option>GBP (£)</option>
+                      {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Payout Period</label>
-                  <select 
-                    className="form-select"
-                    value={talentOnboardingData.hourlyMonthly}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, hourlyMonthly: e.target.value })}
-                  >
-                    <option>Monthly Gross salary</option>
-                    <option>Hourly bill rate</option>
-                  </select>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -3491,13 +4348,13 @@ export default function KongilaWeb() {
             {/* Step 4: Documents (Supabase Storage upload progress) */}
             {talentWizardStep === 4 && (
               <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>4. Upload Compliance Documents</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Provide encrypted EOR files (CV, Portfolio or certifications).</p>
+                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>4. Documents & Links</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Upload the mandatory CV and add any supporting certification or portfolio links.</p>
 
                 <div className="form-group" style={{ background: 'var(--bg-tertiary)', padding: '24px', borderRadius: '10px', textAlign: 'center', border: '1.5px dashed var(--border-glass)' }}>
                   <span style={{ fontSize: '32px', display: 'block', marginBottom: '12px' }}>📁</span>
                   <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>Curriculum Vitae (PDF)</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: '16px' }}>Limit: 10MB. Enrypted under ISO security standard.</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: '16px' }}>PDF only. Max 5MB.</div>
 
                   {uploadProgress > 0 && (
                     <div style={{ width: '100%', background: 'var(--bg-primary)', height: '6px', borderRadius: '3px', margin: '16px 0', overflow: 'hidden' }}>
@@ -3505,28 +4362,38 @@ export default function KongilaWeb() {
                     </div>
                   )}
 
-                  <button 
-                    type="button"
-                    onClick={triggerMockUpload}
-                    disabled={mockUploading}
+                  <label
                     style={{
+                      display: 'inline-block',
                       background: 'rgba(255,255,255,0.02)', 
                       border: '1px solid var(--border-glass)', 
-                      height: '36px', 
-                      borderRadius: '6px', 
-                      color: 'var(--accent-cyan)', 
-                      fontSize: '12px', 
-                      fontWeight: 700, 
-                      cursor: 'pointer',
-                      padding: '0 16px'
+                      padding: '10px 24px', 
+                      borderRadius: '8px', 
+                      color: 'var(--text-secondary)', 
+                      fontWeight: 600, 
+                      cursor: mockUploading ? 'not-allowed' : 'pointer',
+                      opacity: mockUploading ? 0.5 : 1
                     }}
                   >
-                    {mockUploading ? `Uploading (${uploadProgress}%)` : uploadProgress === 100 ? 'Re-upload CV Document' : 'Select PDF and Upload'}
-                  </button>
+                    {mockUploading ? 'Uploading...' : talentOnboardingData.cvName ? 'Replace Document' : 'Select PDF to Upload'}
+                    <input 
+                      type="file" 
+                      accept=".pdf,application/pdf" 
+                      style={{ display: 'none' }} 
+                      onChange={handleCvUpload} 
+                      disabled={mockUploading} 
+                    />
+                  </label>
+                  
+                  {talentOnboardingData.cvName && !mockUploading && (
+                    <div style={{ marginTop: '16px', fontSize: '13px', color: 'var(--accent-cyan)' }}>
+                      ✓ {talentOnboardingData.cvName.split('-cv-').pop()} uploaded successfully
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Portfolio Link (GitHub / Dribbble)</label>
+                  <label className="form-label">Portfolio Link</label>
                   <input 
                     type="text" 
                     className="form-input" 
@@ -3536,14 +4403,66 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Professional Certifications</label>
+                  <label className="form-label">LinkedIn URL</label>
                   <input 
                     type="text" 
                     className="form-input" 
-                    value={talentOnboardingData.certifications}
-                    placeholder="AWS, Scrum Master, Google UX certs"
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, certifications: e.target.value })}
+                    value={talentOnboardingData.linkedInUrl}
+                    placeholder="https://linkedin.com/in/your-profile"
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, linkedInUrl: e.target.value })}
                   />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">GitHub URL</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    value={talentOnboardingData.githubUrl}
+                    placeholder="https://github.com/your-handle"
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, githubUrl: e.target.value })}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Personal Website URL</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    value={talentOnboardingData.websiteUrl}
+                    placeholder="https://yourwebsite.com"
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, websiteUrl: e.target.value })}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Certifications Uploads</label>
+                  <label style={{
+                    display: 'inline-block',
+                    background: 'rgba(255,255,255,0.02)', 
+                    border: '1px solid var(--border-glass)', 
+                    padding: '10px 24px', 
+                    borderRadius: '8px', 
+                    color: 'var(--text-secondary)', 
+                    fontWeight: 600, 
+                    cursor: 'pointer',
+                  }}>
+                    Upload Certifications
+                    <input 
+                      type="file" 
+                      accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                      multiple
+                      style={{ display: 'none' }} 
+                      onChange={handleCertificationUpload} 
+                    />
+                  </label>
+                  {talentOnboardingData.certificationFiles.length > 0 && (
+                    <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {talentOnboardingData.certificationFiles.map(file => (
+                        <div key={file.url} style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{file.name}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -3608,11 +4527,11 @@ export default function KongilaWeb() {
 
             {/* Step 6: Finalization */}
             {talentWizardStep === 6 && (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div style={{ fontSize: '64px', marginBottom: '20px', color: 'var(--accent-green)' }}>✓</div>
-                <h3 style={{ fontSize: '24px', fontWeight: 800, marginBottom: '8px', color: '#fff' }}>Application Ready!</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.6, maxWidth: '500px', margin: '0 auto 32px auto' }}>
-                  Your progressive profile, EOR documentation and workspace checks are established. Click complete to spawn your dashboard and initiate active specialized screening.
+              <div style={{ textAlign: 'center', padding: '32px 16px' }}>
+                <div style={{ fontSize: '72px', marginBottom: '24px', color: 'var(--accent-green)', textShadow: '0 0 20px rgba(51, 255, 87, 0.4)' }}>✓</div>
+                <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '16px' }}>You're All Set!</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '15px', lineHeight: 1.6, maxWidth: '450px', margin: '0 auto 32px auto' }}>
+                  Your profile and documents have been successfully securely uploaded. Click <strong>Complete Onboarding</strong> below to access your dashboard and begin your verification process.
                 </p>
 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
@@ -3620,26 +4539,78 @@ export default function KongilaWeb() {
                   <button 
                     type="button" 
                     onClick={handleTalentWizardSubmit}
+                    disabled={loading}
                     style={{
                       background: 'linear-gradient(135deg, var(--accent-green), #2db33d)', 
                       color: '#000', 
                       border: 'none', 
                       borderRadius: '8px', 
-                      height: '42px', 
+                      height: '44px', 
                       padding: '0 32px', 
-                      fontSize: '14px', 
+                      fontSize: '15px', 
                       fontWeight: 700, 
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 15px rgba(51, 255, 87, 0.2)'
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      opacity: loading ? 0.8 : 1,
+                      boxShadow: '0 4px 15px rgba(51, 255, 87, 0.3)',
+                      transition: 'transform 0.2s, box-shadow 0.2s'
                     }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(51, 255, 87, 0.4)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 15px rgba(51, 255, 87, 0.3)'; }}
                   >
-                    Complete Onboarding
+                    {loading ? 'Completing...' : 'Complete Onboarding'}
                   </button>
                 </div>
               </div>
             )}
 
           </GlassCard>
+        )}
+
+        {currentUser && authView === 'onboarding' && loading && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 2500,
+              background: 'rgba(8, 15, 36, 0.72)',
+              backdropFilter: 'blur(10px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '24px'
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                maxWidth: '360px',
+                background: 'linear-gradient(180deg, rgba(10,18,44,0.98), rgba(23,37,84,0.98))',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '20px',
+                padding: '28px',
+                textAlign: 'center',
+                boxShadow: '0 24px 80px rgba(0,0,0,0.45)'
+              }}
+            >
+              <div
+                style={{
+                  width: '56px',
+                  height: '56px',
+                  margin: '0 auto 16px',
+                  borderRadius: '50%',
+                  border: '4px solid rgba(255,255,255,0.12)',
+                  borderTopColor: 'var(--accent-cyan)',
+                  animation: 'spin 0.9s linear infinite'
+                }}
+              />
+              <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
+                Completing onboarding
+              </div>
+              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.72)', lineHeight: 1.6 }}>
+                We’re saving your profile, syncing Supabase, and preparing your dashboard.
+              </div>
+            </div>
+          </div>
         )}
 
 
@@ -3783,9 +4754,50 @@ export default function KongilaWeb() {
             contracts={contracts}
             matches={matches}
             clientRequests={requests}
+            allDocuments={documents}
+            dashboardNotifications={notifications}
+            setDashboardNotifications={setNotifications}
+            assessments={assessments}
+            assessmentCategories={assessmentCategories}
+            assessmentQuestions={assessmentQuestions}
+            talentSkillAssessments={talentSkillAssessments}
+            skillAssessmentResults={skillAssessmentResults}
             onSignOut={handleSignOut}
             onUpdateProfile={handleUpdateProfile}
             onUpdateMatch={handleUpdateMatch}
+            onUpdateDocument={async (updatedDoc) => {
+              const updatedDocs = documents.map((d: any) => d.id === updatedDoc.id ? updatedDoc : d);
+              setDocuments(updatedDocs);
+              await saveToDb({ documents: updatedDocs });
+            }}
+            onSubmitAssessment={async (result: any) => {
+              // Persist assessment result to DB
+              const updatedResults = [...skillAssessmentResults, result];
+              const updatedTSAs = talentSkillAssessments.map((tsa: any) =>
+                tsa.id === result.talentSkillAssessmentId
+                  ? { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt }
+                  : tsa
+              );
+              // Also update the talent's vettingPipeline stage record with assessmentScore
+              const profile = getCurrentTalentProfile();
+              const updatedTalents = talents.map((t: any) => {
+                if (t.id !== profile?.id) return t;
+                const pipeline = [...(t.vettingPipeline || [])];
+                const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
+                if (stageIdx >= 0) {
+                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore };
+                }
+                return { ...t, vettingPipeline: pipeline };
+              });
+              setSkillAssessmentResults(updatedResults);
+              setTalentSkillAssessments(updatedTSAs);
+              setTalents(updatedTalents);
+              await saveToDb({
+                skillAssessmentResults: updatedResults,
+                talentSkillAssessments: updatedTSAs,
+                talents: updatedTalents
+              });
+            }}
           />
         )}
 

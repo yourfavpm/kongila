@@ -62,6 +62,19 @@ export const Badge: React.FC<BadgeProps> = ({ text, status }) => {
   );
 };
 
+export interface ChipProps {
+  label: string;
+}
+
+export const Chip: React.FC<ChipProps> = ({ label }) => {
+  const styles = getStatusBadgeStyles(label);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 600, background: styles.bg, color: styles.color, whiteSpace: 'nowrap', border: `1px solid ${styles.color}22` }}>
+      {label}
+    </span>
+  );
+};
+
 export interface NeonButtonProps {
   children: React.ReactNode;
   onClick?: () => void;

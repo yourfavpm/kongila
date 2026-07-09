@@ -279,6 +279,22 @@ export default function ClientDashboard({
   const [requestInterviewTarget, setRequestInterviewTarget] = useState<{ matchId: string; talentName: string; talentId: string; requestId: string } | null>(null);
   const [requestInterviewForm, setRequestInterviewForm] = useState({ date: '', time: '10:00', duration: '45', notes: '' });
 
+  // Notifications and Messages badge calculations
+  const effectiveNotifications = notifications || [];
+  const unreadNotifsCount = effectiveNotifications.filter(n => !n.read).length;
+  const unreadByModule = effectiveNotifications.filter(n => !n.read).reduce((acc: any, n: any) => {
+    const t = (n.title || '').toLowerCase();
+    const m = (n.message || '').toLowerCase();
+    if (t.includes('interview') || m.includes('interview')) acc['scheduling'] = (acc['scheduling'] || 0) + 1;
+    else if (t.includes('contract') || m.includes('contract') || t.includes('hire')) acc['contracts'] = (acc['contracts'] || 0) + 1;
+    else if (t.includes('match') || m.includes('match') || t.includes('shortlist') || m.includes('shortlist') || t.includes('talent')) acc['radar'] = (acc['radar'] || 0) + 1;
+    else if (t.includes('request') || m.includes('request')) acc['requests'] = (acc['requests'] || 0) + 1;
+    else if (t.includes('invoice') || m.includes('invoice') || t.includes('billing')) acc['billing'] = (acc['billing'] || 0) + 1;
+    else if (t.includes('review') || m.includes('review') || t.includes('feedback')) acc['reviews'] = (acc['reviews'] || 0) + 1;
+    return acc;
+  }, {});
+  const unreadMessagesCount = messages ? messages.filter(m => !m.read).length : 0;
+
   // Viewing Talent Profile Detail State
   const [viewingTalentProfile, setViewingTalentProfile] = useState<any | null>(null);
 
@@ -4104,6 +4120,7 @@ export default function ClientDashboard({
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
               {NAV_ITEMS.map(item => {
                 const isActive = activeSection === item.id;
+                const badgeCount = item.id === 'messaging' ? unreadMessagesCount : (unreadByModule[item.id] || 0);
                 return (
                   <button
                     key={item.id}
@@ -4125,6 +4142,11 @@ export default function ClientDashboard({
                   >
                     <SidebarIcon id={item.id} color={isActive ? '#0047CC' : '#6B7A99'} size={16} />
                     {item.label}
+                    {badgeCount > 0 && (
+                      <span style={{ marginLeft: 'auto', background: '#EF4444', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '10px' }}>
+                        {badgeCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -4174,6 +4196,7 @@ export default function ClientDashboard({
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
           {NAV_ITEMS.map(item => {
             const isActive = activeSection === item.id;
+            const badgeCount = item.id === 'messaging' ? unreadMessagesCount : (unreadByModule[item.id] || 0);
             return (
               <button
                 key={item.id}
@@ -4195,6 +4218,11 @@ export default function ClientDashboard({
               >
                 <SidebarIcon id={item.id} color={isActive ? '#0047CC' : '#6B7A99'} size={15} />
                 {item.label}
+                {badgeCount > 0 && (
+                  <span style={{ marginLeft: 'auto', background: '#EF4444', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '10px' }}>
+                    {badgeCount}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -4255,15 +4283,25 @@ export default function ClientDashboard({
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
-                <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%', border: '2px solid #FFFFFF' }} />
+                {unreadMessagesCount > 0 && (
+                  <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', color: '#FFF', fontSize: '8px', fontWeight: 800, padding: '1px 3px', borderRadius: '4px', minWidth: '10px', textAlign: 'center', border: '2px solid #FFFFFF' }}>
+                    {unreadMessagesCount}
+                  </span>
+                )}
               </div>
               
-              <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7A99' }}>
+              <div 
+                style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', color: '#6B7A99' }}
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                 </svg>
-                <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', width: '8px', height: '8px', borderRadius: '50%', border: '2px solid #FFFFFF' }} />
+                {unreadNotifsCount > 0 && (
+                  <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', color: '#FFF', fontSize: '8px', fontWeight: 800, padding: '1px 3px', borderRadius: '4px', minWidth: '10px', textAlign: 'center', border: '2px solid #FFFFFF' }}>
+                    {unreadNotifsCount}
+                  </span>
+                )}
               </div>
             </div>
 

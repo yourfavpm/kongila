@@ -1,1106 +1,255 @@
 {
-  "talents": [
+  "assessments": [
     {
-      "id": "talent_zola",
-      "name": "Zola Ndlovu",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
-      "title": "Technical Product Manager",
-      "skills": [],
-      "timezone": "GMT+2 (Johannesburg)",
-      "salaryExpectation": 4800,
-      "experienceYears": 7,
-      "availability": 100,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
-      "vettingScores": {
-        "technical": 88,
-        "behavioral": 95,
-        "personality": 92,
-        "remoteReadiness": 90,
-        "workSimulation": 90,
-        "communication": 98,
-        "experience": 85
-      },
-      "grade": "A",
-      "tags": [
-        "Independent Worker",
-        "Strong Communicator"
+      "title": "Senior Frontend React Test",
+      "role_targeted": "Frontend Engineers",
+      "description": "To test your level of knowledge as a frontend engineer",
+      "total_time_limit_minutes": 60,
+      "passing_score": 70,
+      "categories": [
+        "cat_1782217937497"
       ],
-      "bio": "Experienced PM skilled in bridging engineering and business goals to deliver exceptional user-facing features.",
-      "documents": []
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "Admin",
+      "id": "asmnt_1782217937528",
+      "created_at": "2026-06-23T12:32:17.528Z"
     },
     {
-      "id": "talent_amina",
-      "name": "Amina Osei",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&q=80&w=200",
-      "title": "Frontend Engineer",
-      "skills": [],
-      "timezone": "GMT+3 (Nairobi)",
-      "salaryExpectation": 2500,
-      "experienceYears": 2,
-      "availability": 100,
-      "vettingStage": "Skill Assessment",
-      "vettingStatus": "Review",
-      "vettingScores": {
-        "technical": 72,
-        "behavioral": 80,
-        "personality": 78,
-        "remoteReadiness": 85,
-        "workSimulation": 70,
-        "communication": 88,
-        "experience": 50
-      },
-      "grade": "B",
-      "tags": [
-        "Needs Supervision",
-        "Strong Learner"
-      ],
-      "bio": "Motivated React developer eager to learn and grow in a fast-paced remote product team.",
-      "documents": []
+      "title": "Senior React Native Engineer Assessment",
+      "role_targeted": "Mobile Engineers",
+      "description": "Assess React Native and mobile development skills.",
+      "total_time_limit_minutes": 90,
+      "passing_score": 75,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_react_native",
+      "created_at": "2026-06-23T17:42:39.058Z"
     },
     {
-      "id": "talent_chidi",
-      "name": "Chidi Anya",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Full-Stack Engineer",
-      "skills": [
-        "React",
-        "Node.js"
-      ],
-      "timezone": "GMT+1 (Lagos)",
-      "salaryExpectation": 4500,
-      "experienceYears": 6,
-      "availability": 100,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
-      "vettingScores": {
-        "technical": 94,
-        "behavioral": 88,
-        "personality": 90,
-        "remoteReadiness": 95,
-        "workSimulation": 92,
-        "communication": 90,
-        "experience": 85
-      },
-      "grade": "A+",
-      "tags": [
-        "Highly Reliable",
-        "Strong Communicator",
-        "Independent Worker"
-      ],
-      "bio": "Elite developer specializing in React and distributed Node.js backends. Passionate about writing scalable, clean code.",
-      "documents": []
+      "title": "Full Stack Next.js Test",
+      "role_targeted": "Full Stack Engineers",
+      "description": "Test Next.js, Node.js, and DB skills.",
+      "total_time_limit_minutes": 120,
+      "passing_score": 80,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_nextjs",
+      "created_at": "2026-06-23T17:42:39.059Z"
     },
     {
-      "id": "talent_fatoumata",
-      "name": "Fatoumata Diallo",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Product Designer",
-      "skills": [
-        "Figma"
-      ],
-      "timezone": "GMT (Dakar)",
-      "salaryExpectation": 3800,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
-      "vettingScores": {
-        "technical": 90,
-        "behavioral": 92,
-        "personality": 85,
-        "remoteReadiness": 90,
-        "workSimulation": 88,
-        "communication": 95,
-        "experience": 80
-      },
-      "grade": "A",
-      "tags": [
-        "Strong Communicator",
-        "Attention to Detail"
-      ],
-      "bio": "Visual designer dedicated to creating beautiful, human-centered web and mobile experiences.",
-      "documents": []
+      "title": "Digital Marketing Strategy Assessment",
+      "role_targeted": "Marketing Managers",
+      "description": "Evaluate SEO, PPC, and content strategy.",
+      "total_time_limit_minutes": 45,
+      "passing_score": 70,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_marketing",
+      "created_at": "2026-06-23T17:42:39.059Z"
     },
     {
-      "id": "talent_kofi",
-      "name": "Kofi Mensah",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
-      "title": "Lead DevOps Engineer",
-      "skills": [],
-      "timezone": "GMT (Accra)",
-      "salaryExpectation": 5200,
-      "experienceYears": 8,
-      "availability": 90,
-      "vettingStage": "Final Review",
-      "vettingStatus": "Vetted",
-      "vettingScores": {
-        "technical": 96,
-        "behavioral": 85,
-        "personality": 80,
-        "remoteReadiness": 95,
-        "workSimulation": 95,
-        "communication": 80,
-        "experience": 95
-      },
-      "grade": "A+",
-      "tags": [
-        "Highly Reliable",
-        "Independent Worker"
-      ],
-      "bio": "Infrastructure specialist with deep expertise in cloud architectures, container orchestration, and secure automation pipelines.",
-      "documents": []
+      "title": "Senior Python Backend Test",
+      "role_targeted": "Backend Engineers",
+      "description": "Evaluate Django/Flask and system design.",
+      "total_time_limit_minutes": 90,
+      "passing_score": 75,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_python",
+      "created_at": "2026-06-23T17:42:39.059Z"
     },
     {
-      "id": "talent_1779838570148",
-      "name": "dare OJO",
-      "email": "",
-      "avatar": null,
-      "title": "Professional",
-      "skills": [],
-      "timezone": "GMT+1 (Lagos)",
-      "salaryExpectation": 0,
-      "experienceYears": 0,
-      "availability": 40,
-      "vettingStage": "Application",
-      "vettingStatus": "Pending",
-      "vettingScores": {
-        "technical": 90,
-        "behavioral": 85,
-        "personality": 88,
-        "remoteReadiness": 90,
-        "workSimulation": 85,
-        "communication": 90,
-        "experience": 80
-      },
-      "grade": "A",
+      "title": "UI/UX Design Portfolio Review",
+      "role_targeted": "Product Designers",
+      "description": "Review Figma and user research skills.",
+      "total_time_limit_minutes": 60,
+      "passing_score": 85,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_uiux",
+      "created_at": "2026-06-23T17:42:39.059Z"
+    },
+    {
+      "title": "Financial Analysis & Modeling",
+      "role_targeted": "Financial Analysts",
+      "description": "Assess Excel, forecasting, and IFRS knowledge.",
+      "total_time_limit_minutes": 120,
+      "passing_score": 80,
+      "categories": [],
+      "category_overrides": [],
+      "status": "published",
+      "created_by": "System",
+      "id": "asmnt_finance",
+      "created_at": "2026-06-23T17:42:39.059Z"
+    }
+  ],
+  "assessmentCategories": [
+    {
+      "name": "English Language",
+      "description": "To test your ability to work in english",
+      "time_limit_minutes": 15,
+      "is_reusable": true,
       "tags": [],
-      "bio": "",
-      "documents": []
-    },
-    {
-      "id": "talent_1779838651893",
-      "name": "dare OJO",
-      "email": "",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [],
-      "timezone": "GMT+1",
-      "salaryExpectation": 4500,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
-      "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
-      },
-      "grade": "B",
-      "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
+      "id": "cat_1782217937497",
+      "questions": [
+        "q_1782217937508",
+        "q_1782217937520"
       ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Senior. Readiness setups resolved.",
-      "documents": []
-    },
+      "created_at": "2026-06-23T12:32:17.497Z"
+    }
+  ],
+  "assessmentQuestions": [
     {
-      "id": "talent_1779921547604",
-      "name": "benny eze",
-      "email": "theexceptionalpm@gmail.com",
-      "avatar": null,
-      "title": "Professional",
-      "skills": [],
-      "timezone": "GMT+1 (Lagos)",
-      "salaryExpectation": 0,
-      "experienceYears": 0,
-      "availability": 40,
-      "vettingStage": "Application",
-      "vettingStatus": "Pending",
-      "vettingScores": {
-        "technical": 90,
-        "behavioral": 85,
-        "personality": 88,
-        "remoteReadiness": 90,
-        "workSimulation": 85,
-        "communication": 90,
-        "experience": 80
-      },
-      "grade": "A",
-      "tags": [],
-      "bio": "",
-      "documents": []
-    },
-    {
-      "id": "talent_1779921556267",
-      "name": "benny eze",
-      "email": "theexceptionalpmm@gmail.com",
-      "avatar": null,
-      "title": "Professional",
-      "skills": [],
-      "timezone": "GMT+1 (Lagos)",
-      "salaryExpectation": 0,
-      "experienceYears": 0,
-      "availability": 40,
-      "vettingStage": "Application",
-      "vettingStatus": "Pending",
-      "vettingScores": {
-        "technical": 90,
-        "behavioral": 85,
-        "personality": 88,
-        "remoteReadiness": 90,
-        "workSimulation": 85,
-        "communication": 90,
-        "experience": 80
-      },
-      "grade": "A",
-      "tags": [],
-      "bio": "",
-      "documents": []
-    },
-    {
-      "id": "talent_1779921621101",
-      "name": "Benita Eze",
-      "email": "theexceptionalpmm@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [],
-      "timezone": "GMT+1",
-      "salaryExpectation": 1000,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
-      "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
-      },
-      "grade": "B",
-      "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
+      "type": "multiple_choice",
+      "question_text": "Which of these is a definite article",
+      "options": [
+        "A",
+        "An",
+        "Them",
+        "The"
       ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
-      "documents": []
+      "correct_answer": "The",
+      "scoring_weight": 1,
+      "max_score": 10,
+      "id": "q_1782217937508",
+      "category_id": "cat_1782217937497"
     },
     {
-      "id": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
-      "name": "Benita Eze",
-      "email": "john@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [
-        "Operations Management",
-        "Logistics",
-        "Team Leadership",
-        "Process Optimization"
+      "type": "multiple_choice",
+      "question_text": "Which of these is past tense?",
+      "options": [
+        "Come",
+        "Went",
+        "Bring",
+        "deny"
       ],
-      "timezone": "GMT+1",
-      "salaryExpectation": 1000,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application",
-      "vettingStatus": "Pending",
-      "vettingScores": {
-        "technical": 90,
-        "behavioral": 85,
-        "personality": 88,
-        "remoteReadiness": 90,
-        "workSimulation": 85,
-        "communication": 90,
-        "experience": 80
+      "correct_answer": "Went",
+      "scoring_weight": 1,
+      "max_score": 10,
+      "id": "q_1782217937520",
+      "category_id": "cat_1782217937497"
+    }
+  ],
+  "assessmentAssignments": [],
+  "skillAssessmentResults": [
+    {
+      "id": "asr_1782725186939",
+      "talentSkillAssessmentId": "tsa_1782241121881",
+      "assessmentId": "asmnt_1782217937528",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "answers": {
+        "q_1782217937508": "The",
+        "q_1782217937520": "Went"
       },
-      "grade": "A",
-      "tags": [],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
-      "documents": [],
-      "phone": "08055667755",
-      "country": "Nigeria",
-      "city": "Lagos",
-      "seniorityLevel": "Mid-Level",
-      "employmentPreference": "Full Time",
-      "currency": "USD",
-      "hourlyMonthly": "Monthly",
-      "portfolioUrl": "https://github.com/talent-profile",
-      "certifications": "Certified Operations Professional",
-      "internetQuality": "Fiber Optic (Primary) + LTE (Backup)",
-      "workSetup": "Dedicated ergonomic workspace with battery backup",
-      "devices": "MacBook Pro 16\", dual 27\" 4K displays",
-      "communicationTools": "Slack, Teams, Zoom, Loom",
-      "supportTickets": []
+      "subjectiveAnswers": {},
+      "autoScore": 100,
+      "hasSubjective": false,
+      "timeTakenSeconds": 17,
+      "autoSubmitted": false,
+      "submittedAt": "2026-06-29T09:26:26.939Z"
     },
     {
-      "id": "talent_1779921626703",
-      "name": "Benita Eze",
-      "email": "theexceptionalpmm@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [],
-      "timezone": "GMT+1",
-      "salaryExpectation": 1000,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
-      "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
+      "id": "asr_1782728526656",
+      "talentSkillAssessmentId": "tsa_1782241121881",
+      "assessmentId": "asmnt_1782217937528",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "answers": {
+        "q_1782217937508": "The",
+        "q_1782217937520": "Went"
       },
-      "grade": "B",
-      "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
-      ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
-      "documents": []
+      "subjectiveAnswers": {},
+      "autoScore": 100,
+      "score": null,
+      "passed": null,
+      "hasSubjective": false,
+      "timeTakenSeconds": 11,
+      "autoSubmitted": false,
+      "submittedAt": "2026-06-29T10:22:06.656Z"
     },
     {
-      "id": "talent_1779921631488",
-      "name": "Benita Eze",
-      "email": "theexceptionalpmm@gmail.com",
-      "avatar": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200",
-      "title": "Senior Operations Manager",
-      "skills": [],
-      "timezone": "GMT+1",
-      "salaryExpectation": 1000,
-      "experienceYears": 5,
-      "availability": 100,
-      "vettingStage": "Application Screening",
-      "vettingStatus": "Applied",
-      "vettingScores": {
-        "technical": 0,
-        "behavioral": 0,
-        "personality": 0,
-        "remoteReadiness": 0,
-        "workSimulation": 0,
-        "communication": 0,
-        "experience": 0
+      "id": "asr_1782729124091",
+      "talentSkillAssessmentId": "tsa_1782241121881",
+      "assessmentId": "asmnt_1782217937528",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "answers": {
+        "q_1782217937508": "The",
+        "q_1782217937520": "Went"
       },
-      "grade": "B",
-      "tags": [
-        "Progressive Entry",
-        "Assessment Pending"
-      ],
-      "bio": "Highly skilled professional targeting global opportunities. Experience level: Mid-Level. Readiness setups resolved.",
-      "documents": []
+      "subjectiveAnswers": {},
+      "autoScore": 100,
+      "score": null,
+      "passed": null,
+      "hasSubjective": false,
+      "timeTakenSeconds": 5,
+      "autoSubmitted": false,
+      "submittedAt": "2026-06-29T10:32:04.091Z"
+    },
+    {
+      "id": "asr_1783171636794",
+      "talentSkillAssessmentId": "tsa_1783171581753",
+      "assessmentId": "asmnt_1782217937528",
+      "talentId": "3a7b5fa8-19e8-405f-9a99-3c4729b0eeb5",
+      "answers": {
+        "q_1782217937508": "The",
+        "q_1782217937520": "Went"
+      },
+      "subjectiveAnswers": {},
+      "autoScore": 100,
+      "score": null,
+      "passed": null,
+      "hasSubjective": false,
+      "timeTakenSeconds": 14,
+      "autoSubmitted": false,
+      "submittedAt": "2026-07-04T13:27:16.794Z"
     }
   ],
-  "clientRequests": [
+  "talentSkillAssessments": [
     {
-      "id": "req_1779294209723",
-      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "clientName": "Horizon Fintech",
-      "serviceType": "managed",
-      "roleDescription": "Senior operations manager",
-      "requiredSkills": [],
-      "duration": "Ongoing",
-      "commitmentLevel": "Full-Time",
-      "numberOfHires": 1,
-      "timezone": "GMT+1",
-      "startDate": null,
-      "budget": 0,
-      "priority": "Medium",
-      "status": "New Request",
-      "createdAt": "2026-05-20T16:23:30.795217+00:00"
+      "id": "tsa_1782238280565",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "assessmentId": "asmnt_1782217937528",
+      "assignedAt": "2026-06-23T18:11:20.565Z",
+      "status": "assigned"
+    },
+    {
+      "id": "tsa_1782241121881",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "assessmentId": "asmnt_1782217937528",
+      "assignedAt": "2026-06-23T18:58:41.881Z",
+      "status": "submitted",
+      "score": 100,
+      "submittedAt": "2026-06-29T10:22:06.656Z"
+    },
+    {
+      "id": "tsa_1783171581753",
+      "talentId": "3a7b5fa8-19e8-405f-9a99-3c4729b0eeb5",
+      "assessmentId": "asmnt_1782217937528",
+      "assignedAt": "2026-07-04T13:26:21.753Z",
+      "status": "submitted",
+      "score": 100,
+      "submittedAt": "2026-07-04T13:27:16.794Z"
     }
   ],
-  "matches": [],
-  "tasks": [],
-  "contracts": [
-    {
-      "id": "KNG-FIN-2024-883",
-      "matchId": "match_talent_chidi",
-      "clientId": "usr_horizon",
-      "clientName": "Horizon Fintech",
-      "talentId": "talent_chidi",
-      "talentName": "Chidi Anya",
-      "role": "Senior UI Designer",
-      "salary": 120,
-      "startDate": "Jan 12, 2024",
-      "status": "Signed",
-      "signedAt": "2024-01-12T10:00:00+00:00",
-      "rateType": "Hourly",
-      "rateAmount": 120,
-      "totalEarned": 54240,
-      "invoicedBalance": 12450,
-      "nextPayout": 6400,
-      "nextPayoutDate": "Friday, May 24",
-      "endDate": "Dec 21, 2024",
-      "engagementModel": "Remote / Full-time Retainer",
-      "rating": 5,
-      "qualityOfWork": 4.9,
-      "communication": 4.8,
-      "timeliness": 4.9
-    },
-    {
-      "id": "KNG-HEA-2023-735",
-      "matchId": "match_talent_fatoumata",
-      "clientId": "usr_horizon",
-      "clientName": "Horizon Fintech",
-      "talentId": "talent_fatoumata",
-      "talentName": "Fatoumata Diallo",
-      "role": "Lead Product Designer",
-      "salary": 5800,
-      "startDate": "Jan 12, 2024",
-      "status": "Signed",
-      "signedAt": "2023-03-15T09:30:00+00:00",
-      "rateType": "Monthly",
-      "rateAmount": 5800,
-      "totalEarned": 42800,
-      "invoicedBalance": 8200,
-      "nextPayout": 5800,
-      "nextPayoutDate": "Friday, May 24",
-      "endDate": "Dec 21, 2024",
-      "engagementModel": "Remote / Hybrid (Dakar)",
-      "rating": 5,
-      "qualityOfWork": 5,
-      "communication": 4.9,
-      "timeliness": 4.8
-    }
-  ],
-  "notifications": [
-    {
-      "id": "notif_1779922630280",
-      "userId": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
-      "title": "Application Intake Submitted",
-      "message": "Your talent application screening review is running. Complete your Node/Postgres coding assessment.",
-      "read": false,
-      "createdAt": "2026-05-27T22:57:10.280Z"
-    }
-  ],
-  "auditLogs": [
-    {
-      "id": "audit_1779904351102",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Reschedule Interview",
-      "details": "Interview \"Ops Manager\" with Kofi Mensah — new slot: 2026-05-30 at 10:00",
-      "timestamp": "2026-05-27T17:52:31.102+00:00"
-    },
-    {
-      "id": "audit_1779904329824",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Schedule Interview",
-      "details": "Booked \"Ops Manager\" with Kofi Mensah on 2026-05-29 at 10:00. Google Calendar event created.",
-      "timestamp": "2026-05-27T17:52:09.824+00:00"
-    },
-    {
-      "id": "audit_1779902232484",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Schedule Interview",
-      "details": "Booked \"Product Manager\" with dare OJO on 2026-05-29 at 10:00. Google Calendar event created.",
-      "timestamp": "2026-05-27T17:17:12.484+00:00"
-    },
-    {
-      "id": "audit_1779806755850",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Schedule Interview",
-      "details": "Booked \"Senior Full Stack Engineer Final Round\" with Amina Osei on 2026-05-29 at 10:00. Google Calendar event created.",
-      "timestamp": "2026-05-26T14:45:55.85+00:00"
-    },
-    {
-      "id": "audit_1779439681448",
-      "actor": "Alex Mercer",
-      "action": "Talent Request Completed & Authenticated",
-      "details": "Service Request generated. Linked to organization Vanguard .",
-      "timestamp": "2026-05-22T08:48:01.448+00:00"
-    },
-    {
-      "id": "audit_1779826742537",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Submit Re-hire Request",
-      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
-      "timestamp": "2026-05-26T20:19:02.537+00:00"
-    },
-    {
-      "id": "audit_1779826741091",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Submit Re-hire Request",
-      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
-      "timestamp": "2026-05-26T20:19:01.091+00:00"
-    },
-    {
-      "id": "audit_1779826745208",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Submit Re-hire Request",
-      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
-      "timestamp": "2026-05-26T20:19:05.208+00:00"
-    },
-    {
-      "id": "audit_1779826743205",
-      "actor": "Oluwadamilola Olukunle",
-      "action": "Submit Re-hire Request",
-      "details": "Submitted request to re-hire Sarah Jenkins as QA Engineer starting 2026-06-02.",
-      "timestamp": "2026-05-26T20:19:03.205+00:00"
-    },
-    {
-      "id": "audit_1779838301169",
-      "actor": "dare OJO",
-      "action": "Talent Request Completed & Authenticated",
-      "details": "Service Request generated. Linked to organization Eduplan Ltd.",
-      "timestamp": "2026-05-26T23:31:41.169+00:00"
-    },
-    {
-      "id": "audit_1779838651893",
-      "actor": "dare OJO",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-26T23:37:31.893+00:00"
-    },
-    {
-      "id": "audit_1779921621101",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-27T22:40:21.101+00:00"
-    },
-    {
-      "id": "audit_1779921626703",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-27T22:40:26.703+00:00"
-    },
-    {
-      "id": "audit_1779921631488",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-27T22:40:31.488+00:00"
-    },
-    {
-      "id": "audit_1779922630280",
-      "actor": "Benita Eze",
-      "action": "Progressive Onboarding Completed",
-      "details": "Role expectations: Senior Operations Manager. Setup: Dedicated ergonomic workspace with battery backup",
-      "timestamp": "2026-05-27T22:57:10.280Z"
-    }
-  ],
-  "agentLogs": [
-    {
-      "id": "alog_1",
-      "agentName": "Context Agent",
-      "message": "System monitoring initialized. Tracking 5 vetted talent files.",
-      "timestamp": "2026-05-20T10:36:11.907+00:00",
-      "type": "info"
-    },
-    {
-      "id": "alog_2",
-      "agentName": "Workflow Agent",
-      "message": "Work execution hooks registered. Active status listener loaded.",
-      "timestamp": "2026-05-20T10:36:12.091+00:00",
-      "type": "info"
-    },
-    {
-      "id": "alog_talent_1779922630280",
-      "agentName": "Compliance Agent",
-      "message": "Screening pipeline initiated for talent Benita Eze. KYC & equipment logs verified.",
-      "timestamp": "23:57:10",
-      "type": "info"
-    }
-  ],
-  "rehireRequests": [
-    {
-      "id": "rehire_1779826741091",
-      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "clientName": "Oluwadamilola Olukunle (Vanguard)",
-      "talentId": "talent_sarah",
-      "talentName": "Sarah Jenkins",
-      "role": "QA Engineer",
-      "proposedRate": 12400,
-      "proposedStartDate": "2026-06-02",
-      "commitmentLevel": "Full-Time",
-      "notes": "onboarding",
-      "status": "Pending",
-      "createdAt": "2026-05-26T20:19:01.091Z"
-    },
-    {
-      "id": "rehire_1779826742537",
-      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "clientName": "Oluwadamilola Olukunle (Vanguard)",
-      "talentId": "talent_sarah",
-      "talentName": "Sarah Jenkins",
-      "role": "QA Engineer",
-      "proposedRate": 12400,
-      "proposedStartDate": "2026-06-02",
-      "commitmentLevel": "Full-Time",
-      "notes": "onboarding",
-      "status": "Pending",
-      "createdAt": "2026-05-26T20:19:02.537Z"
-    },
-    {
-      "id": "rehire_1779826743205",
-      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "clientName": "Oluwadamilola Olukunle (Vanguard)",
-      "talentId": "talent_sarah",
-      "talentName": "Sarah Jenkins",
-      "role": "QA Engineer",
-      "proposedRate": 12400,
-      "proposedStartDate": "2026-06-02",
-      "commitmentLevel": "Full-Time",
-      "notes": "onboarding",
-      "status": "Pending",
-      "createdAt": "2026-05-26T20:19:03.205Z"
-    },
-    {
-      "id": "rehire_1779826745208",
-      "clientId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "clientName": "Oluwadamilola Olukunle (Vanguard)",
-      "talentId": "talent_sarah",
-      "talentName": "Sarah Jenkins",
-      "role": "QA Engineer",
-      "proposedRate": 12400,
-      "proposedStartDate": "2026-06-02",
-      "commitmentLevel": "Full-Time",
-      "notes": "onboarding",
-      "status": "Pending",
-      "createdAt": "2026-05-26T20:19:05.208Z"
-    }
-  ],
-  "users": [
-    {
-      "id": "usr_chidi",
-      "email": "chidi.anya@kongila.dev",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": true,
-      "createdAt": "2026-05-20T10:25:22.240593+00:00",
-      "updatedAt": "2026-05-20T10:25:22.240593+00:00"
-    },
-    {
-      "id": "usr_fatoumata",
-      "email": "fatoumata.diallo@kongila.dev",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": true,
-      "createdAt": "2026-05-20T10:25:22.964193+00:00",
-      "updatedAt": "2026-05-20T10:25:22.964193+00:00"
-    },
-    {
-      "id": "usr_horizon",
-      "email": "billing@horizon.com",
-      "role": "client",
-      "status": "active",
-      "emailVerified": true,
-      "createdAt": "2026-05-20T10:25:23.239292+00:00",
-      "updatedAt": "2026-05-20T10:25:23.239292+00:00"
-    },
-    {
-      "id": "usr_admin",
-      "email": "admin@kongila.com",
-      "role": "admin",
-      "status": "active",
-      "emailVerified": true,
-      "createdAt": "2026-05-20T10:25:23.43783+00:00",
-      "updatedAt": "2026-05-20T10:25:23.43783+00:00"
-    },
-    {
-      "id": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "email": "ezebenita6101@gmail.com",
-      "role": "client",
-      "status": "active",
-      "emailVerified": false,
-      "createdAt": "2026-05-20T10:37:21.564282+00:00",
-      "updatedAt": "2026-05-20T10:37:21.564282+00:00"
-    },
-    {
-      "id": "cff95626-297e-4c1c-b500-ee63d937c022",
-      "email": "dareojox@gmail.com",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": false,
-      "createdAt": "2026-05-26T23:36:09.895213+00:00",
-      "updatedAt": "2026-05-26T23:36:09.895213+00:00"
-    },
-    {
-      "id": "cb940a68-2d49-46a0-8941-c2313334349c",
-      "email": "theexceptionalpm@gmail.com",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": false,
-      "createdAt": "2026-05-27T22:39:08.094477+00:00",
-      "updatedAt": "2026-05-27T22:39:08.094477+00:00"
-    },
-    {
-      "id": "7557f57b-e5ce-42db-91c2-4c269b4fe4b2",
-      "email": "theexceptionalpmm@gmail.com",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": false,
-      "createdAt": "2026-05-27T22:39:16.830372+00:00",
-      "updatedAt": "2026-05-27T22:39:16.830372+00:00"
-    },
-    {
-      "id": "4b757991-6ba7-4b8d-ac5b-5df0a17d45c3",
-      "email": "john@gmail.com",
-      "role": "talent",
-      "status": "active",
-      "emailVerified": false,
-      "createdAt": "2026-05-27T22:56:53.231356+00:00",
-      "updatedAt": "2026-05-27T22:56:53.231356+00:00"
-    }
-  ],
-  "organizations": [
-    {
-      "id": "client_horizon",
-      "name": "Horizon Fintech",
-      "created_by": null,
-      "created_at": "2026-05-20T10:25:23.649848+00:00"
-    },
-    {
-      "id": "client_nexus",
-      "name": "Nexus Health",
-      "created_by": null,
-      "created_at": "2026-05-20T10:25:23.981775+00:00"
-    },
-    {
-      "id": "org_1779273440449",
-      "name": "Vanguard",
-      "created_by": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "created_at": "2026-05-20T10:37:21.971646+00:00"
-    }
-  ],
-  "clientProfiles": [
-    {
-      "id": "clp_horizon",
-      "userId": "usr_horizon",
-      "organizationId": "client_horizon",
-      "position": "VP of Engineering",
-      "phone": "+1 (555) 019-2834"
-    },
-    {
-      "id": "clp_1779273441099",
-      "userId": "f38d7e80-0d5a-4c65-bf19-073631f8121d",
-      "organizationId": "org_1779273440449",
-      "position": "Admin",
-      "phone": null
-    }
-  ],
-  "skills": [
-    {
-      "id": "skl_react",
-      "name": "React"
-    },
-    {
-      "id": "skl_node",
-      "name": "Node.js"
-    },
-    {
-      "id": "skl_ts",
-      "name": "TypeScript"
-    },
-    {
-      "id": "skl_figma",
-      "name": "Figma"
-    },
-    {
-      "id": "skl_aws",
-      "name": "AWS"
-    }
-  ],
-  "talentSkills": [
-    {
-      "id": "tsk_chidi_react",
-      "talentId": "talent_chidi",
-      "skillId": "skl_react",
-      "level": "expert"
-    },
-    {
-      "id": "tsk_chidi_node",
-      "talentId": "talent_chidi",
-      "skillId": "skl_node",
-      "level": "expert"
-    },
-    {
-      "id": "tsk_fatoumata_figma",
-      "talentId": "talent_fatoumata",
-      "skillId": "skl_figma",
-      "level": "expert"
-    }
-  ],
-  "documents": [
-    {
-      "id": "doc_chidi_cv",
-      "userId": "usr_chidi",
-      "name": "Professional_CV_2024.pdf",
-      "type": "CV",
-      "fileSize": "1.2 MB",
-      "status": "vetted",
-      "uploadedAt": "2024-05-17T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_portfolio",
-      "userId": "usr_chidi",
-      "name": "UX_Case_Studies.pdf",
-      "type": "portfolio",
-      "fileSize": "18.5 MB",
-      "status": "vetted",
-      "uploadedAt": "2024-05-12T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_aws",
-      "userId": "usr_chidi",
-      "name": "AWS_Devops_cert_Assoc.png",
-      "type": "certification",
-      "fileSize": "4.8 MB",
-      "status": "verified",
-      "uploadedAt": "2023-06-15T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_nda",
-      "userId": "usr_chidi",
-      "name": "Non-Disclosure Agreement (NDA)",
-      "type": "NDA",
-      "fileSize": "1.5 MB",
-      "status": "pending_signature",
-      "uploadedAt": "2026-05-16T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_ip",
-      "userId": "usr_chidi",
-      "name": "Intellectual Property Agreement",
-      "type": "agreement",
-      "fileSize": "2.1 MB",
-      "status": "signed",
-      "uploadedAt": "2023-12-12T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_ethics",
-      "userId": "usr_chidi",
-      "name": "Code of Ethics & Conduct",
-      "type": "IT_Ethics_Policy",
-      "fileSize": "1.1 MB",
-      "status": "under_review",
-      "uploadedAt": "2026-01-05T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_contractor",
-      "userId": "usr_chidi",
-      "name": "Independent Contractor Agreement",
-      "type": "agreement",
-      "fileSize": "3.4 MB",
-      "status": "signed",
-      "uploadedAt": "2023-03-30T10:00:00+00:00"
-    },
-    {
-      "id": "doc_chidi_dpa",
-      "userId": "usr_chidi",
-      "name": "Data Privacy Addendum (DPA)",
-      "type": "agreement",
-      "fileSize": "1.8 MB",
-      "status": "pending_signature",
-      "uploadedAt": "2026-05-19T08:00:00+00:00"
-    }
-  ],
-  "projects": [
-    {
-      "id": "project_general",
-      "clientId": "usr_horizon",
-      "name": "General Onboarding",
-      "description": "Initial onboarding orientation projects.",
-      "startDate": "2024-01-01",
-      "endDate": "2024-12-31",
-      "status": "active"
-    },
-    {
-      "id": "project_nebula",
-      "clientId": "usr_horizon",
-      "name": "Project Nebula",
-      "description": "Core ledger database service development.",
-      "startDate": "2024-02-01",
-      "endDate": "2024-11-30",
-      "status": "active"
-    }
-  ],
-  "assignments": [
-    {
-      "id": "asg_chidi_nebula",
-      "talentId": "talent_chidi",
-      "projectId": "project_nebula",
-      "contractId": "KNG-FIN-2024-883",
-      "role": "Senior Full-Stack Developer",
-      "startDate": null,
-      "endDate": null,
-      "status": "active"
-    }
-  ],
-  "invoices": [
-    {
-      "id": "inv_horizon_may",
-      "clientId": "usr_horizon",
-      "amount": 12450,
-      "status": "sent",
-      "dueDate": "2026-05-31"
-    }
-  ],
-  "payments": [
-    {
-      "id": "pmt_horizon_april",
-      "invoiceId": "inv_horizon_may",
-      "amount": 12450,
-      "paymentMethod": "ACH Bank Wire",
-      "status": "paid",
-      "paidAt": "2026-05-01T15:00:00+00:00"
-    }
-  ],
-  "talentPayouts": [
-    {
-      "id": "pay_chidi_may",
-      "talentId": "talent_chidi",
-      "contractId": "KNG-FIN-2024-883",
-      "amount": 5800,
-      "status": "paid",
-      "paidAt": "2026-05-15T12:00:00+00:00"
-    }
-  ],
-  "messages": [
-    {
-      "id": "msg_chidi_admin",
-      "senderId": "usr_admin",
-      "receiverId": "usr_chidi",
-      "content": "Welcome to Kongila talent network! Let us know if you need help setting up billing.",
-      "timestamp": "2026-05-18T09:00:00+00:00",
-      "readStatus": true
-    }
-  ],
-  "roles": [],
-  "userRoles": [],
-  "assessments": [],
-  "skillAssessmentResults": [],
-  "supportTickets": [
-    {
-      "id": "TK-88210",
-      "talentId": "talent_chidi",
-      "subject": "Urgent - API Timeout on Webhooks",
-      "category": "Technical Support",
-      "status": "Open",
-      "priority": "Urgent",
-      "createdAt": "2023-10-27T23:00:00+00:00",
-      "lastActivity": "Active"
-    },
-    {
-      "id": "TK-67842",
-      "talentId": "talent_chidi",
-      "subject": "Issues with International Wire Transfer - Q3 Earnings",
-      "category": "Payment Issues",
-      "status": "In Progress",
-      "priority": "High",
-      "createdAt": "2023-10-23T23:00:00+00:00",
-      "lastActivity": "Active"
-    },
-    {
-      "id": "TK-57115",
-      "talentId": "talent_chidi",
-      "subject": "Profile Badge Verification",
-      "category": "Verification",
-      "status": "Resolved",
-      "priority": "Medium",
-      "createdAt": "2023-10-21T23:00:00+00:00",
-      "lastActivity": "Active"
-    },
-    {
-      "id": "TK-28301",
-      "talentId": "talent_chidi",
-      "subject": "New User Onboarding Guide",
-      "category": "Guidance",
-      "status": "Resolved",
-      "priority": "Low",
-      "createdAt": "2023-10-14T23:00:00+00:00",
-      "lastActivity": "Active"
-    }
-  ],
-  "supportMessages": [
-    {
-      "id": "msg_1",
-      "ticketId": "TK-88210",
-      "senderName": "Chidi Anya",
-      "senderRole": "Talent",
-      "isSupport": false,
-      "avatarUrl": null,
-      "text": "I am getting continuous 504 gateway timeouts when our webhook endpoint is triggered by kongila integration. Please check.",
-      "timestamp": "10:40 AM",
-      "createdAt": "2023-10-28T10:40:00+00:00"
-    },
-    {
-      "id": "msg_2_1",
-      "ticketId": "TK-67842",
-      "senderName": "Chidi Anya",
-      "senderRole": "Talent",
-      "isSupport": false,
-      "avatarUrl": null,
-      "text": "Hello, I'm having trouble receiving my payout for the last project (Project: Nebula). The status says 'Sent' in the dashboard, but I haven't seen anything in my account. I checked with my bank and they don't see any pending transfers.",
-      "timestamp": "10:12 AM",
-      "createdAt": "2023-10-24T10:12:00+00:00"
-    },
-    {
-      "id": "msg_2_2",
-      "ticketId": "TK-67842",
-      "senderName": "Sarah Kong",
-      "senderRole": "Global Support Lead",
-      "isSupport": true,
-      "avatarUrl": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=80",
-      "text": "Hi Chidi, I've looked into this for you. It seems there was a slight delay in the intermediary bank processing for international wires this week. I've initiated a trace on the transaction. Could you please confirm if your SWIFT/BIC code has changed recently?",
-      "timestamp": "10:45 AM",
-      "createdAt": "2023-10-24T10:45:00+00:00"
-    }
-  ],
-  "interviews": [
-    {
-      "title": "Product Manager",
-      "talentId": "talent_1779838570148",
-      "talentName": "dare OJO",
-      "talentAvatar": "",
-      "requestId": "",
-      "matchId": "",
-      "date": "2026-05-29",
-      "time": "10:00",
-      "notes": "",
-      "duration": "60",
-      "clientName": "Oluwadamilola Olukunle",
-      "status": "Scheduled",
-      "id": "interview_1779902232484",
-      "meetingLink": "https://meet.google.com/dkm-fslg-arc",
-      "googleCalendarEventId": "gcal_1779902232484_dh2w13",
-      "googleCalendarLink": "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Product%20Manager&dates=20260529T100000/20260529T100000&details=Kongila+Interview+via+Google+Meet&location=https%3A%2F%2Fmeet.google.com%2Fdkm-fslg-arc",
-      "createdAt": "2026-05-27T17:17:12.484Z"
-    },
-    {
-      "title": "Ops Manager",
-      "talentId": "talent_kofi",
-      "talentName": "Kofi Mensah",
-      "talentAvatar": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200",
-      "requestId": "",
-      "matchId": "",
-      "date": "2026-05-30",
-      "time": "10:00",
-      "notes": "loikuhg",
-      "duration": "60",
-      "clientName": "Oluwadamilola Olukunle",
-      "status": "Rescheduled",
-      "id": "interview_1779904329824",
-      "meetingLink": "https://meet.google.com/vgh-nlza-snh",
-      "googleCalendarEventId": "gcal_1779904329824_5meon2",
-      "googleCalendarLink": "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Ops%20Manager&dates=20260529T100000/20260529T100000&details=Kongila+Interview+via+Google+Meet&location=https%3A%2F%2Fmeet.google.com%2Fvgh-nlza-snh",
-      "createdAt": "2026-05-27T17:52:09.824Z",
-      "updatedAt": "2026-05-27T17:52:31.102Z"
+  "workSimulationTasks": [
+    {
+      "id": "wst_1783591853607",
+      "talentId": "3a7b5fa8-19e8-405f-9a99-3c4729b0eeb5",
+      "title": "Build a rest API for user management",
+      "description": "Make sure it connects",
+      "assignedAt": "2026-07-09T10:10:53.607Z",
+      "deadline": "2026-07-10",
+      "status": "assigned"
     }
   ]
 }

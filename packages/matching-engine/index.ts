@@ -1,4 +1,122 @@
-import { TalentProfile, ServiceRequest, MatchBreakdown, Match } from '@kongila/shared-types';
+import { TalentProfile, ServiceRequest, MatchBreakdown, Match, VettingStage, VettingStageRecord, VettingDecision } from '@kongila/shared-types';
+
+// ─── Vetting Stage Metadata ───────────────────────────────────────────────────
+// Each stage defines WHAT ACTIVITY must be completed before it can be marked done.
+// activityType drives the UI — admin sees a different panel for each.
+// scoreKey is ONLY set when admin manually enters a score for that stage.
+// Application Screening has NO score — admin just reviews profile and proceeds or rejects.
+
+export type VettingActivityType =
+  | 'profile_review'       // Stage 0: review profile, pass or reject
+  | 'assign_assessment'    // Stage 1: assign assessment, wait for result, admin can override per-category score
+  | 'schedule_interview'   // Stage 2: schedule interview, fill rubric scores, mark done
+  | 'send_personality'     // Stage 3: send personality test link, wait for system result
+  | 'remote_readiness'     // Stage 4: administer remote readiness check, enter result
+  | 'assign_task'          // Stage 5: assign work simulation task, wait for submission
+  | 'final_review';        // Stage 6: final compliance, references check
+
+export const VETTING_STAGES: Array<{
+  index: number;
+  name: VettingStage;
+  color: string;
+  icon: string;
+  responsible: string;
+  activityType: VettingActivityType;
+  description: string;
+  scoreKey?: keyof TalentProfile['vettingScores'];
+}> = [
+  {
+    index: 0, name: 'Application Screening', color: '#EF4444', icon: '🔴',
+    responsible: 'Talent Manager', activityType: 'profile_review',
+    description: "Review the candidate's profile — experience, skills, availability, salary, and documents — before proceeding to skill assessment.",
+    // No scoreKey: Application Screening has no score
+  },
+  {
+    index: 1, name: 'Skill Assessment', color: '#3B82F6', icon: '🔵',
+    responsible: 'Skill Assessor', activityType: 'assign_assessment',
+    description: "Assign a role-based skill assessment to the candidate. They will be notified by email. Results appear here once submitted. Admin can override per-category scores before marking as done.",
+    scoreKey: 'technical',
+  },
+  {
+    index: 2, name: 'Behavioural Interview', color: '#8B5CF6', icon: '🟣',
+    responsible: 'Talent Manager', activityType: 'schedule_interview',
+    description: "Schedule a live behavioural interview. Once completed, enter scores for each rubric below. The overall stage score is auto-calculated.",
+    scoreKey: 'behavioral',
+  },
+  {
+    index: 3, name: 'Personality Test', color: '#10B981', icon: '🟢',
+    responsible: 'System (Auto)', activityType: 'send_personality',
+    description: "Send the candidate a link to the personality assessment. The candidate will see it in their dashboard and receive an email. This stage auto-advances when results are received from the provider.",
+    scoreKey: 'personality',
+  },
+  {
+    index: 4, name: 'Remote Readiness', color: '#F59E0B', icon: '🟡',
+    responsible: 'Ops Team', activityType: 'remote_readiness',
+    description: "Guide the candidate through the Remote Readiness checklist: internet quality, hardware, power backup, communication tools, and workspace setup. Enter results below.",
+    scoreKey: 'remoteReadiness',
+  },
+  {
+    index: 5, name: 'Work Simulation', color: '#F97316', icon: '🔥',
+    responsible: 'Team Lead', activityType: 'assign_task',
+    description: "Assign a take-home work simulation task. The candidate submits their work before the deadline. Admin reviews submission and enters a score.",
+    scoreKey: 'workSimulation',
+  },
+  {
+    index: 6, name: 'Final Review', color: '#EAB308', icon: '⭐',
+    responsible: 'Review Panel', activityType: 'final_review',
+    description: "Conduct final reference checks, compliance review, and lock the candidate's composite vetting grade. This is the last step before the talent is marked Vetted.",
+  },
+];
+
+/**
+ * Creates a fresh 7-stage vetting pipeline for a new talent.
+ * Stage 0 starts as 'in_progress'; the rest are 'pending'.
+ */
+export function buildDefaultVettingPipeline(): VettingStageRecord[] {
+  return VETTING_STAGES.map((s, idx) => ({
+    stageIndex: s.index,
+    stageName: s.name,
+    status: idx === 0 ? 'in_progress' as const : 'pending' as const,
+    score: undefined,
+    notes: '',
+    assignee: s.responsible,
+    decision: undefined,
+    deadline: undefined,
+    completedAt: undefined,
+  }));
+}
+
+/**
+ * Applies a stage decision and advances (or stops) the pipeline.
+ * Returns an updated pipeline array.
+ */
+export function advanceTalentStage(
+  pipeline: VettingStageRecord[],
+  stageIdx: number,
+  decision: VettingDecision,
+  score: number | undefined,
+  notes: string
+): VettingStageRecord[] {
+  const updated = pipeline.map((s, idx) => {
+    if (idx !== stageIdx) return s;
+    return {
+      ...s,
+      status: decision === 'Proceed' ? 'passed' as const : decision === 'Reject' ? 'failed' as const : 'in_progress' as const,
+      score: score !== undefined ? score : s.score,
+      notes,
+      decision,
+      completedAt: decision === 'Proceed' || decision === 'Reject' ? new Date().toISOString() : s.completedAt,
+    };
+  });
+
+  // If proceeding, mark next stage as in_progress
+  if (decision === 'Proceed' && stageIdx < VETTING_STAGES.length - 1) {
+    updated[stageIdx + 1] = { ...updated[stageIdx + 1], status: 'in_progress' };
+  }
+
+  return updated;
+}
+
 
 /**
  * Calculates a matching score between a talent profile and a service request.
