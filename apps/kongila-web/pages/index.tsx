@@ -2679,10 +2679,27 @@ export default function KongilaWeb() {
             boxSizing: 'border-box'
           }}>
             <SmartIntakeForm 
-              onComplete={(req) => {
+              onComplete={async (req) => {
                 const calculatedMatches = generateMatchesForRequest(req, talents);
                 setRequests([...requests, req]);
                 setMatches([...matches, ...calculatedMatches]);
+                
+                // Save matches to mock db for the matching engine
+                await fetch('/api/db', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    matches: [...matches, ...calculatedMatches]
+                  })
+                });
+
+                // Insert real audit log
+                await supabase.from('audit_logs').insert({
+                  actor: req.clientName || 'Guest Client',
+                  action: 'Intake Submitted',
+                  details: `Requested ${req.numberOfHires}x ${req.serviceType} role. Budget: $${req.budget}/mo`
+                });
+
                 setClientIntakeActive(false);
                 setAuthView(null);
                 setActiveTab('client');
