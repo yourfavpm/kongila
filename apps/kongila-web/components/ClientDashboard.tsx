@@ -719,216 +719,488 @@ export default function ClientDashboard({
 
   // ─── Sub-Section Layouts ─────────────────────────────────────────────────────
 
-  const renderDashboard = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-      
-      {/* Welcome Telemetry Header */}
-      <div>
-        <h1 style={{ fontSize: '32px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em' }}>
-          Welcome back, {currentUser?.name || 'Client Admin'}
-        </h1>
-        <p style={{ fontSize: '16px', color: '#64748B', margin: 0 }}>
-          Here is an overview of your organization's talent pipeline and active engagements.
-        </p>
-      </div>
+  const renderDashboard = () => {
+    // ─── KC-HOME: Derived data ───────────────────────────────────────────────
+    const now = new Date();
 
-      {/* Modern Curated Stats Cards (Row of 4) */}
-      <div className="stats-card-grid" style={{ gap: '24px' }}>
-        
-        <Card style={{ borderLeft: '4px solid #3B82F6' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Hires</span>
-            <span style={{ fontSize: '20px' }}>👥</span>
-          </div>
-          <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {activeHiresCount}
-          </div>
-          <span style={{ fontSize: '13px', color: activeHiresCount > 0 ? '#10B981' : '#64748B', fontWeight: 600 }}>
-            {activeHiresCount > 0 ? '📈 Active engagements' : 'No active engagements'}
-          </span>
-        </Card>
+    // Active Service Requests widget
+    const openRequests = clientRequests.filter(r => r.status?.toLowerCase() !== 'closed' && r.status?.toLowerCase() !== 'completed');
+    const topThreeRequests = openRequests.slice(0, 3);
 
-        <Card style={{ borderLeft: '4px solid #10B981' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pending Matches</span>
-            <span style={{ fontSize: '20px' }}>📡</span>
-          </div>
-          <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {pendingMatchesCount}
-          </div>
-          <span style={{ fontSize: '13px', color: pendingMatchesCount > 0 ? '#F59E0B' : '#64748B', fontWeight: 600 }}>
-            {pendingMatchesCount > 0 ? '⚠️ Review required' : '✓ Up to date'}
-          </span>
-        </Card>
+    // Matched Talent Waiting — requests at "Candidates Ready", sorted oldest-first
+    const candidatesReadyRequests = clientRequests
+      .filter(r => r.status === 'Candidates Ready')
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const oldestPendingRequestId = candidatesReadyRequests[0]?.id || null;
 
-        <Card style={{ borderLeft: '4px solid #8B5CF6' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Requests</span>
-            <span style={{ fontSize: '20px' }}>📝</span>
-          </div>
-          <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {activeRequestsCount}
-          </div>
-          <span style={{ fontSize: '13px', color: activeRequestsCount > 0 ? '#3B82F6' : '#64748B', fontWeight: 600 }}>
-            {activeRequestsCount > 0 ? '⚡ Sourcing in progress' : 'No active requests'}
-          </span>
-        </Card>
+    // Active Team — deployed talent (active contracts)
+    const activeTeamTalents = talents.filter((t: any) =>
+      activeContracts.some((c: any) => c.talentId === t.id || c.talentName === t.name)
+    );
+    const avgPerformanceScore = activeTeamTalents.length > 0
+      ? Math.round(
+          activeTeamTalents.reduce((sum, t: any) => {
+            const scores = t.vettingScores || {};
+            const vals = Object.values(scores).filter(v => typeof v === 'number') as number[];
+            return sum + (vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 80);
+          }, 0) / activeTeamTalents.length
+        )
+      : 0;
 
-        <Card style={{ borderLeft: '4px solid #EF4444' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pending Invoices</span>
-            <span style={{ fontSize: '20px' }}>💵</span>
-          </div>
-          <div style={{ fontSize: '36px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>
-            {formatCurrency(pendingInvoicesTotal)}
-          </div>
-          <span style={{ fontSize: '13px', color: pendingInvoicesTotal > 0 ? '#EF4444' : '#10B981', fontWeight: 600 }}>
-            {pendingInvoicesTotal > 0 ? '📅 Settlement pending' : '✓ Account fully paid'}
-          </span>
-        </Card>
+    // Upcoming interviews — next 3 within 14 days, client local TZ
+    const clientInterviews: any[] = (typeof window !== 'undefined' ? [] : []);
+    const upcoming3 = Array.isArray(clientInterviews)
+      ? clientInterviews
+          .filter((iv: any) => {
+            const d = new Date(`${iv.date}T${iv.time}`);
+            return iv.status !== 'Cancelled' && d >= now && d <= new Date(now.getTime() + 14 * 86400000);
+          })
+          .sort((a: any, b: any) => new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime())
+          .slice(0, 3)
+      : [];
 
-      </div>
+    // Pending invoices
+    const clientInvoices = invoices.filter((inv: any) => inv.clientId === currentUser?.id);
+    const unpaidInvoices = clientInvoices.filter((inv: any) => inv.status?.toLowerCase() !== 'paid');
+    const overdueInvoices = clientInvoices.filter((inv: any) => inv.status?.toLowerCase() === 'overdue');
+    const totalOutstanding = unpaidInvoices.reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
+    const hasOverdue = overdueInvoices.length > 0;
 
-      {/* Main Body Grid */}
-      <div className="db-grid-split-21" style={{ alignItems: 'start' }}>
-        
-        {/* Left Column: Matching Progress & Performers */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-          
-          <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Matching Progress</h3>
-              <button 
+    // Remotan: unlocked if any active hire exists
+    const remotanUnlocked = activeHiresCount > 0;
+
+    // Status color helper
+    const statusColors: Record<string, { bg: string; text: string; dot: string }> = {
+      'New Request':        { bg: '#EFF6FF', text: '#2563EB', dot: '#3B82F6' },
+      'Matching':           { bg: '#F0FDF4', text: '#16A34A', dot: '#22C55E' },
+      'Candidates Ready':   { bg: '#FFF7ED', text: '#C2410C', dot: '#F97316' },
+      'Interview':          { bg: '#F5F3FF', text: '#6D28D9', dot: '#7C3AED' },
+      'Reviewing':          { bg: '#FEF9C3', text: '#854D0E', dot: '#CA8A04' },
+      'Completed':          { bg: '#F0FDF4', text: '#166534', dot: '#15803D' },
+      'Closed':             { bg: '#F1F5F9', text: '#475569', dot: '#94A3B8' },
+    };
+    const getStatusStyle = (status: string) =>
+      statusColors[status] || { bg: '#F1F5F9', text: '#475569', dot: '#94A3B8' };
+
+    // Build widget order — overdue invoice card goes first if hasOverdue
+    const invoiceWidget = (
+      <Card
+        style={{
+          border: hasOverdue ? '2px solid #EF4444' : '1px solid #E2E8F0',
+          background: hasOverdue ? '#FFF5F5' : '#FFFFFF',
+          boxShadow: hasOverdue ? '0 0 0 4px rgba(239,68,68,0.08)' : undefined,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '10px',
+              background: hasOverdue ? '#FEE2E2' : '#EFF6FF',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px'
+            }}>💵</div>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pending Invoices</div>
+              {hasOverdue && (
+                <div style={{ fontSize: '11px', fontWeight: 800, color: '#EF4444', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#EF4444', display: 'inline-block' }} />
+                  {overdueInvoices.length} OVERDUE
+                </div>
+              )}
+            </div>
+          </div>
+          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B' }}>{unpaidInvoices.length} unpaid</span>
+        </div>
+        <div style={{ fontSize: '28px', fontWeight: 900, color: hasOverdue ? '#DC2626' : '#0F172A', marginBottom: '16px', letterSpacing: '-0.02em' }}>
+          {formatCurrency(totalOutstanding)}
+        </div>
+        <button
+          onClick={() => setActiveSection('billing')}
+          style={{
+            width: '100%', padding: '10px', borderRadius: '10px', border: 'none',
+            background: hasOverdue ? '#EF4444' : '#0F172A',
+            color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer',
+            transition: 'opacity 0.2s'
+          }}
+        >
+          {hasOverdue ? '⚠️ Pay Now — Overdue Balance' : 'Pay Now →'}
+        </button>
+      </Card>
+    );
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+
+        {/* ── Welcome Header ──────────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: 700, color: '#6366F1', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 8px 0' }}>
+              ● KONGILA CLIENT PORTAL
+            </p>
+            <h1 style={{ fontSize: '32px', fontWeight: 900, color: '#0F172A', marginBottom: '8px', letterSpacing: '-0.03em', margin: 0 }}>
+              Welcome back, {currentUser?.name?.split(' ')[0] || 'Client'} 👋
+            </h1>
+            <p style={{ fontSize: '15px', color: '#64748B', margin: '8px 0 0 0' }}>
+              {currentUser?.companyName ? `${currentUser.companyName} · ` : ''}Here's your full Kongila pipeline at a glance.
+            </p>
+          </div>
+          {/* Quick Actions Bar (always visible) */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => { setShowIntakeModal(true); setIntakeStep(1); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', border: 'none',
+                borderRadius: '10px', padding: '10px 18px', color: '#FFFFFF',
+                fontWeight: 700, fontSize: '13px', cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(37,99,235,0.25)', transition: 'transform 0.2s'
+              }}
+              onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-1px)')}
+              onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}
+            >
+              ＋ New Request
+            </button>
+            <button
+              onClick={() => setActiveSection('messaging')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: '#FFFFFF', border: '1px solid #E2E8F0',
+                borderRadius: '10px', padding: '10px 18px', color: '#1E293B',
+                fontWeight: 700, fontSize: '13px', cursor: 'pointer', transition: 'background 0.2s'
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#F8FAFC')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+            >
+              💬 Message Account Manager
+            </button>
+            <button
+              onClick={() => setActiveSection('billing')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: '#FFFFFF', border: '1px solid #E2E8F0',
+                borderRadius: '10px', padding: '10px 18px', color: '#1E293B',
+                fontWeight: 700, fontSize: '13px', cursor: 'pointer', transition: 'background 0.2s'
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#F8FAFC')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+            >
+              🧾 View Invoices
+            </button>
+          </div>
+        </div>
+
+        {/* ── Widget Grid Row 1: Primary Status Cards ──────────────────────────── */}
+        {/* If overdue, invoice widget is hoisted to first row */}
+        {hasOverdue && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0' }}>
+            {invoiceWidget}
+          </div>
+        )}
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+          gap: '20px'
+        }}>
+
+          {/* 1. Active Service Requests */}
+          <Card style={{ gridColumn: 'span 2' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>📋</div>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Service Requests</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', lineHeight: 1 }}>{openRequests.length}</div>
+                </div>
+              </div>
+              <button
                 onClick={() => setActiveSection('requests')}
-                style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+                style={{ background: '#EFF6FF', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer', padding: '6px 10px', borderRadius: '8px' }}
               >
-                View all requests
+                View All →
               </button>
             </div>
-
-            {/* List Pipeline items modeled after mockup */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-              {clientRequests.length > 0 ? (
-                clientRequests.map(req => {
-                  // Determine pipeline state matching status
-                  const isMatching = req.status === 'Matching';
-                  const isInterview = matches.some(m => m.requestId === req.id && m.status === 'Interview Scheduled');
-                  const activeStageLabel = isInterview ? 'INTERVIEW STAGE' : (isMatching ? 'MATCHING STAGE' : 'SOURCING STAGE');
-                  const activeProgressPercent = isInterview ? 90 : (isMatching ? 50 : 15);
-                  
+            {topThreeRequests.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {topThreeRequests.map(req => {
+                  const sc = getStatusStyle(req.status || 'New Request');
                   return (
-                    <div key={req.id}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '15px' }}>{req.serviceType?.toUpperCase()} intake</div>
-                          <div style={{ fontSize: '13px', color: '#64748B', marginTop: '2px' }}>Duration: {req.duration || 'Short term'}</div>
+                    <div
+                      key={req.id}
+                      onClick={() => { setDetailsViewRequestId(req.id); setActiveSection('requests'); }}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '12px 16px', borderRadius: '12px', border: '1px solid #F1F5F9',
+                        background: '#FAFBFC', cursor: 'pointer', transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#F1F5F9')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '#FAFBFC')}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {req.serviceType} {req.roleDescription ? `— ${req.roleDescription.split(' ').slice(0, 5).join(' ')}…` : ''}
                         </div>
-                        <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: 800, background: '#EFF6FF', color: '#2563EB', padding: '4px 8px', borderRadius: '6px', textTransform: 'uppercase' }}>{activeStageLabel}</span>
-                      </div>
-
-                      {/* Horizontal Pipeline Tracker Modeled After Stitch Mockup */}
-                      <div style={{ position: 'relative', height: '6px', background: '#E2E8F0', borderRadius: '4px', margin: '20px 0 30px 0' }}>
-                        <div style={{ position: 'absolute', height: '100%', width: `${activeProgressPercent}%`, background: '#2563EB', borderRadius: '4px', transition: 'width 0.5s ease' }} />
-                        <div style={{ position: 'absolute', display: 'flex', justifyContent: 'space-between', width: '100%', top: '-6px' }}>
-                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#2563EB', border: '3px solid #FFFFFF', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }} />
-                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: activeProgressPercent >= 50 ? '#2563EB' : '#E2E8F0', border: '3px solid #FFFFFF', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }} />
-                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: activeProgressPercent >= 90 ? '#2563EB' : '#E2E8F0', border: '3px solid #FFFFFF', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }} />
-                        </div>
-                        <div style={{ position: 'absolute', display: 'flex', justifyContent: 'space-between', width: '100%', top: '20px', fontSize: '10px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          <span>Sourcing</span>
-                          <span>Matching</span>
-                          <span>Interview</span>
+                        <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>
+                          {req.numberOfHires} hire{req.numberOfHires !== 1 ? 's' : ''} · {req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Recently'}
                         </div>
                       </div>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '8px',
+                        background: sc.bg, color: sc.text, whiteSpace: 'nowrap', marginLeft: '12px'
+                      }}>
+                        <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: sc.dot }} />
+                        {req.status || 'New Request'}
+                      </span>
                     </div>
                   );
-                })
-              ) : (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748B' }}>
-                  <p>No active sourcing pipelines. Launch an intake form to start matching!</p>
-                </div>
-              )}
-            </div>
+                })}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '24px', color: '#94A3B8' }}>
+                <div style={{ fontSize: '32px', marginBottom: '8px' }}>📭</div>
+                <p style={{ fontSize: '13px', margin: '0 0 12px 0' }}>No open requests yet</p>
+                <button
+                  onClick={() => { setShowIntakeModal(true); setIntakeStep(1); }}
+                  style={{ background: '#2563EB', border: 'none', borderRadius: '8px', padding: '8px 16px', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
+                >
+                  + New Request
+                </button>
+              </div>
+            )}
           </Card>
 
-          {/* Top Performers Section */}
+          {/* 2. Matched Talent Waiting */}
+          {candidatesReadyRequests.length > 0 && (
+            <Card style={{ borderTop: '3px solid #F97316' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>🎯</div>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Matched Talent Waiting</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', lineHeight: 1 }}>{candidatesReadyRequests.length}</div>
+                </div>
+              </div>
+              <p style={{ fontSize: '13px', color: '#475569', margin: '0 0 16px 0' }}>
+                {candidatesReadyRequests.length === 1
+                  ? 'Candidates are ready for your review'
+                  : `${candidatesReadyRequests.length} requests have candidates ready — oldest pending first`
+                }
+              </p>
+              <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '12px' }}>
+                Waiting since: {candidatesReadyRequests[0]?.createdAt
+                  ? new Date(candidatesReadyRequests[0].createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                  : 'Recently'}
+              </div>
+              <button
+                onClick={() => {
+                  if (oldestPendingRequestId) {
+                    setDetailsViewRequestId(oldestPendingRequestId);
+                    setActiveSection('radar');
+                  }
+                }}
+                style={{
+                  width: '100%', padding: '10px', borderRadius: '10px', border: 'none',
+                  background: 'linear-gradient(135deg, #F97316, #EA580C)',
+                  color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(249,115,22,0.2)'
+                }}
+              >
+                Review Now →
+              </button>
+            </Card>
+          )}
+
+          {/* 3. Active Team Summary — only visible after first hire */}
+          {activeHiresCount > 0 && (
+            <Card style={{ borderTop: '3px solid #10B981' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#ECFDF5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>👥</div>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Team</div>
+                  <div style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', lineHeight: 1 }}>{activeHiresCount}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                <div style={{ flex: 1, background: '#F8FAFC', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 700, textTransform: 'uppercase' }}>Deployed</div>
+                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#10B981' }}>{activeHiresCount}</div>
+                </div>
+                <div style={{ flex: 1, background: '#F8FAFC', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 700, textTransform: 'uppercase' }}>Avg. Score</div>
+                  <div style={{ fontSize: '20px', fontWeight: 900, color: '#2563EB' }}>{avgPerformanceScore}%</div>
+                </div>
+              </div>
+              {/* Avatar pile */}
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                {activeTeamTalents.slice(0, 4).map((t: any, i: number) => (
+                  <div
+                    key={t.id}
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '50%',
+                      border: '2px solid #FFFFFF', marginLeft: i > 0 ? '-8px' : '0',
+                      background: '#EFF6FF', display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', fontSize: '13px', fontWeight: 700, color: '#2563EB',
+                      overflow: 'hidden', zIndex: 5 - i
+                    }}
+                  >
+                    {t.avatar
+                      ? <img src={t.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : (t.name?.charAt(0) || '?')
+                    }
+                  </div>
+                ))}
+                {activeTeamTalents.length > 4 && (
+                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '2px solid #FFFFFF', marginLeft: '-8px', background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: '#475569' }}>
+                    +{activeTeamTalents.length - 4}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setActiveSection('contracts')}
+                style={{
+                  width: '100%', padding: '10px', borderRadius: '10px', border: 'none',
+                  background: '#0F172A', color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer'
+                }}
+              >
+                View My Team →
+              </button>
+            </Card>
+          )}
+
+          {/* 4. Upcoming Interviews — only shown when interviews exist */}
           <Card>
-            <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '20px' }}>
-              {activeHiresCount > 0 
-                ? `Showing top performers from ${activeHiresCount} active hires` 
-                : 'Active Hires'}
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {activeHiresCount > 0 ? (
-                talents
-                  .filter((t: any) => activeContracts.some((c: any) => c.talentId === t.id || c.talentName === t.name))
-                  .slice(0, 3)
-                  .map(talent => (
-                    <div key={talent.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', border: '1px solid #F1F5F9', borderRadius: '12px', background: '#FAFBFC' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <img src={talent.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100"} alt="" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-                        <div>
-                          <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '14px' }}>{talent.name}</div>
-                          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{talent.title}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>📅</div>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Upcoming Interviews</div>
+                <div style={{ fontSize: '22px', fontWeight: 900, color: '#0F172A', lineHeight: 1 }}>{upcoming3.length}</div>
+              </div>
+            </div>
+            {upcoming3.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {upcoming3.map((iv: any) => (
+                  <div key={iv.id} style={{ padding: '10px 12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #F1F5F9' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', marginBottom: '2px' }}>{iv.talentName}</div>
+                    <div style={{ fontSize: '11px', color: '#64748B' }}>
+                      {new Date(`${iv.date}T${iv.time}`).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ fontSize: '13px', color: '#94A3B8', margin: 0 }}>No upcoming interviews in the next 14 days.</p>
+            )}
+            <button
+              onClick={() => setActiveSection('scheduling')}
+              style={{ marginTop: '14px', width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+            >
+              View All →
+            </button>
+          </Card>
+
+          {/* 5. Pending Invoices — shown here only if NOT overdue (overdue version is hoisted above) */}
+          {!hasOverdue && invoiceWidget}
+
+          {/* 6. Remotan Access Status */}
+          <Card style={{ borderTop: remotanUnlocked ? '3px solid #6366F1' : '3px solid #E2E8F0', gridColumn: remotanUnlocked ? undefined : undefined }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: remotanUnlocked ? '#EEF2FF' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                {remotanUnlocked ? '🔓' : '🔒'}
+              </div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Remotan Workspace</div>
+            </div>
+            {remotanUnlocked ? (
+              <>
+                <p style={{ fontSize: '13px', fontWeight: 700, color: '#4338CA', margin: '0 0 4px 0' }}>Workspace Ready</p>
+                <p style={{ fontSize: '12px', color: '#64748B', margin: '0 0 16px 0' }}>Your Remotan workspace is provisioned and active for your team.</p>
+                <a
+                  href="https://remotan.io"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ display: 'block', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #6366F1, #4F46E5)', color: '#FFFFFF', fontWeight: 700, fontSize: '13px', cursor: 'pointer', textDecoration: 'none', textAlign: 'center', boxSizing: 'border-box' }}
+                >
+                  Open Remotan ↗
+                </a>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: '13px', fontWeight: 700, color: '#94A3B8', margin: '0 0 4px 0' }}>Hire your first talent to unlock</p>
+                <p style={{ fontSize: '12px', color: '#94A3B8', margin: '0 0 16px 0' }}>Remotan workspace is unlocked after your first active hire.</p>
+                <button
+                  onClick={() => { setShowIntakeModal(true); setIntakeStep(1); }}
+                  style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#475569', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+                >
+                  + New Request
+                </button>
+              </>
+            )}
+          </Card>
+
+        </div>
+
+        {/* ── Pipeline progress strip ─────────────────────────────────────────── */}
+        {openRequests.length > 0 && (
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>Sourcing Pipeline</h3>
+              <button
+                onClick={() => setActiveSection('requests')}
+                style={{ background: 'transparent', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                View All Requests →
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {openRequests.slice(0, 3).map(req => {
+                const reqMatches = matches.filter((m: any) => m.requestId === req.id);
+                const hasInterview = reqMatches.some((m: any) => m.status === 'Interview Scheduled');
+                const hasMatch = reqMatches.length > 0;
+                const pct = req.status === 'Candidates Ready' ? 75 : hasInterview ? 90 : hasMatch ? 50 : 20;
+                const stages = [
+                  { label: 'Sourcing', pct: 20 },
+                  { label: 'Matching', pct: 50 },
+                  { label: 'Shortlisted', pct: 75 },
+                  { label: 'Interview', pct: 90 },
+                  { label: 'Hired', pct: 100 }
+                ];
+                return (
+                  <div key={req.id}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                          {req.serviceType} — {req.roleDescription?.split(' ').slice(0, 4).join(' ') || 'Talent Required'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>
+                          {req.numberOfHires} hire{req.numberOfHires !== 1 ? 's' : ''} · {req.duration || 'Ongoing'}
                         </div>
                       </div>
-                      <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: 800, background: '#ECFDF5', color: '#10B981', padding: '4px 8px', borderRadius: '6px' }}>Grade: {talent.grade || 'A+'}</span>
+                      {(() => { const sc = getStatusStyle(req.status || 'New Request'); return (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: 800, padding: '3px 8px', borderRadius: '8px', background: sc.bg, color: sc.text }}>
+                          <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: sc.dot }} />
+                          {req.status || 'New Request'}
+                        </span>
+                      ); })()}
                     </div>
-                  ))
-              ) : (
-                <div style={{ textAlign: 'center', padding: '24px', color: '#64748B', fontSize: '13px' }}>
-                  No active hired talent yet. Match and hire experts to see their ratings!
-                </div>
-              )}
-            </div>
-          </Card>
-
-        </div>
-
-        {/* Right Column: Quick Actions & Recent Activity */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-          
-          {/* Quick Actions Modeled After Mockup */}
-          <Card>
-            <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '20px' }}>Quick Actions</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <button 
-                onClick={() => { setShowIntakeModal(true); setIntakeStep(1); }}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', background: '#2563EB', border: 'none', borderRadius: '12px', padding: '14px', color: '#FFFFFF', fontWeight: 700, fontSize: '14px', cursor: 'pointer', transition: 'background 0.2s', boxShadow: '0 4px 12px rgba(37,99,235,0.15)' }}
-              >
-                <span>➕</span> Create New Request
-              </button>
-              <button 
-                onClick={() => setActiveSection('messaging')}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px', color: '#0F172A', fontWeight: 700, fontSize: '14px', cursor: 'pointer', transition: 'background 0.2s' }}
-              >
-                <span>💬</span> Message Account Manager
-              </button>
-            </div>
-          </Card>
-
-          {/* Recent Activity Feed */}
-          <Card>
-            <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginBottom: '20px' }}>Recent Activity</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {dynamicActivities.map(act => (
-                <div key={act.id} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '18px', background: '#EEF2F6', padding: '8px', borderRadius: '8px' }}>{act.icon}</span>
-                  <div>
-                    <p style={{ fontSize: '13px', color: '#1E293B', margin: 0, fontWeight: 500, lineHeight: 1.4 }}>{act.text}</p>
-                    <span style={{ fontSize: '11px', color: '#64748B', display: 'block', marginTop: '4px' }}>{act.time}</span>
+                    <div style={{ position: 'relative', height: '4px', background: '#E2E8F0', borderRadius: '4px', marginBottom: '24px' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #2563EB, #7C3AED)', borderRadius: '4px', transition: 'width 0.6s ease' }} />
+                      {stages.map((s, i) => (
+                        <div key={i} style={{ position: 'absolute', left: `${s.pct}%`, top: '-7px', transform: 'translateX(-50%)' }}>
+                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: pct >= s.pct ? '#2563EB' : '#E2E8F0', border: '3px solid #FFFFFF', boxShadow: '0 1px 4px rgba(0,0,0,0.12)', transition: 'background 0.4s' }} />
+                          <div style={{ position: 'absolute', top: '18px', left: '50%', transform: 'translateX(-50%)', fontSize: '9px', fontWeight: 700, color: pct >= s.pct ? '#2563EB' : '#94A3B8', whiteSpace: 'nowrap' }}>
+                            {s.label}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
-
-        </div>
+        )}
 
       </div>
-
-    </div>
-  );
+    );
+  };
 
   const renderRequests = () => {
     // In-memory filtration over the client's requests
