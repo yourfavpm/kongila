@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
+import { supabase } from '../../lib/supabaseClient';
 
 type Tab = 'overview' | 'requests' | 'active-talent' | 'contracts' | 'billing' | 'communication';
 
