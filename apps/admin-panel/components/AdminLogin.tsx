@@ -31,13 +31,13 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           .from('users')
           .select('role')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
 
-        if (userError || !userData) {
+        if (userError) {
           throw new Error('Failed to verify admin role.');
         }
 
-        if (userData.role !== 'admin' && userData.role !== 'ops_manager') {
+        if (!userData || (userData.role !== 'admin' && userData.role !== 'ops_manager')) {
           await supabase.auth.signOut();
           throw new Error('Access denied. You do not have admin privileges.');
         }

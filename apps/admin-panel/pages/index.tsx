@@ -302,7 +302,7 @@ export default function AdminPanel() {
         setClientProfiles(supabaseClientProfiles || []);
         
         // Fetch audit logs from Supabase
-        const { data: supabaseAuditLogs } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
+        const { data: supabaseAuditLogs } = await supabase.from('audit_logs').select('*').order('timestamp', { ascending: false });
         setAuditLogs(supabaseAuditLogs || []);
         
         setContracts(db.contracts || []);
