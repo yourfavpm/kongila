@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import Head from 'next/head';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
 import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
@@ -115,6 +116,7 @@ export default function KongilaWeb() {
 
   // Identity & Unified Auth Progressive States
   const [currentUser, setCurrentUser] = useState<any>(null); // { id, name, email, role, onboardingStatus, emailVerified, organizationId }
+  const currentUserRef = useRef<any>(null);
   const [authView, setAuthView] = useState<'login' | 'signup' | 'verify' | 'onboarding' | null>(null);
   const [authRole, setAuthRole] = useState<'talent' | 'client'>('talent');
   
@@ -308,6 +310,10 @@ export default function KongilaWeb() {
     setTimeout(() => setBannerMessage(null), 5000);
   };
 
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   // Sync with central filesystem DB
   const syncFromDb = async () => {
     // Safety timeout to prevent infinite loading if promises hang
@@ -317,7 +323,7 @@ export default function KongilaWeb() {
 
     try {
       const controller = new AbortController();
-      const fetchTimeout = setTimeout(() => controller.abort(), 25000);
+      const fetchTimeout = setTimeout(() => controller.abort(), 60000);
       const res = await fetch('/api/db', { signal: controller.signal }).catch(e => {
         console.warn("fetch /api/db error or abort", e);
         return { ok: false, json: async () => ({}) } as Response;
@@ -333,10 +339,9 @@ export default function KongilaWeb() {
         
         // Fetch service requests from Supabase
         let query = supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
-        // If current session user is a client, we should scope the query
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.user_metadata?.role === 'client') {
-           query = query.eq('client_id', session.user.id);
+        const activeUser = currentUserRef.current;
+        if (activeUser?.role === 'client') {
+           query = query.eq('client_id', activeUser.id);
         }
         
         const { data: supabaseRequests, error: reqErr } = await query;
@@ -349,8 +354,8 @@ export default function KongilaWeb() {
 
         // Fetch invoices from Supabase
         let invoicesQuery = supabase.from('invoices').select('*, invoice_line_items(*)').order('created_at', { ascending: false });
-        if (session?.user?.user_metadata?.role === 'client') {
-           invoicesQuery = invoicesQuery.eq('client_id', session.user.id);
+        if (activeUser?.role === 'client') {
+           invoicesQuery = invoicesQuery.eq('client_id', activeUser.id);
         }
         const { data: supabaseInvoices } = await invoicesQuery;
         if (supabaseInvoices) {
@@ -435,55 +440,56 @@ export default function KongilaWeb() {
   }, [authView, clientIntakeStep, clientIntakeActive]);
 
   useEffect(() => {
+    const restoreUserFromSession = async (session: Session) => {
+      const authUser = session.user;
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', authUser.email)
+        .maybeSingle();
+
+      const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
+      let isOnboardingComplete = dbUser?.status === 'active';
+      if (role === 'talent') {
+        const { data: dbTalentProfile } = await supabase
+          .from('talent_profiles')
+          .select('id,bio')
+          .eq('id', dbUser?.id || authUser.id)
+          .maybeSingle();
+        isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+      }
+
+      const restoredUser = {
+        id: dbUser?.id || authUser.id,
+        name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
+        email: authUser.email || '',
+        role,
+        onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
+        emailVerified: true,
+        companyName: authUser.user_metadata?.company_name,
+        createdAt: authUser.created_at
+      };
+      currentUserRef.current = restoredUser;
+      setCurrentUser(restoredUser);
+
+      if (!isOnboardingComplete && role === 'talent') {
+        setAuthView('onboarding');
+      } else {
+        setAuthView(null);
+        if (role === 'talent') setActiveTab('talent');
+        else setActiveTab('client');
+      }
+    };
+
     // Restore session on page load
-    const initSession = async () => {
+    const initSession = async (existingSession?: Session | null) => {
       const initSafetyTimeout = setTimeout(() => {
         setLoading(false);
-      }, 15000);
+      }, 30000);
       try {
-        const { data: { session } } = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 14000))
-        ]);
+        const session = existingSession ?? (await supabase.auth.getSession()).data.session;
         if (session?.user) {
-          const authUser = session.user;
-          // Fetch role from public.users table
-          const { data: dbUser } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', authUser.email)
-            .maybeSingle();
-
-          const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
-          let isOnboardingComplete = dbUser?.status === 'active';
-          if (role === 'talent') {
-            const { data: dbTalentProfile } = await supabase
-              .from('talent_profiles')
-              .select('id,bio')
-              .eq('id', dbUser?.id || authUser.id)
-              .maybeSingle();
-            isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
-          }
-          
-          const restoredUser = {
-            id: dbUser?.id || authUser.id,
-            name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
-            email: authUser.email || '',
-            role,
-            onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
-            emailVerified: true,
-            companyName: authUser.user_metadata?.company_name,
-            createdAt: authUser.created_at
-          };
-          setCurrentUser(restoredUser);
-          
-          if (!isOnboardingComplete && role === 'talent') {
-            setAuthView('onboarding');
-          } else {
-            setAuthView(null);
-            if (role === 'talent') setActiveTab('talent');
-            else setActiveTab('client');
-          }
+          await restoreUserFromSession(session);
         }
       } catch (err) {
         console.error("Session init failed", err);
@@ -496,13 +502,20 @@ export default function KongilaWeb() {
     initSession();
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
+        currentUserRef.current = null;
         setCurrentUser(null);
         setAuthView('login');
         setActiveTab('home');
-      } else if (event === 'SIGNED_IN') {
-        await initSession();
+        return;
+      }
+
+      if (event === 'SIGNED_IN' && session) {
+        // Defer async work so we don't call getSession while the auth lock is held.
+        setTimeout(() => {
+          void initSession(session);
+        }, 0);
       }
     });
 
@@ -818,6 +831,7 @@ export default function KongilaWeb() {
         createdAt: data.user?.created_at || new Date().toISOString()
       };
 
+      currentUserRef.current = loggedInUser;
       setCurrentUser(loggedInUser);
       
       if (!isOnboardingComplete && role === 'talent') {
