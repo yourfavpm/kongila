@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@kongila/utils';
+import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
 import type { Interview, Contract } from '@kongila/shared-types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
@@ -6625,7 +6626,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
     return `${h}h ${m}m ${s}s`;
   };
 
-  if (loading) return <div style={{padding:'40px',textAlign:'center'}}>Loading Vetting Progress...</div>;
+  if (loading) return <KongilaLoader text="Loading Vetting Progress..." />;
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:'24px'}}>

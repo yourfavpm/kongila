@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard } from '@kongila/ui';
+import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
+import { supabase } from '../../lib/supabaseClient';
+import { useToast } from '@kongila/ui';
 
 export default function MatchingEngine() {
   const router = useRouter();
   const { requestId } = router.query;
+  const { addToast } = useToast();
 
   const [request, setRequest] = useState<any>(null);
   const [talents, setTalents] = useState<any[]>([]);
@@ -28,10 +31,21 @@ export default function MatchingEngine() {
     if (!requestId) return;
     const fetchData = async () => {
       try {
-        const res = await fetch('/api/db');
-        const db = await res.json();
         
-        const req = (db.clientRequests || db.requests || []).find((r: any) => r.id === requestId);
+        const requestPromise = supabase
+          .from('talent_requests')
+          .select('payload')
+          .eq('payload->>id', requestId as string)
+          .maybeSingle();
+
+        const dbPromise = fetch('/api/db').then(res => res.json());
+
+        const [{ data: requestData }, db] = await Promise.all([
+          requestPromise,
+          dbPromise
+        ]);
+
+        const req = requestData?.payload;
         if (req) {
           setRequest(req);
         }
@@ -108,9 +122,8 @@ export default function MatchingEngine() {
   };
 
   const handleSubmitCandidates = async () => {
-    // Validations
     if (selectedCandidateIds.length === 0) {
-      alert("Please select at least one candidate to submit.");
+      addToast('Please select at least one candidate to submit.', 'error');
       return;
     }
 
@@ -124,13 +137,13 @@ export default function MatchingEngine() {
     });
 
     if (conflictingTalent) {
-      const t = talents.find(t => t.id === conflictingTalent);
-      alert(`Conflict: ${t?.name} is already an active candidate for another client's request. Resolve that match first.`);
+      const t = talents.find((tal: any) => tal.id === conflictingTalent);
+      addToast(`Conflict: ${t?.name} is already an active candidate for another client's request. Resolve that match first.`, 'error');
       return;
     }
 
     if (selectedCandidateIds.length < 2 && !submissionJustification) {
-      alert("Minimum Candidate Justification: Please provide a written reason below for submitting fewer than 2 candidates.");
+      addToast('Minimum Candidate Justification: Please provide a written reason below for submitting fewer than 2 candidates.', 'info');
       return;
     }
 
@@ -168,36 +181,35 @@ export default function MatchingEngine() {
         };
       });
 
-      const updatedRequests = (db.clientRequests || db.requests || []).map((r: any) => {
-        if (r.id === requestId) {
-          return { ...r, status: 'Candidates Ready' };
-        }
-        return r;
-      });
-
-      const newAuditLog = {
-        id: `audit_${Date.now()}`,
+      // Update request status in Supabase
+      const updatedPayload = { ...request, status: 'Candidates Ready' };
+      const { error: reqError } = await supabase
+        .from('talent_requests')
+        .update({ payload: updatedPayload })
+        .eq('payload->>id', requestId as string);
+        
+      if (reqError) throw reqError;
+      
+      await supabase.from('audit_logs').insert({
         actor: 'Talent Manager',
         action: 'Submit Candidates',
-        details: `Submitted ${selectedCandidateIds.length} candidates for request ${requestId}`,
-        timestamp: new Date().toISOString()
-      };
+        details: `Submitted ${selectedCandidateIds.length} candidates for request ${requestId}`
+      });
 
+      // Update local db matches
       await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          matches: [...(db.matches || []), ...newMatches],
-          service_requests: updatedRequests,
-          auditLogs: [newAuditLog, ...(db.auditLogs || [])]
+          matches: [...(db.matches || []), ...newMatches]
         })
       });
 
-      alert('Candidates successfully submitted to the client!');
+      addToast('Candidates successfully submitted to the client!', 'success');
       router.push(`/requests/${requestId}`);
     } catch (e) {
       console.error(e);
-      alert('Failed to submit candidates.');
+      addToast('Failed to submit candidates.', 'error');
     } finally {
       setIsSubmitting(false);
       setShowOverrideModal(false);
@@ -212,12 +224,19 @@ export default function MatchingEngine() {
       const resDb = await fetch('/api/db');
       const db = await resDb.json();
 
-      const updatedRequests = (db.clientRequests || db.requests || []).map((r: any) => {
-        if (r.id === requestId) {
-          return { ...r, status: 'Sourcing Required', internalNotes: (r.internalNotes || '') + '\n[System]: Flagged as Sourcing Required.' };
-        }
-        return r;
-      });
+      // Update request status in Supabase
+      const updatedPayload = { 
+        ...request, 
+        status: 'Sourcing Required', 
+        internalNotes: (request.internalNotes || '') + '\n[System]: Flagged as Sourcing Required.' 
+      };
+      
+      const { error: reqError } = await supabase
+        .from('talent_requests')
+        .update({ payload: updatedPayload })
+        .eq('payload->>id', requestId as string);
+        
+      if (reqError) throw reqError;
 
       const newTask = {
         id: `task_${Date.now()}`,
@@ -232,22 +251,21 @@ export default function MatchingEngine() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          service_requests: updatedRequests,
           tasks: [...(db.tasks || []), newTask]
         })
       });
 
-      alert('Request flagged for Sourcing. TA team notified.');
+      addToast('Request flagged for Sourcing. TA team notified.', 'info');
       router.push(`/requests/${requestId}`);
     } catch (e) {
       console.error(e);
-      alert('Action failed.');
+      addToast('Action failed.', 'error');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading matching workspace...</div>;
+  if (loading) return <KongilaLoader text="Loading Request Data..." />;
   if (!request) return <div style={{ padding: '40px' }}>Request not found.</div>;
 
   return (
@@ -274,9 +292,19 @@ export default function MatchingEngine() {
               onClick={handleSubmitCandidates} 
               disabled={isSubmitting || selectedCandidateIds.length === 0} 
               className="btn-primary" 
-              style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', opacity: selectedCandidateIds.length === 0 ? 0.5 : 1 }}
+              style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', opacity: selectedCandidateIds.length === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: '8px' }}
             >
-              Submit {selectedCandidateIds.length} Candidates to Client
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin" style={{ width: '16px', height: '16px', color: 'white' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Submitting...
+                </>
+              ) : (
+                `Submit ${selectedCandidateIds.length} Candidates to Client`
+              )}
             </button>
           </div>
         </div>
@@ -351,9 +379,25 @@ export default function MatchingEngine() {
         )}
 
         {/* Ranked Candidates */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '20px' }}>
-          {scoredCandidates.map((c, idx) => {
-            const isSelected = selectedCandidateIds.includes(c.talent.id);
+        {scoredCandidates.length === 0 ? (
+          <GlassCard style={{ textAlign: 'center', padding: '60px 20px', marginTop: '20px' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📭</div>
+            <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>No Deployable Talents Found</h3>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', maxWidth: '500px', margin: '0 auto 24px auto', lineHeight: 1.5 }}>
+              The matching engine only recommends talents who have completed the vetting process and are marked as <strong>"Vetted &amp; Available"</strong>. Currently, there are no talents in this stage.
+            </p>
+            <button 
+              onClick={() => router.push('/?tab=talent-pipeline')} 
+              className="btn-primary" 
+              style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '14px' }}
+            >
+              Go to Talent Pipeline
+            </button>
+          </GlassCard>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '20px' }}>
+            {scoredCandidates.map((c, idx) => {
+              const isSelected = selectedCandidateIds.includes(c.talent.id);
             const isTop5 = idx < 5;
             
             return (
@@ -426,8 +470,9 @@ export default function MatchingEngine() {
                 </div>
               </GlassCard>
             );
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -15,7 +15,7 @@ export interface Organization {
   subscription_type: 'Free' | 'Basic' | 'Enterprise';
   accountManagerId?: string;
   accountManagerName?: string;
-  status?: 'Active' | 'At Risk' | 'Inactive';
+  status?: 'Active' | 'At Risk' | 'Inactive' | string;
   healthScore?: number;
   internalNotes?: string;
   contactEmail?: string;
@@ -23,6 +23,12 @@ export interface Organization {
   monthlyRevenue?: number;
   lastActivityAt?: string;
   createdAt?: string;
+  industry?: string;
+  company_size?: string;
+  country?: string;
+  website?: string;
+  how_did_you_hear_about_us?: string;
+  multi_user_enabled?: boolean;
 }
 
 export type VettingStage =
@@ -352,10 +358,19 @@ export interface ServiceRequest {
 
 export interface MatchBreakdown {
   skillFit: number;
-  behaviorFit: number;
+  behaviourFit: number;
   personalityFit: number;
   availability: number;
   pastPerformance: number;
+}
+
+export interface RequestActivityLog {
+  id: string;
+  requestId: string;
+  actorId: string | null;
+  actionType: string;
+  fieldChanges?: Record<string, { old: any; new: any }>;
+  createdAt: string;
 }
 
 export interface Match {
@@ -364,7 +379,8 @@ export interface Match {
   talentId: string;
   score: number; // 0 - 100
   breakdown: MatchBreakdown;
-  status: 'Applied' | 'Shortlisted' | 'Interview Requested' | 'Interview Scheduled' | 'Interviewed' | 'Offer Extended' | 'Offer Accepted' | 'Declined';
+  status: 'Proposed' | 'Applied' | 'Shortlisted' | 'Interview Requested' | 'Interview Scheduled' | 'Interviewed' | 'Offer Extended' | 'Offer Accepted' | 'Declined' | 'submitted_to_client' | 'rejected_by_client' | 'accepted';
+  clientRejectionReason?: string;
   requestedDate?: string;
   requestedTime?: string;
   requestedDuration?: string;
@@ -421,6 +437,13 @@ export interface Contract {
   engagement_type?: string;
   status: 'draft' | 'pending_signatures' | 'client_signed' | 'talent_signed' | 'active' | 'completed' | 'terminated' | 'Pending' | 'Signed' | 'Expired' | 'Voided';
   performance_score?: number;
+  clientMonthlyFeeUsd?: number;
+  performanceScore?: number;
+  rating?: number;
+  rateAmount?: number;
+  endDate?: string;
+  requestId?: string;
+  terminationReason?: string;
   talent_signed_at?: string;
   talent_sign_ip?: string;
   document_hash?: string;
@@ -466,6 +489,7 @@ export interface ClientProfile {
   organizationId: string;
   position: string;
   phone: string;
+  permissionLevel?: 'Full Access' | 'Billing Only' | 'View Only' | string;
 }
 
 export interface Skill {
@@ -727,7 +751,9 @@ export interface Interview {
   meetingLink?: string;
   notes?: string;
   talentNotes?: string;
-  outcome?: 'Proceeded' | 'Not Selected' | 'Pending Decision';
+  clientRating?: number;
+  clientFeedback?: string;
+  outcome?: 'Proceed to Hire' | 'No Fit' | 'Hold' | 'Pending Decision' | 'Proceeded' | 'Not Selected';
   googleCalendarEventId?: string;
   googleCalendarLink?: string;
   createdAt: string;

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard } from '@kongila/ui';
-import { formatDate, formatCurrency } from '@kongila/utils';
+import { GlassCard, KongilaLoader } from '@kongila/ui';
+import { formatDate, formatCurrency, getGradeColor } from '@kongila/utils';
+import { supabase } from '../../lib/supabaseClient';
 
 export default function RequestDetailView() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function RequestDetailView() {
   const [request, setRequest] = useState<any>(null);
   const [client, setClient] = useState<any>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
   const [isEditing, setIsEditing] = useState(false);
@@ -28,11 +30,33 @@ export default function RequestDetailView() {
     if (!id) return;
     const fetchRequest = async () => {
       try {
-        const res = await fetch('/api/db');
-        const db = await res.json();
         
-        const req = (db.clientRequests || db.requests || []).find((r: any) => r.id === id);
-        if (req) {
+        const requestPromise = supabase
+          .from('talent_requests')
+          .select('*')
+          .eq('payload->>id', id as string)
+          .maybeSingle();
+
+        const adminPromise = supabase
+          .from('users')
+          .select('*')
+          .in('role', ['admin', 'ops_manager']);
+
+        const dbPromise = fetch('/api/db').then(r => r.json());
+
+        const [{ data: requestData, error: reqError }, { data: adminData }, localDb] = await Promise.all([
+          requestPromise,
+          adminPromise,
+          dbPromise
+        ]);
+
+        if (reqError) {
+          console.error(reqError);
+          return;
+        }
+
+        if (requestData && requestData.payload) {
+          const req = requestData.payload;
           setRequest(req);
           setFormData({
             status: req.status || 'New Request',
@@ -43,18 +67,29 @@ export default function RequestDetailView() {
           });
           
           if (req.clientId) {
-            const orgs = db.organizations || [];
-            const profiles = db.clientProfiles || [];
-            // Map clientId back to organization
-            const profile = profiles.find((p: any) => p.userId === req.clientId);
-            if (profile) {
-              const org = orgs.find((o: any) => o.id === profile.organizationId);
-              setClient(org);
+            const { data: orgData } = await supabase
+               .from('client_profiles')
+               .select('organizations(*)')
+               .eq('user_id', req.clientId)
+               .maybeSingle();
+
+            if (orgData && orgData.organizations) {
+              setClient(orgData.organizations);
             }
           }
         }
         
-        setAdminUsers((db.users || []).filter((u: any) => u.role === 'admin' || u.role === 'ops_manager'));
+        setAdminUsers(adminData || []);
+
+        if (localDb && localDb.matches) {
+          const reqMatches = localDb.matches.filter((m: any) => m.requestId === id);
+          const populatedMatches = reqMatches.map((m: any) => {
+            const talent = (localDb.talents || []).find((t: any) => t.id === m.talentId);
+            return { ...m, talent };
+          });
+          setMatches(populatedMatches);
+        }
+
       } catch (e) {
         console.error(e);
       } finally {
@@ -72,37 +107,30 @@ export default function RequestDetailView() {
 
     setIsSubmitting(true);
     try {
-      const resDb = await fetch('/api/db');
-      const db = await resDb.json();
       
-      const updatedRequests = (db.clientRequests || db.requests || []).map((r: any) => {
-        if (r.id === id) {
-          return {
-            ...r,
-            ...formData
-          };
-        }
-        return r;
-      });
-      
-      const newAuditLog = {
-        id: `audit_${Date.now()}`,
-        actor: 'Super Admin',
-        action: 'Update Service Request',
-        details: `Updated request ${id} to status ${formData.status}`,
-        timestamp: new Date().toISOString()
+      const updatedPayload = {
+        ...request,
+        ...formData
       };
       
-      await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service_requests: updatedRequests,
-          auditLogs: [newAuditLog, ...(db.auditLogs || [])]
-        })
+      // Update the payload in talent_requests
+      const { error: updateErr } = await supabase
+        .from('talent_requests')
+        .update({ payload: updatedPayload })
+        .eq('payload->>id', id as string);
+
+      if (updateErr) throw updateErr;
+      
+      // Add a real audit log via Supabase
+      const { error: auditErr } = await supabase.from('audit_logs').insert({
+        actor: 'Super Admin',
+        action: 'Update Service Request',
+        details: `Updated request ${id} to status ${formData.status}`
       });
       
-      setRequest({ ...request, ...formData });
+      if (auditErr) console.error("Audit log error:", auditErr);
+      
+      setRequest(updatedPayload);
       setIsEditing(false);
     } catch (e) {
       console.error(e);
@@ -112,7 +140,7 @@ export default function RequestDetailView() {
     }
   };
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading request details...</div>;
+  if (loading) return <KongilaLoader text="Loading request details..." />;
   if (!request) return <div style={{ padding: '40px' }}>Request not found.</div>;
 
   const calculateSLA = () => {
@@ -173,7 +201,7 @@ export default function RequestDetailView() {
                     Open Matching Engine
                   </button>
                 )}
-                <button onClick={() => setIsEditing(true)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px' }}>Edit Triage</button>
+                <button onClick={() => setIsEditing(true)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px' }}>Manage Request</button>
               </>
             )}
           </div>
@@ -234,6 +262,41 @@ export default function RequestDetailView() {
                 </p>
               )}
             </GlassCard>
+
+            {matches.length > 0 && (
+              <GlassCard>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Submitted Candidates</h3>
+                  <span style={{ background: 'var(--bg-tertiary)', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600 }}>{matches.length} Candidates</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {matches.map(match => (
+                    <div key={match.id} style={{ display: 'flex', gap: '16px', padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        <img src={match.talent?.profilePhotoUrl || 'https://via.placeholder.com/50'} alt="" style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }} />
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '15px' }}>{match.talent?.name || 'Unknown Talent'}</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{match.talent?.title || 'No Title'}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Match Score</div>
+                          <div style={{ fontWeight: 700, color: getGradeColor(match.score > 80 ? 'A' : match.score > 60 ? 'B' : 'C') }}>{match.score}%</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Status</div>
+                          <div style={{ fontWeight: 600, fontSize: '13px' }}>{match.status}</div>
+                        </div>
+                        <button onClick={() => window.open(`/talents/${match.talentId}`, '_blank')} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '6px' }}>
+                          View Profile
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </GlassCard>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard } from '@kongila/ui';
+import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
 import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
 import { calculateTalentProfileCompletion } from '@kongila/shared-types';
@@ -120,7 +120,7 @@ export default function TalentProfileView() {
     }
   };
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading profile...</div>;
+  if (loading) return <KongilaLoader text="Loading profile..." />;
   if (!talent) return <div style={{ padding: '40px' }}>Talent not found.</div>;
   const completion = calculateTalentProfileCompletion(talent);
   const uploadedDocs = getTalentUploadedDocuments(talent);

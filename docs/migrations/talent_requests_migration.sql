@@ -43,3 +43,22 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Allow admins to update talent requests
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'talent_requests' AND policyname = 'Admins can update talent requests'
+  ) THEN
+    CREATE POLICY "Admins can update talent requests"
+      ON public.talent_requests FOR UPDATE
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.users 
+          WHERE id = auth.uid()::text 
+          AND (role = 'admin' OR role = 'ops_manager')
+        )
+      );
+  END IF;
+END
+$$;

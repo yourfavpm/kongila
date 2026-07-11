@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
-import { GlassCard, Badge, NeonButton, AgentBadge } from '@kongila/ui';
+import { GlassCard, Badge, NeonButton, AgentBadge, KongilaLoader } from '@kongila/ui';
 import { formatDate } from '@kongila/utils';
-import { 
-  TalentProfile, Task, TaskStatus, AgentLog
-} from '@kongila/shared-types';
+import { TalentProfile, Task, TaskStatus, AgentLog } from '@kongila/shared-types';
 
 export default function RemotanWeb() {
   // DB States
@@ -56,9 +54,10 @@ export default function RemotanWeb() {
     } catch (e) {
       console.error('Failed to sync DB', e);
     } finally {
-      setLoading(false);
     }
   };
+
+  if (loading) return <KongilaLoader text="Loading Remotan Work OS..." />;
 
   const saveToDb = async (updatedDb: any) => {
     try {

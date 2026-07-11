@@ -106,14 +106,31 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .sidebar {
-  width: 250px; /* Width: 240px - 260px */
+  width: 260px; /* Standard professional dashboard width */
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-glass);
-  padding: 24px;
+  padding: 24px 16px;
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
   flex-shrink: 0;
+  
+  /* Fixed to the screen */
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  overflow-y: auto;
+}
+
+/* Custom Sleek Scrollbar for Sidebar */
+.sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.1);
+  border-radius: 4px;
 }
 
 .sidebar-logo {
@@ -130,7 +147,7 @@ h1, h2, h3, h4, h5, h6 {
 .sidebar-menu {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   flex-grow: 1;
 }
 
@@ -138,13 +155,13 @@ h1, h2, h3, h4, h5, h6 {
 .menu-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-radius: 12px;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
   color: var(--text-secondary);
   text-decoration: none;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: var(--transition-smooth);
   border: 1px solid transparent;
@@ -174,6 +191,7 @@ h1, h2, h3, h4, h5, h6 {
   max-width: 1200px; /* Inner Content max-width 1200px */
   margin: 0 auto;
   width: 100%;
+  margin-left: 260px; /* Make space for fixed sidebar */
 }
 
 .page-header {
@@ -1040,6 +1058,7 @@ img { max-width: 100%; height: auto; }
 
   .main-content {
     padding: 80px 16px 20px !important;
+    margin-left: 0 !important;
   }
 
   .stats-card-grid {

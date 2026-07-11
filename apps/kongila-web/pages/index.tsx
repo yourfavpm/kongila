@@ -100,6 +100,7 @@ export default function KongilaWeb() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
@@ -262,6 +263,44 @@ export default function KongilaWeb() {
   const [signInDropdownOpen, setSignInDropdownOpen] = useState(false);
   const [getStartedDropdownOpen, setGetStartedDropdownOpen] = useState(false);
 
+  // Core Db States
+  const [organizations, setOrganizations] = useState<any[]>([]);
+  const [clientProfiles, setClientProfiles] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [requestActivityLogs, setRequestActivityLogs] = useState<any[]>([]);
+
+  const [activeMatch, setActiveMatch] = useState<any>(null);
+
+  // Invite states
+  const [inviteOrgId, setInviteOrgId] = useState<string | null>(null);
+  const [invitePermission, setInvitePermission] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Parse URL params for invitations
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const authV = params.get('authView');
+      if (authV) {
+        setAuthView(authV as any);
+        if (authV === 'signup') {
+          const role = params.get('role');
+          if (role) setAuthRole(role as any);
+          const email = params.get('inviteEmail');
+          if (email) setEmailInput(email);
+          const name = params.get('inviteName');
+          if (name) setNameInput(name);
+          const orgId = params.get('orgId');
+          if (orgId) setInviteOrgId(orgId);
+          const perm = params.get('permissionLevel');
+          if (perm) setInvitePermission(perm);
+          
+          // Clear params from URL so it doesn't linger
+          window.history.replaceState({}, '', '/');
+        }
+      }
+    }
+  }, []);
+
   // Trigger temporary floating notification
   const triggerBanner = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
     setBannerMessage(message);
@@ -271,11 +310,26 @@ export default function KongilaWeb() {
 
   // Sync with central filesystem DB
   const syncFromDb = async () => {
+    // Safety timeout to prevent infinite loading if promises hang
+    const safetyTimeout = setTimeout(() => {
+      setLoading(false);
+    }, 30000);
+
     try {
-      const res = await fetch('/api/db');
-      if (res.ok) {
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 25000);
+      const res = await fetch('/api/db', { signal: controller.signal }).catch(e => {
+        console.warn("fetch /api/db error or abort", e);
+        return { ok: false, json: async () => ({}) } as Response;
+      });
+      clearTimeout(fetchTimeout);
+
+      if (res && res.ok) {
         const dbData = await res.json();
         setTalents(dbData.talents || []);
+        setOrganizations(dbData.organizations || []);
+        setClientProfiles(dbData.clientProfiles || []);
+        setUsers(dbData.users || []);
         
         // Fetch service requests from Supabase
         let query = supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
@@ -293,13 +347,58 @@ export default function KongilaWeb() {
           setRequests(dbData.clientRequests || []);
         }
 
+        // Fetch invoices from Supabase
+        let invoicesQuery = supabase.from('invoices').select('*, invoice_line_items(*)').order('created_at', { ascending: false });
+        if (session?.user?.user_metadata?.role === 'client') {
+           invoicesQuery = invoicesQuery.eq('client_id', session.user.id);
+        }
+        const { data: supabaseInvoices } = await invoicesQuery;
+        if (supabaseInvoices) {
+          const mappedInvoices = supabaseInvoices.map(inv => ({
+            id: inv.id,
+            clientId: inv.client_id,
+            invoiceNumber: inv.invoice_number,
+            status: inv.status,
+            isDisputed: inv.is_disputed,
+            disputeReason: inv.dispute_reason,
+            subtotalUsd: inv.subtotal_usd,
+            taxAmountUsd: inv.tax_amount_usd,
+            totalUsd: inv.total_usd,
+            dueDate: inv.due_date,
+            createdAt: inv.created_at,
+            lineItems: inv.invoice_line_items?.map((li: any) => ({
+               id: li.id,
+               talentId: li.talent_id,
+               description: li.description,
+               amountUsd: li.amount_usd
+            })) || []
+          }));
+          setInvoices(mappedInvoices);
+        } else {
+          setInvoices(dbData.invoices || []);
+        }
+
         setMatches(dbData.matches || []);
         setContracts(dbData.contracts || []);
-        setInvoices(dbData.invoices || []);
-        setMessages(dbData.messages || []);
+        // Fetch conversations
+        const { data: supabaseConvos } = await supabase.from('conversations').select('*').order('updated_at', { ascending: false });
+        if (supabaseConvos) {
+          setConversations(supabaseConvos);
+        } else {
+          setConversations([]);
+        }
+
+        // Fetch messages
+        const { data: supabaseMsgs } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+        if (supabaseMsgs) {
+          setMessages(supabaseMsgs);
+        } else {
+          setMessages(dbData.messages || []);
+        }
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
         setDocuments(dbData.documents || []);
+        setRequestActivityLogs(dbData.requestActivityLogs || []);
         // Assessment data for talent side
         setAssessments(dbData.assessments || []);
         setAssessmentCategories(dbData.assessmentCategories || []);
@@ -310,6 +409,7 @@ export default function KongilaWeb() {
     } catch (e) {
       console.error('Failed to sync DB', e);
     } finally {
+      clearTimeout(safetyTimeout);
       setLoading(false);
     }
   };
@@ -337,48 +437,60 @@ export default function KongilaWeb() {
   useEffect(() => {
     // Restore session on page load
     const initSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const authUser = session.user;
-        // Fetch role from public.users table
-        const { data: dbUser } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', authUser.email)
-          .single();
-
-        const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
-        let isOnboardingComplete = dbUser?.status === 'active';
-        if (role === 'talent') {
-          const { data: dbTalentProfile } = await supabase
-            .from('talent_profiles')
-            .select('id,bio')
-            .eq('id', dbUser?.id || authUser.id)
+      const initSafetyTimeout = setTimeout(() => {
+        setLoading(false);
+      }, 15000);
+      try {
+        const { data: { session } } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 14000))
+        ]);
+        if (session?.user) {
+          const authUser = session.user;
+          // Fetch role from public.users table
+          const { data: dbUser } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', authUser.email)
             .maybeSingle();
-          isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+
+          const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
+          let isOnboardingComplete = dbUser?.status === 'active';
+          if (role === 'talent') {
+            const { data: dbTalentProfile } = await supabase
+              .from('talent_profiles')
+              .select('id,bio')
+              .eq('id', dbUser?.id || authUser.id)
+              .maybeSingle();
+            isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+          }
+          
+          const restoredUser = {
+            id: dbUser?.id || authUser.id,
+            name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
+            email: authUser.email || '',
+            role,
+            onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
+            emailVerified: true,
+            companyName: authUser.user_metadata?.company_name,
+            createdAt: authUser.created_at
+          };
+          setCurrentUser(restoredUser);
+          
+          if (!isOnboardingComplete && role === 'talent') {
+            setAuthView('onboarding');
+          } else {
+            setAuthView(null);
+            if (role === 'talent') setActiveTab('talent');
+            else setActiveTab('client');
+          }
         }
-        
-        const restoredUser = {
-          id: dbUser?.id || authUser.id,
-          name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
-          email: authUser.email || '',
-          role,
-          onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
-          emailVerified: true,
-          companyName: authUser.user_metadata?.company_name,
-          createdAt: authUser.created_at
-        };
-        setCurrentUser(restoredUser);
-        
-        if (!isOnboardingComplete && role === 'talent') {
-          setAuthView('onboarding');
-        } else {
-          setAuthView(null);
-          if (role === 'talent') setActiveTab('talent');
-          else setActiveTab('client');
-        }
+      } catch (err) {
+        console.error("Session init failed", err);
+      } finally {
+        clearTimeout(initSafetyTimeout);
+        await syncFromDb();
       }
-      await syncFromDb();
     };
 
     initSession();
@@ -405,10 +517,37 @@ export default function KongilaWeb() {
       })
       .subscribe();
 
+    // Realtime subscription to invoices
+    const invoicesChannel = supabase
+      .channel('public:invoices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, payload => {
+        syncFromDb();
+      })
+      .subscribe();
+
+    // Realtime subscription to conversations
+    const convosChannel = supabase
+      .channel('public:conversations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, payload => {
+        syncFromDb();
+      })
+      .subscribe();
+
+    // Realtime subscription to messages
+    const msgsChannel = supabase
+      .channel('public:messages')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, payload => {
+        syncFromDb();
+      })
+      .subscribe();
+
     return () => {
       clearInterval(interval);
       subscription.unsubscribe();
       supabase.removeChannel(requestChannel);
+      supabase.removeChannel(invoicesChannel);
+      supabase.removeChannel(convosChannel);
+      supabase.removeChannel(msgsChannel);
     };
   }, []);
 
@@ -554,21 +693,25 @@ export default function KongilaWeb() {
       if (userErr) throw new Error(`User DB Error: ${userErr.message}`);
 
       if (authRole === 'client') {
-        // Create organization record
-        const orgId = crypto.randomUUID();
-        const { error: orgErr } = await supabase.from('organizations').upsert({
-          id: orgId,
-          name: companyInput || `${nameInput}'s Company`,
-          created_by: authUserId
-        });
-        if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
+        let orgId = inviteOrgId;
+        if (!orgId) {
+          // Create new organization record
+          orgId = crypto.randomUUID();
+          const { error: orgErr } = await supabase.from('organizations').upsert({
+            id: orgId,
+            name: companyInput || `${nameInput}'s Company`,
+            created_by: authUserId
+          });
+          if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
+        }
 
         // Create client profile
         const { error: clpErr } = await supabase.from('client_profiles').upsert({
           id: crypto.randomUUID(),
           user_id: authUserId,
           organization_id: orgId,
-          position: 'Admin'
+          position: invitePermission ? 'Team Member' : 'Admin',
+          permission_level: invitePermission || 'Full Access'
         });
         if (clpErr) throw new Error(`Client Profile DB Error: ${clpErr.message}`);
       } else {
@@ -651,7 +794,7 @@ export default function KongilaWeb() {
         .from('users')
         .select('*')
         .eq('email', emailInput)
-        .single();
+        .maybeSingle();
 
       const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
       let isOnboardingComplete = dbUser?.status === 'active';
@@ -1303,21 +1446,40 @@ export default function KongilaWeb() {
 
   // Schedule Interview
   const handleScheduleMeeting = async () => {
-    if (!selectedTalent || !selectedRequest) return;
+    if (!selectedTalent || !selectedRequest || !currentUser) return;
     
-    // Update match status
-    const requestMatch = matches.find(m => m.requestId === selectedRequest.id && m.talentId === selectedTalent.id);
-    if (!requestMatch) return;
+    // Insert into Supabase interviews table
+    const { data: insertedData, error: insertError } = await supabase.from('interviews').insert({
+      request_id: selectedRequest.id,
+      talent_id: selectedTalent.id,
+      client_id: currentUser.id,
+      title: `${selectedRequest.roleTitle || selectedRequest.serviceType} - Interview with ${selectedTalent.name}`,
+      scheduled_time: new Date(`${meetingDate}T${meetingTime}`).toISOString(),
+      duration_minutes: 60,
+      status: 'pending_confirmation'
+    });
 
-    const updatedMatches = matches.map(m => 
-      m.id === requestMatch.id ? { ...m, status: 'Interview Scheduled' as const } : m
-    );
+    if (insertError) {
+      console.error('Failed to insert interview', insertError);
+      triggerBanner('Failed to schedule interview.', 'error');
+      return;
+    }
+
+    // Still maintain the local 'matches' array update for the dashboard visual if needed, 
+    // or just rely on the new UI reading directly from Supabase.
+    const requestMatch = matches.find(m => m.requestId === selectedRequest.id && m.talentId === selectedTalent.id);
+    if (requestMatch) {
+      const updatedMatches = matches.map(m => 
+        m.id === requestMatch.id ? { ...m, status: 'Interview Scheduled' as const } : m
+      );
+      setMatches(updatedMatches);
+    }
 
     // Add alert log
     const updatedDb = {
       talents,
       clientRequests: requests,
-      matches: updatedMatches,
+      matches: requestMatch ? matches.map(m => m.id === requestMatch.id ? { ...m, status: 'Interview Scheduled' as const } : m) : matches,
       tasks: [],
       contracts,
       notifications: [],
@@ -1334,43 +1496,45 @@ export default function KongilaWeb() {
         {
           id: `alog_${Date.now()}`,
           agentName: 'Workflow Agent',
-          message: `Transitioned Match ${requestMatch.id} status to 'Interview Scheduled'. Syncing calendars.`,
+          message: `Transitioned Match ${requestMatch?.id || 'unknown'} status to 'Interview Scheduled'. Syncing calendars.`,
           timestamp: new Date().toLocaleTimeString(),
           type: 'info'
         },
         {
           id: `alog_sms_${Date.now()}`,
           agentName: 'Communication Agent',
-          message: `WhatsApp calendar link dispatched to talent ${selectedTalent.name} (+234803929...)`,
+          message: `WhatsApp calendar link dispatched to talent ${selectedTalent.name}`,
           timestamp: new Date().toLocaleTimeString(),
           type: 'success'
         }
       ]
     };
 
-    setMatches(updatedMatches);
     await saveToDb(updatedDb);
     setShowCalendar(false);
-    triggerBanner(`Interview booked with ${selectedTalent.name}! Workspace synced.`, 'success');
+    triggerBanner(`Interview requested with ${selectedTalent.name}! Awaiting their confirmation.`, 'success');
   };
 
   // Extend Job Offer (Generate Contract)
   const handleExtendOffer = async (talent: TalentProfile) => {
-    if (!selectedRequest) return;
+    if (!selectedRequest || !currentUser) return;
 
-    // Create Contract
-    const newContract: Contract = {
-      id: `contract_${Date.now()}`,
-      matchId: `match_${selectedRequest.id.split('_')[1]}_${talent.id.split('_')[1]}`,
-      clientId: currentUser?.id || 'user_client_1',
-      clientName: currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client',
-      talentId: talent.id,
-      talentName: talent.name,
-      role: selectedRequest.roleDescription,
-      salary: selectedRequest.budget,
-      startDate: selectedRequest.startDate,
-      status: 'Pending'
-    };
+    // Insert Contract into Supabase
+    const { data: insertedContract, error: contractErr } = await supabase.from('contracts').insert({
+      client_id: currentUser.id,
+      talent_id: talent.id,
+      role_title: selectedRequest.roleDescription || selectedRequest.title || 'Role',
+      start_date: selectedRequest.startDate,
+      engagement_type: 'Full-time',
+      status: 'pending',
+      client_monthly_fee_usd: selectedRequest.budget || 0
+    }).select().single();
+
+    if (contractErr || !insertedContract) {
+      console.error('Failed to create contract', contractErr);
+      triggerBanner('Failed to generate contract.', 'error');
+      return;
+    }
 
     // Update match status to offer extended
     const updatedMatches = matches.map(m => 
@@ -1386,19 +1550,19 @@ export default function KongilaWeb() {
 
     const ndaText = generateNDATemplate(talent.name, currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client');
     setActiveNDA(ndaText);
-    setSigningContractId(newContract.id);
+    setSigningContractId(insertedContract.id);
 
     const updatedDb = {
       talents,
       clientRequests: updatedRequests,
       matches: updatedMatches,
       tasks: [],
-      contracts: [...contracts, newContract],
+      contracts: contracts, // keeping local mock unchanged, handled directly by Supabase
       notifications: [],
       auditLogs: [
         {
           id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Guest Client',
+          actor: currentUser.name,
           action: 'Extend Job Offer',
           details: `Extended EOR contract for ${talent.name} ($${selectedRequest.budget}/mo)`,
           timestamp: new Date().toISOString()
@@ -1415,14 +1579,12 @@ export default function KongilaWeb() {
       ]
     };
 
-    setContracts([...contracts, newContract]);
     setMatches(updatedMatches);
     setRequests(updatedRequests);
     await saveToDb(updatedDb);
     setShowSignModal(true);
   };
 
-  // Sign NDA/Contract Simulator
   const handleSignContract = async () => {
     if (!signingContractId) return;
 
@@ -4209,11 +4371,16 @@ export default function KongilaWeb() {
         {currentUser && currentUser.role === 'client' && !authView && !clientIntakeActive && activeTab === 'client' && (
           <ClientDashboard
             currentUser={currentUser}
+            organizations={organizations}
+            clientProfiles={clientProfiles}
+            users={users}
+            requestActivityLogs={requestActivityLogs}
             requests={requests}
             matches={matches}
             contracts={contracts}
             talents={talents}
             invoices={invoices}
+            conversations={conversations}
             messages={messages}
             notifications={notifications}
             onSignOut={handleSignOut}
@@ -4239,6 +4406,7 @@ export default function KongilaWeb() {
             setSelectedRequest={setSelectedRequest}
             setRequests={setRequests}
             setInvoices={setInvoices}
+            setConversations={setConversations}
             setMessages={setMessages}
             setNotifications={setNotifications}
             setMatches={setMatches}
@@ -4294,7 +4462,7 @@ export default function KongilaWeb() {
               await saveToDb(updatedDb);
               triggerBanner('New Service Request created! Matchmaker engine initialized.', 'success');
             }}
-          />
+            />
         )}
 
       </div>

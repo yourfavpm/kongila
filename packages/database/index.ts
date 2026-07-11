@@ -1,7 +1,7 @@
 import { 
-  TalentProfile, ServiceRequest, Match, Task, Contract, Notification, AuditLog, AgentLog,
+  TalentProfile, ServiceRequest, Match, MatchBreakdown, Task, Contract, Notification, AuditLog, AgentLog,
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
-  Invoice, Payment, TalentPayout, Message, SupportTicket, SupportMessage, Interview, RehireRequest
+  Invoice, Payment, TalentPayout, Message, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
 } from '@kongila/shared-types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -37,6 +37,7 @@ export interface Schema {
   supportMessages: SupportMessage[];
   interviews: Interview[];
   rehireRequests?: RehireRequest[];
+  requestActivityLogs?: RequestActivityLog[];
   assessments?: any[];
   assessmentCategories?: any[];
   assessmentQuestions?: any[];
@@ -216,12 +217,7 @@ export async function readDbAsync(): Promise<Schema> {
   const localAssessments = readLocalAssessments();
 
   try {
-    const [
-      rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs,
-      rRequests, rMatches, rProjects, rTasks, rContracts, rAssignments,
-      rInvoices, rPayments, rPayouts, rMessages, rNotifs, rAudit, rAgent,
-      rTickets, rSupportMessages, rInterviews
-    ] = await Promise.all([
+    const batch1 = await Promise.all([
       supabase.from('users').select('*'),
       supabase.from('organizations').select('*'),
       supabase.from('client_profiles').select('*'),
@@ -230,6 +226,9 @@ export async function readDbAsync(): Promise<Schema> {
       supabase.from('talent_skills').select('*'),
       supabase.from('documents').select('*'),
       supabase.from('service_requests').select('*'),
+    ]);
+
+    const batch2 = await Promise.all([
       supabase.from('matches').select('*'),
       supabase.from('projects').select('*'),
       supabase.from('tasks').select('*'),
@@ -238,14 +237,28 @@ export async function readDbAsync(): Promise<Schema> {
       supabase.from('invoices').select('*'),
       supabase.from('payments').select('*'),
       supabase.from('talent_payouts').select('*'),
+    ]);
+
+    const batch3 = await Promise.all([
       supabase.from('messages').select('*'),
       supabase.from('notifications').select('*'),
       supabase.from('audit_logs').select('*'),
       supabase.from('agent_logs').select('*'),
       supabase.from('support_tickets').select('*'),
       supabase.from('support_messages').select('*'),
-      supabase.from('interviews').select('*')
+      supabase.from('interviews').select('*'),
+      supabase.from('request_activity_logs').select('*')
     ]);
+
+    const [
+      rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs, rRequests
+    ] = batch1;
+    const [
+      rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts
+    ] = batch2;
+    const [
+      rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs
+    ] = batch3;
 
     if (rUsers.error) {
       console.error('[DB] Supabase users query failed:', rUsers.error.message);
@@ -291,7 +304,13 @@ export async function readDbAsync(): Promise<Schema> {
       contactEmail: o.contact_email || 'contact@' + o.name.toLowerCase().replace(/\s/g, '') + '.com',
       contactPhone: o.contact_phone || '+1234567890',
       monthlyRevenue: o.monthly_revenue || Math.floor(Math.random() * 50000) + 10000,
-      lastActivityAt: o.last_activity_at || new Date().toISOString()
+      lastActivityAt: o.last_activity_at || new Date().toISOString(),
+      industry: o.industry,
+      company_size: o.company_size,
+      country: o.country,
+      website: o.website,
+      how_did_you_hear_about_us: o.how_did_you_hear_about_us,
+      multi_user_enabled: o.multi_user_enabled || false
     }));
 
     // ── Map client profiles ────────────────────────────────────────────────────
@@ -300,7 +319,8 @@ export async function readDbAsync(): Promise<Schema> {
       userId: cp.user_id,
       organizationId: cp.organization_id,
       position: cp.position,
-      phone: cp.phone
+      phone: cp.phone,
+      permissionLevel: cp.permission_level || 'Full Access'
     }));
 
     // ── Map documents ──────────────────────────────────────────────────────
@@ -515,15 +535,28 @@ export async function readDbAsync(): Promise<Schema> {
     });
 
     // ── Map matches ────────────────────────────────────────────────────────────
-    const matches: Match[] = (rMatches.data || []).map((m: any) => ({
-      id: m.id,
-      requestId: m.request_id,
-      talentId: m.talent_id,
-      status: m.status === 'proposed' ? 'Proposed' : (m.status.charAt(0).toUpperCase() + m.status.slice(1)),
-      score: m.score || 0,
-      breakdown: m.breakdown || { skillFit: 0, cultureFit: 0, experienceFit: 0 },
-      createdAt: m.created_at || new Date().toISOString()
-    } as any));
+    const matches: Match[] = (rMatches.data || []).map((m: any) => {
+      let breakdown: MatchBreakdown = { skillFit: 0, behaviourFit: 0, personalityFit: 0, availability: 0, pastPerformance: 0 };
+      if (m.breakdown && typeof m.breakdown === 'object') {
+        breakdown = {
+          skillFit: Number(m.breakdown.skillFit || m.breakdown.skill_fit_score || 0),
+          behaviourFit: Number(m.breakdown.behaviourFit || m.breakdown.behaviour_fit_score || m.breakdown.behaviorFit || 0),
+          personalityFit: Number(m.breakdown.personalityFit || m.breakdown.personality_fit_score || 0),
+          availability: Number(m.breakdown.availability || m.breakdown.availability_score || 0),
+          pastPerformance: Number(m.breakdown.pastPerformance || m.breakdown.performance_history_score || 0)
+        };
+      }
+      return {
+        id: m.id,
+        requestId: m.request_id,
+        talentId: m.talent_id,
+        status: m.status === 'proposed' ? 'Proposed' : (m.status || 'Applied'),
+        score: m.score || m.match_score || 0,
+        breakdown,
+        clientRejectionReason: m.client_rejection_reason || undefined,
+        createdAt: m.created_at || new Date().toISOString()
+      } as any;
+    });
 
     // ── Map projects ───────────────────────────────────────────────────────────
     const projects: Project[] = (rProjects.data || []).map((p: any) => ({
@@ -584,7 +617,10 @@ export async function readDbAsync(): Promise<Schema> {
         rating: Number(c.rating || 0),
         qualityOfWork: Number(c.quality_of_work || 0),
         communication: Number(c.communication || 0),
-        timeliness: Number(c.timeliness || 0)
+        timeliness: Number(c.timeliness || 0),
+        terminationReason: c.termination_reason || undefined,
+        clientMonthlyFeeUsd: Number(c.client_monthly_fee_usd || 0),
+        performanceScore: Number(c.performance_score || 0)
       };
     });
 
@@ -643,9 +679,19 @@ export async function readDbAsync(): Promise<Schema> {
       id: iv.id, requestId: iv.request_id, matchId: iv.match_id, talentId: iv.talent_id,
       talentName: iv.talent_name, talentAvatar: iv.talent_avatar, clientName: iv.client_name,
       title: iv.title, date: iv.date, time: iv.time, status: iv.status,
-      meetingLink: iv.meeting_link, notes: iv.notes,
+      meetingLink: iv.meeting_link, notes: iv.notes, talentNotes: iv.talent_notes,
+      clientRating: iv.client_rating, clientFeedback: iv.client_feedback, outcome: iv.outcome,
       googleCalendarEventId: iv.google_calendar_event_id,
       googleCalendarLink: iv.google_calendar_link, createdAt: iv.created_at
+    }));
+
+    const requestActivityLogs: RequestActivityLog[] = (rRequestActivityLogs.data || []).map((al: any) => ({
+      id: al.id,
+      requestId: al.request_id,
+      actorId: al.actor_id,
+      actionType: al.action_type,
+      fieldChanges: al.field_changes,
+      createdAt: al.created_at
     }));
 
     const result: Schema = {
@@ -674,6 +720,7 @@ export async function readDbAsync(): Promise<Schema> {
       supportTickets,
       supportMessages,
       interviews,
+      requestActivityLogs,
       rehireRequests: [],
       ...localAssessments
     };
@@ -714,7 +761,20 @@ export async function writeDbAsync(db: Schema): Promise<void> {
 
     if (db.organizations && db.organizations.length > 0) {
       const rows = db.organizations.map((o: any) => ({
-        id: o.id, name: o.name, created_by: o.created_by || null
+        id: o.id, name: o.name, created_by: o.created_by || null,
+        industry: o.industry,
+        company_size: o.company_size,
+        country: o.country,
+        website: o.website,
+        how_did_you_hear_about_us: o.how_did_you_hear_about_us,
+        multi_user_enabled: o.multi_user_enabled,
+        account_manager_id: o.accountManagerId,
+        status: o.status,
+        internal_notes: o.internalNotes,
+        contact_email: o.contactEmail,
+        contact_phone: o.contactPhone,
+        monthly_revenue: o.monthlyRevenue,
+        last_activity_at: o.lastActivityAt
       }));
       const { error } = await supabase.from('organizations').upsert(rows);
       if (error) console.error('[DB] organizations upsert error:', error.message);
@@ -723,7 +783,7 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     if (db.clientProfiles && db.clientProfiles.length > 0) {
       const rows = db.clientProfiles.map((cp: any) => ({
         id: cp.id, user_id: cp.userId, organization_id: cp.organizationId,
-        position: cp.position || 'Admin'
+        position: cp.position || 'Admin', phone: cp.phone, permission_level: cp.permissionLevel
       }));
       const { error } = await supabase.from('client_profiles').upsert(rows);
       if (error) console.error('[DB] client_profiles upsert error:', error.message);
@@ -831,8 +891,11 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         rate_amount: c.rateAmount || c.salary || 0,
         start_date: c.startDate,
         end_date: c.endDate,
-        status: c.status === 'Signed' ? 'signed' : 'pending',
-        signed_at: c.signedAt || null
+        status: c.status === 'Signed' ? 'signed' : (c.status === 'terminated' ? 'terminated' : (c.status === 'completed' ? 'completed' : 'pending')),
+        signed_at: c.signedAt || null,
+        termination_reason: c.terminationReason || null,
+        client_monthly_fee_usd: c.clientMonthlyFeeUsd || 0,
+        performance_score: c.performanceScore || 0
       }));
       const { error } = await supabase.from('contracts').upsert(rows);
       if (error) console.error('[DB] contracts upsert error:', error.message);
@@ -952,6 +1015,10 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         status: iv.status,
         meeting_link: iv.meetingLink || null,
         notes: iv.notes || null,
+        talent_notes: iv.talentNotes || null,
+        client_rating: iv.clientRating || null,
+        client_feedback: iv.clientFeedback || null,
+        outcome: iv.outcome || null,
         google_calendar_event_id: iv.googleCalendarEventId || null,
         google_calendar_link: iv.googleCalendarLink || null,
         created_at: iv.createdAt || new Date().toISOString()
@@ -967,3 +1034,23 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     console.error('[DB] writeDbAsync error:', err);
   }
 }
+
+export async function logRequestActivityAsync(
+  requestId: string,
+  actorId: string | null,
+  actionType: string,
+  fieldChanges?: Record<string, { old: any; new: any }>
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.from('request_activity_logs').insert({
+    request_id: requestId,
+    actor_id: actorId,
+    action_type: actionType,
+    field_changes: fieldChanges || null
+  });
+  if (error) {
+    console.error('[DB] Failed to log request activity:', error);
+    throw error;
+  }
+}
+

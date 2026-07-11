@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
 import { supabase } from '../lib/supabaseClient';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard, Badge, NeonButton, AgentBadge, Chip } from '@kongila/ui';
+import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader } from '@kongila/ui';
 import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
 import AdminLogin from '../components/AdminLogin';
@@ -923,7 +923,7 @@ export default function AdminPanel() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-primary)' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '32px', marginBottom: '12px', animation: 'spin 1s linear infinite', display: 'inline-block' }}>⚙️</div>
-          <div style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>Loading Admin Console...</div>
+        <KongilaLoader text="Loading Admin Console..." />
         </div>
       </div>
     );
@@ -3185,7 +3185,7 @@ export default function AdminPanel() {
   if (authChecking) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
-        <p style={{ color: 'var(--text-secondary)' }}>Loading Admin Portal...</p>
+        <KongilaLoader text="Loading Admin Portal..." />
       </div>
     );
   }

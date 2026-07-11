@@ -146,7 +146,7 @@ export function calculateMatchScore(talent: TalentProfile, request: ServiceReque
   }
 
   // 2. Behaviour Fit (20%)
-  const behaviorFitScore = talent.vettingScores.behavioral;
+  const behaviourFitScore = talent.vettingScores.behavioral;
 
   // 3. Personality Fit (15%)
   const personalityFitScore = talent.vettingScores.personality;
@@ -162,7 +162,7 @@ export function calculateMatchScore(talent: TalentProfile, request: ServiceReque
 
   // Apply weights
   const weightedSkill = skillFitScore * 0.40;
-  const weightedBehavior = behaviorFitScore * 0.20;
+  const weightedBehavior = behaviourFitScore * 0.20;
   const weightedPersonality = personalityFitScore * 0.15;
   const weightedAvailability = availabilityScore * 0.15;
   const weightedPerformance = pastPerformanceScore * 0.10;
@@ -175,7 +175,7 @@ export function calculateMatchScore(talent: TalentProfile, request: ServiceReque
     score: Math.min(100, Math.max(0, totalScore)),
     breakdown: {
       skillFit: skillFitScore,
-      behaviorFit: behaviorFitScore,
+      behaviourFit: behaviourFitScore,
       personalityFit: personalityFitScore,
       availability: availabilityScore,
       pastPerformance: pastPerformanceScore

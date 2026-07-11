@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard } from '@kongila/ui';
+import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -42,13 +42,22 @@ export default function ClientProfileView() {
 
   const fetchClientData = async () => {
     try {
-      setLoading(true);
-      // Fetch organization from Supabase
-      const { data: orgs } = await supabase.from('organizations').select('*').eq('id', id);
+      // Don't set loading to true on every poll, rely on the initial state
+      const orgPromise = supabase.from('organizations').select('*').eq('id', id);
+      const adminsPromise = supabase.from('users').select('*').in('role', ['admin', 'ops_manager']);
+      const dbPromise = fetch('/api/db').then(res => res.json());
+
+      const [{ data: orgs }, { data: admins }, db] = await Promise.all([
+        orgPromise,
+        adminsPromise,
+        dbPromise
+      ]);
+
       const org = orgs && orgs.length > 0 ? orgs[0] : null;
 
       if (org) {
         setClient(org);
+        setAdminUsers(admins || []);
         
         // Fetch client profiles
         const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
@@ -63,28 +72,16 @@ export default function ClientProfileView() {
           }
         }
         
-        // Fetch real contracts, invoices, payments, support_tickets if they exist in Supabase
-        const { data: contracts } = await supabase.from('contracts').select('*').in('client_id', orgUserIds);
-        const { data: invoices } = await supabase.from('invoices').select('*').in('client_id', orgUserIds);
-        const invoiceIds = (invoices || []).map((i: any) => i.id);
-        
-        let payments: any[] = [];
-        if (invoiceIds.length > 0) {
-          const { data: supabasePayments } = await supabase.from('payments').select('*').in('invoice_id', invoiceIds);
-          if (supabasePayments) payments = supabasePayments;
-        }
-
-        const { data: tickets } = await supabase.from('support_tickets').select('*').in('client_id', orgUserIds);
+        const contracts = (db.contracts || []).filter((c: any) => orgUserIds.includes(c.clientId));
+        const invoices = (db.invoices || []).filter((i: any) => orgUserIds.includes(i.clientId));
+        const invoiceIds = invoices.map((i: any) => i.id);
+        const payments = (db.payments || []).filter((p: any) => invoiceIds.includes(p.invoiceId));
         
         setClientRequests(requests);
-        setClientContracts(contracts || []);
-        setClientInvoices(invoices || []);
-        setClientPayments(payments || []);
-        setClientMessages([]); // We'll keep messages empty until there's a messages table
-        
-        // Fetch admins
-        const { data: admins } = await supabase.from('users').select('*').in('role', ['admin', 'ops_manager']);
-        setAdminUsers(admins || []);
+        setClientContracts(contracts);
+        setClientInvoices(invoices);
+        setClientPayments(payments);
+        setClientMessages([]);
       }
     } catch (err) {
       console.error(err);
@@ -138,7 +135,7 @@ export default function ClientProfileView() {
     }
   };
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading client...</div>;
+  if (loading) return <KongilaLoader text="Loading client profile..." />;
   if (!client) return <div style={{ padding: '40px' }}>Client not found.</div>;
 
   const activeContracts = clientContracts.filter(c => c.status === 'Signed' || c.status === 'Active');

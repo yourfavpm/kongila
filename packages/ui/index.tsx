@@ -230,3 +230,89 @@ export const AgentBadge: React.FC<AgentBadgeProps> = ({ name }) => {
     </span>
   );
 };
+export const KongilaLoader = ({ text = "Loading..." }: { text?: string }) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: '16px' }}>
+      <style>{`
+        @keyframes pulse-glow {
+          0% { box-shadow: 0 0 0 0 rgba(0, 71, 204, 0.4); transform: scale(0.95); }
+          70% { box-shadow: 0 0 0 15px rgba(0, 71, 204, 0); transform: scale(1); }
+          100% { box-shadow: 0 0 0 0 rgba(0, 71, 204, 0); transform: scale(0.95); }
+        }
+      `}</style>
+      <div style={{
+        width: 48, height: 48, borderRadius: '12px',
+        background: 'linear-gradient(135deg, #0047CC 0%, #003399 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        animation: 'pulse-glow 1.5s infinite',
+      }}>
+        <svg width={26} height={26} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M5 3V21M19 3L11 11M5 13L15 21" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </div>
+      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>{text}      </div>
+    </div>
+  );
+};
+
+export interface Toast {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
+
+interface ToastContextType {
+  addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+}
+
+const ToastContext = React.createContext<ToastContextType>({ addToast: () => {} });
+
+export const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+  const [toasts, setToasts] = React.useState<Toast[]>([]);
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  return (
+    <ToastContext.Provider value={{ addToast }}>
+      {children}
+      <div style={{ position: 'fixed', bottom: '24px', right: '24px', display: 'flex', flexDirection: 'column', gap: '12px', zIndex: 99999, pointerEvents: 'none' }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{
+            background: t.type === 'error' ? '#FEF2F2' : t.type === 'success' ? '#ECFDF5' : '#EFF6FF',
+            border: `1px solid ${t.type === 'error' ? '#FCA5A5' : t.type === 'success' ? '#6EE7B7' : '#93C5FD'}`,
+            color: t.type === 'error' ? '#B91C1C' : t.type === 'success' ? '#047857' : '#1D4ED8',
+            padding: '16px 24px',
+            borderRadius: '12px',
+            fontSize: '14px',
+            fontWeight: 600,
+            boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+            animation: 'kongilaToastSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            pointerEvents: 'auto'
+          }}>
+            <span style={{ fontSize: '20px' }}>
+              {t.type === 'error' ? '❌' : t.type === 'success' ? '✅' : 'ℹ️'}
+            </span>
+            {t.message}
+          </div>
+        ))}
+      </div>
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes kongilaToastSlideIn {
+          from { transform: translateX(120%) scale(0.9); opacity: 0; }
+          to { transform: translateX(0) scale(1); opacity: 1; }
+        }
+      `}} />
+    </ToastContext.Provider>
+  );
+}
+
+export const useToast = () => React.useContext(ToastContext);
