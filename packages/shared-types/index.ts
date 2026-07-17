@@ -113,6 +113,7 @@ export interface TalentProfile {
   bio: string;
   documents?: any[];
   supportTickets?: any[];
+  settings?: TalentSettings;
   createdAt?: string;
   onboardingVideoSeenAt?: string | null;
   onboardingVideoUrl?: string;
@@ -465,6 +466,62 @@ export interface Notification {
   message: string;
   read: boolean;
   createdAt: string;
+  category?: 'Requests' | 'Matches' | 'Interviews' | 'Contracts' | 'Billing' | 'Messages' | 'Marketing' | 'System';
+  sourceRecordId?: string;
+}
+
+export interface PaymentMethod {
+  id: string;
+  type: 'card' | 'bank_transfer';
+  last4: string;
+  brand?: string;
+  expiryMonth?: string;
+  expiryYear?: string;
+  isDefault: boolean;
+  addedAt: string;
+}
+
+export interface TalentSettings {
+  notifications: {
+    email: {
+      VettingUpdates: boolean;
+      InterviewAlerts: boolean;
+      PaymentAlerts: boolean;
+      Messages: boolean;
+      Marketing: boolean;
+    };
+    whatsapp: {
+      VettingUpdates: boolean;
+      InterviewAlerts: boolean;
+      PaymentAlerts: boolean;
+      Messages: boolean;
+      Marketing: boolean;
+    };
+  };
+}
+
+export interface ClientSettings {
+  notifications: {
+    email: {
+      Requests: boolean;
+      Matches: boolean;
+      Interviews: boolean;
+      Contracts: boolean;
+      Billing: boolean;
+      Messages: boolean;
+      Marketing: boolean;
+    };
+    whatsapp: {
+      Requests: boolean;
+      Matches: boolean;
+      Interviews: boolean;
+      Contracts: boolean;
+      Billing: boolean;
+      Messages: boolean;
+      Marketing: boolean;
+    };
+  };
+  paymentMethods: PaymentMethod[];
 }
 
 export interface AuditLog {
@@ -681,9 +738,16 @@ export interface Assignment {
 export interface Invoice {
   id: string;
   clientId: string;
+  invoiceNumber?: string;
   amount: number;
-  status: 'draft' | 'sent' | 'paid' | 'overdue';
+  subtotalUsd?: number;
+  taxAmountUsd?: number;
+  totalUsd?: number;
+  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'void';
   dueDate: string;
+  isDisputed?: boolean;
+  disputeReason?: string;
+  createdAt?: string;
 }
 
 export interface Payment {
@@ -699,26 +763,69 @@ export interface TalentPayout {
   id: string;
   talentId: string;
   contractId: string;
+  invoiceId?: string;
   amount: number;
-  status: 'pending' | 'paid';
+  grossAmount?: number;
+  commissionPct?: number;
+  netAmount?: number;
+  status: 'pending' | 'approved' | 'processing' | 'paid' | 'failed';
+  paymentMethod?: string;
+  failureReason?: string;
   paidAt?: string;
+  createdAt?: string;
+}
+
+export interface FeeConfig {
+  id: string;
+  contractType: string;
+  clientFeePct: number;
+  talentCommissionPct: number;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export interface FeeAuditLog {
+  id: string;
+  configId: string;
+  changedBy?: string;
+  previousClientFeePct?: number;
+  newClientFeePct: number;
+  previousTalentCommissionPct?: number;
+  newTalentCommissionPct: number;
+  changedAt: string;
+}
+
+export interface Conversation {
+  id: string;
+  type: 'talent_admin' | 'client_admin';
+  participantIds: string[];
+  contextType?: 'vetting' | 'request' | 'contract';
+  contextId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Message {
   id: string;
+  conversationId: string;
   senderId: string;
-  receiverId: string;
   content: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
   timestamp: string;
-  readStatus: boolean;
+  isRead: boolean;
+  readAt?: string;
 }
 
 export interface SupportTicket {
   id: string;
-  talentId: string;
+  talentId?: string;
+  clientId?: string;
+  linkedContractId?: string;
+  assignedTo?: string; // e.g. Account Manager UUID or name
   subject: string;
-  category: 'Payment Issues' | 'Technical Support' | 'Verification' | 'Guidance';
-  status: 'Open' | 'In Progress' | 'Resolved';
+  category: 'Payment Issues' | 'Technical Support' | 'Verification' | 'Guidance' | 'Billing Issue' | 'Talent Performance Concern' | 'Contract Question' | 'Technical Bug' | 'Other' | 'Payment Issue' | 'Account Access' | 'Vetting Question';
+  status: 'Open' | 'In Progress' | 'Resolved' | 'open' | 'in_progress' | 'awaiting_client_response' | 'resolved' | 'closed';
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
   createdAt: string;
   lastActivity: string;
@@ -825,3 +932,368 @@ export interface PersonalitySnapshot {
   topStrengths: string[];
 }
 
+// ─── REMOTAN PLATFORM TYPES ──────────────────────────────────────────────────
+
+export type WorkspaceOrigin = 'kongila_contract' | 'external_subscription';
+export type SubscriptionTier = 'starter' | 'growth' | 'scale' | 'enterprise';
+export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'cancelled' | 'archived';
+export type WorkspaceMemberRole = 'workspace_admin' | 'project_manager' | 'team_member' | 'supervisor' | 'finance';
+export type WorkspaceMemberStatus = 'active' | 'pending' | 'offboarded' | 'suspended';
+export type RemotanProjectStatus = 'planning' | 'active' | 'on_hold' | 'completed' | 'cancelled';
+export type RemotanTaskStatus = string; // Made dynamic instead of union
+
+export interface RemotanBoardColumn {
+  id: string;
+  workspace_id: string;
+  project_id?: string;
+  name: string; // The display name, e.g., 'In Progress'
+  status_key: string; // The internal key, e.g., 'in_progress'
+  color: string;
+  order_index: number;
+}
+export type TimeLogStatus = 'active' | 'stopped' | 'approved' | 'disputed';
+export type GdprConsentStatus = 'pending' | 'granted' | 'denied' | 'revoked';
+export type CalendarEventType = 'meeting' | 'deadline' | 'milestone' | 'review' | 'other';
+export type PayrollEntryStatus = 'draft' | 'approved' | 'processing' | 'paid' | 'failed';
+export type ComplianceRecordType = 'gdpr_consent' | 'data_retention' | 'access_log' | 'offboarding';
+export type AcademyResourceType = 'video' | 'article' | 'quiz' | 'course';
+export type AcademyResourceStatus = 'draft' | 'published' | 'archived';
+export type ReviewCycleFrequency = 'weekly' | 'monthly' | 'quarterly';
+
+export interface RemotanWorkspace {
+  id: string;
+  organization_id?: string; // FK to Kongila organizations, null for external
+  workspace_origin: WorkspaceOrigin;
+  kongila_managed: boolean;
+  name: string;
+  logo_url?: string;
+  default_timezone: string;
+  working_hours_start?: string; // e.g. '09:00'
+  working_hours_end?: string;   // e.g. '18:00'
+  working_days?: string[];      // e.g. ['Mon','Tue','Wed','Thu','Fri']
+  date_format?: string;         // e.g. 'DD/MM/YYYY'
+  subscription_tier: SubscriptionTier;
+  subscription_status: SubscriptionStatus;
+  max_seats: number;
+  current_seats: number;
+  trial_end_date?: string;
+  payment_method_on_file: boolean;
+  kongila_supervisor_id?: string;
+  gdpr_mode_enabled: boolean;
+  last_activity_at?: string;
+  provisioned_by: 'system_auto' | 'admin_manual';
+  setup_wizard_completed: boolean;
+  created_at: string;
+  remotan_enabled?: boolean;
+  website?: string;
+}
+
+export interface WorkspaceMember {
+  id: string;
+  workspace_id: string;
+  talent_id?: string;       // Link to Kongila TalentProfile if kongila_managed
+  user_id?: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  role: WorkspaceMemberRole;
+  department?: string;
+  job_title?: string;
+  status: WorkspaceMemberStatus;
+  gdpr_consent_status: GdprConsentStatus;
+  gdpr_consent_date?: string;
+  last_active_at?: string;
+  joined_at: string;
+  offboarded_at?: string;
+}
+
+export interface WorkspaceInvitation {
+  id: string;
+  workspace_id: string;
+  email: string;
+  role: WorkspaceMemberRole;
+  department?: string;
+  job_title?: string;
+  token: string;
+  expires_at: string;
+  accepted_at?: string;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  sent_by: string;
+  created_at: string;
+}
+
+export interface RemotanProject {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description?: string;
+  status: RemotanProjectStatus;
+  start_date?: string;
+  end_date?: string;
+  member_ids: string[];
+  manager_id?: string;
+  color?: string; // hex color for visual distinction
+  created_by: string;
+  created_at: string;
+}
+
+export interface RemotanProjectMilestone {
+  id: string;
+  project_id: string;
+  title: string;
+  due_date?: string;
+  owner_id?: string;
+  weight: number; // 0-100
+  status: 'not_started' | 'in_progress' | 'completed' | 'overdue';
+}
+
+export interface RemotanTaskDependency {
+  task_id: string;
+  depends_on_task_id: string;
+}
+
+export interface RemotanTaskComment {
+  id: string;
+  task_id: string;
+  author_id: string;
+  content: string;
+  is_internal_note: boolean;
+  created_at: string;
+  edited_at?: string;
+}
+
+export interface RemotanTaskActivityLog {
+  id: string;
+  task_id: string;
+  actor_id: string;
+  action_type: string;
+  old_value?: string;
+  new_value?: string;
+  created_at: string;
+}
+
+export interface RemotanTask {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  project_name: string;
+  parent_task_id?: string;
+  milestone_id?: string;
+  title: string;
+  description: string;
+  assignee_id: string;
+  assignee_name: string;
+  assignee_avatar?: string;
+  reviewer_id?: string;
+  status: RemotanTaskStatus;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  tags?: string[];
+  due_date?: string;
+  blocker_category?: 'Waiting on Client' | 'Tech Issue' | 'Access Required' | 'Dependency' | 'Other';
+  blocker_description?: string;
+  blocker_reported_at?: string;
+  blocker_escalated?: boolean;
+  estimated_hours?: number;
+  actual_hours?: number; // computed
+  time_logged_minutes?: number;
+  submission_link?: string;
+  review_notes?: string;
+  unassigned_flag?: boolean; // set when talent offboarded
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string;
+}
+
+export interface RemotanTimeLog {
+  id: string;
+  workspace_id: string;
+  member_id: string;
+  member_name: string;
+  task_id: string;
+  log_date: string; // YYYY-MM-DD
+  hours_logged: number;
+  notes?: string;
+  log_type: 'manual' | 'timer';
+  is_approved: boolean;
+  approved_by?: string;
+  approved_at?: string;
+  feeds_payroll: boolean; // computed
+  created_at: string;
+}
+
+export interface RemotanActivityLog {
+  id: string;
+  workspace_id: string;
+  member_id: string;
+  time_log_id?: string;
+  activity_score?: number; // 0-100
+  screenshots?: { timestamp: string; app_name: string; score: number }[];
+  recorded_at: string;
+}
+
+export interface GdprConsentRecord {
+  id: string;
+  workspace_id: string;
+  member_id: string;
+  member_name: string;
+  feature: 'activity_monitoring' | 'screenshot_capture' | 'keystroke_logging';
+  status: GdprConsentStatus;
+  requested_at: string;
+  responded_at?: string;
+  ip_address?: string;
+  notes?: string;
+}
+
+export interface PerformanceReviewCycle {
+  id: string;
+  workspace_id: string;
+  name: string;  // e.g. 'Q3 2026 Review', 'Week 12'
+  frequency: ReviewCycleFrequency;
+  start_date: string;
+  end_date: string;
+  member_ids: string[];
+  reviewer_ids: string[];
+  status: 'upcoming' | 'active' | 'completed';
+  created_at: string;
+}
+
+export interface RemotanPerformanceReview {
+  id: string;
+  workspace_id: string;
+  cycle_id: string;
+  member_id: string;
+  reviewer_id: string;
+  task_efficiency: number;    // 0-100
+  work_quality: number;       // 0-100
+  reliability: number;        // 0-100
+  communication: number;      // 0-100
+  collaboration: number;      // 0-100
+  overall_score: number;      // calculated avg
+  feedback: string;
+  strengths?: string[];
+  improvement_areas?: string[];
+  pip_triggered: boolean;
+  pip_notes?: string;
+  submitted_at: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  workspace_id: string;
+  title: string;
+  description?: string;
+  type: CalendarEventType;
+  start_datetime: string;
+  end_datetime?: string;
+  all_day?: boolean;
+  attendee_ids?: string[];
+  project_id?: string;
+  task_id?: string;
+  meeting_link?: string;
+  location?: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface WorkspaceMessage {
+  id: string;
+  workspace_id: string;
+  channel: 'announcements' | 'general' | string; // channel name or DM id
+  sender_id: string;
+  sender_name: string;
+  sender_avatar?: string;
+  content: string;
+  attachment_url?: string;
+  attachment_name?: string;
+  is_announcement?: boolean;
+  is_pinned?: boolean;
+  read_by_ids?: string[];
+  timestamp: string;
+}
+
+export interface PayrollEntry {
+  id: string;
+  workspace_id: string;
+  member_id: string;
+  member_name: string;
+  period_start: string;
+  period_end: string;
+  gross_amount: number;
+  currency: string;
+  deductions?: { label: string; amount: number }[];
+  net_amount: number;
+  status: PayrollEntryStatus;
+  payment_method?: string;
+  payment_reference?: string;
+  notes?: string;
+  approved_by?: string;
+  paid_at?: string;
+  created_at: string;
+}
+
+export interface ComplianceRecord {
+  id: string;
+  workspace_id: string;
+  type: ComplianceRecordType;
+  title: string;
+  description: string;
+  status: 'active' | 'resolved' | 'flagged';
+  created_at: string;
+  resolved_at?: string;
+}
+
+export interface AcademyResource {
+  id: string;
+  title: string;
+  description: string;
+  type: AcademyResourceType;
+  category: string;   // e.g. 'Technical Skills', 'Communication', 'Remote Work'
+  skill_tags: string[];
+  url?: string;       // external link or video embed
+  content?: string;   // markdown content for articles
+  duration_minutes?: number;
+  thumbnail_url?: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  min_grade_required?: 'A+' | 'A' | 'B' | 'B-'; // grade gate
+  status: AcademyResourceStatus;
+  created_at: string;
+  published_at?: string;
+  enrolled_count?: number;
+  completion_count?: number;
+}
+
+export interface AcademyEnrollment {
+  id: string;
+  resource_id: string;
+  talent_id: string;
+  enrolled_at: string;
+  progress_percent: number;
+  completed_at?: string;
+  quiz_score?: number;
+}
+
+export interface RemotanAgentLog {
+  id: string;
+  workspace_id: string;
+  agent: 'Workspace Agent' | 'Workflow Agent' | 'Performance Agent' | 'Compliance Agent' | 'Payroll Agent' | 'Analytics Agent' | 'Academy Agent';
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  timestamp: string;
+}
+
+export type WorkflowType = 'talent_onboarding' | 'performance_review_cycle' | 'contract_renewal_alert' | 'invoice_generation' | 'talent_replacement' | 'workspace_offboarding' | 'trial_expiry' | 'payroll_generation';
+
+export type WorkflowState = 'pending' | 'in_progress' | 'failed' | 'completed' | 'cancelled';
+
+export interface WorkflowInstance {
+  workflow_instance_id: string;
+  workflow_type: WorkflowType;
+  state: WorkflowState;
+  trigger_event: string;
+  trigger_entity_id: string;
+  last_step_completed: number;
+  failed_at_step?: number;
+  failure_reason?: string;
+  created_at: string;
+  updated_at: string;
+}

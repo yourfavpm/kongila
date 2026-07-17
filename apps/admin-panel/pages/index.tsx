@@ -6,13 +6,14 @@ import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader } from '@kongila/ui';
 import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
+import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
 import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
 import { calculateCompositeVettingGrade, generateMatchesForRequest, VETTING_STAGES, advanceTalentStage, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
 import {
   TalentProfile, ServiceRequest, Match, AuditLog, AgentLog, Interview, RehireRequest,
-  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment
+  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment, WorkflowInstance
 } from '@kongila/shared-types';
 import AssessmentWizard from '../components/AssessmentWizard';
 
@@ -31,6 +32,8 @@ type AdminTab =
   | 'assessments'
   | 'support'
   | 'audit'
+  | 'finance'
+  | 'workflows'
   | 'remotan-overview'
   | 'remotan-clients'
   | 'remotan-talent'
@@ -156,11 +159,12 @@ const KONGILA_NAV = [
   { key: 'client-pipeline', label: 'Client Pipeline' },
   { key: 'hiring-requests', label: 'Hiring Requests' },
   { key: 'interviews', label: 'Interviews' },
-  { key: 'matching', label: 'Match & Shortlist' },
   { key: 'contracts', label: 'Contracts & Offers' },
   { key: 'compliance', label: 'Compliance Docs' },
   { key: 'assessments', label: 'Skill Assessments' },
+  { key: 'finance', label: 'Financial System' },
   { key: 'support', label: 'Support Center' },
+  { key: 'workflows', label: 'Provisioning Queue' },
   { key: 'audit', label: 'Audit Logs' },
 ] as const;
 
@@ -197,15 +201,21 @@ export default function AdminPanel() {
   const [assessmentCategories, setAssessmentCategories] = useState<AssessmentCategory[]>([]);
   const [assessmentQuestions, setAssessmentQuestions] = useState<AssessmentQuestion[]>([]);
   const [assessmentAssignments, setAssessmentAssignments] = useState<AssessmentAssignment[]>([]);
+  const [assessmentResultReceived, setAssessmentResultReceived] = useState(false);
+  const [assessmentSearch, setAssessmentSearch] = useState('');
+  const [assessmentDropdownOpen, setAssessmentDropdownOpen] = useState(false);
   const [assessmentResults, setAssessmentResults] = useState<AssessmentResult[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [talentPayouts, setTalentPayouts] = useState<any[]>([]);
+  const [feeConfigs, setFeeConfigs] = useState<any[]>([]);
+  const [feeAuditLogs, setFeeAuditLogs] = useState<any[]>([]);
   
   // New stage-specific collections
   const [skillAssessments, setSkillAssessments] = useState<any[]>([]);
   const [talentSkillAssessments, setTalentSkillAssessments] = useState<any[]>([]);
   const [workSimulationTasks, setWorkSimulationTasks] = useState<any[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowInstance[]>([]);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
 
@@ -244,6 +254,8 @@ export default function AdminPanel() {
   const [editScoresMode, setEditScoresMode] = useState(false);
   const [pendingRejection, setPendingRejection] = useState<{ stageIdx: number; score?: number } | null>(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [showPrivateNoteModal, setShowPrivateNoteModal] = useState(false);
+  const [privateNoteInput, setPrivateNoteInput] = useState('');
 
   // ── Filter states
   const [talentFilter, setTalentFilter] = useState('All');
@@ -277,18 +289,29 @@ export default function AdminPanel() {
 
   const syncFromDb = async () => {
     try {
-      const res = await fetch('/api/db');
+      const [
+        res,
+        { data: supabaseOrgs },
+        { data: supabaseRequests },
+        { data: supabaseClientProfiles },
+        { data: supabaseAuditLogs },
+        ivRes
+      ] = await Promise.all([
+        fetch('/api/db'),
+        supabase.from('organizations').select('*'),
+        supabase.from('talent_requests').select('payload').order('created_at', { ascending: false }),
+        supabase.from('client_profiles').select('*'),
+        supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }),
+        fetch('/api/interviews')
+      ]);
+
       if (res.ok) {
         const db = await res.json();
         const freshTalents = db.talents || [];
         setTalents(freshTalents);
 
-        // Fetch organizations from Supabase
-        const { data: supabaseOrgs } = await supabase.from('organizations').select('*');
         setOrganizations(supabaseOrgs || []);
 
-        // Fetch client requests from Supabase
-        const { data: supabaseRequests } = await supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
         if (supabaseRequests && supabaseRequests.length > 0) {
           setRequests(supabaseRequests.map(r => r.payload));
         } else {
@@ -296,13 +319,7 @@ export default function AdminPanel() {
         }
 
         setMatches(db.matches || []);
-        
-        // Fetch client profiles
-        const { data: supabaseClientProfiles } = await supabase.from('client_profiles').select('*');
         setClientProfiles(supabaseClientProfiles || []);
-        
-        // Fetch audit logs from Supabase
-        const { data: supabaseAuditLogs } = await supabase.from('audit_logs').select('*').order('timestamp', { ascending: false });
         setAuditLogs(supabaseAuditLogs || []);
         
         setContracts(db.contracts || []);
@@ -347,7 +364,6 @@ export default function AdminPanel() {
           return { ...freshMatch, vettingPipeline: localPipeline || dbPipeline };
         });
       }
-      const ivRes = await fetch('/api/interviews');
       if (ivRes.ok) {
         const ivData = await ivRes.json();
         setInterviews(Array.isArray(ivData) ? ivData : []);
@@ -356,16 +372,26 @@ export default function AdminPanel() {
       console.error('Failed to sync DB', e);
     } finally {
       setLoading(false);
+      if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_loaded', 'true');
     }
   };
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('kongila_admin_loaded')) {
+      setLoading(false);
+    }
+    if (typeof window !== 'undefined' && sessionStorage.getItem('kongila_admin_auth')) {
+      setAuthChecking(false);
+      setIsAuthenticated(true);
+    }
+    
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
           const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
           if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
             setIsAuthenticated(true);
+            if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else {
             await supabase.auth.signOut();
           }
@@ -427,6 +453,12 @@ export default function AdminPanel() {
       });
     }
   }, [selectedTalent]);
+
+  useEffect(() => {
+    if (router.query.tab) {
+      setActiveTab(router.query.tab as AdminTab);
+    }
+  }, [router.query.tab]);
 
   // ─── METRICS ────────────────────────────────────────────────────────────────
 
@@ -665,6 +697,24 @@ export default function AdminPanel() {
     setSaving(false);
   };
 
+  const handleRejectReschedule = async () => {
+    if (!selectedTalent) return;
+    setSaving(true);
+    const currentPipeline = [...(selectedTalent.vettingPipeline || [])];
+    if (currentPipeline[2]) {
+      currentPipeline[2].rescheduleRequested = false;
+      currentPipeline[2].rescheduleReason = undefined;
+    }
+    
+    const updatedTalent = { ...selectedTalent, vettingPipeline: currentPipeline };
+    const updatedTalents = talents.map(t => t.id === selectedTalent.id ? updatedTalent : t);
+    
+    setTalents(updatedTalents);
+    setSelectedTalent(updatedTalent as TalentProfile);
+    await saveToDb({ talents: updatedTalents });
+    setSaving(false);
+  };
+
   const handleReAssess = async (stageIdx: number) => {
     if (!selectedTalent || saving) return;
     setSaving(true);
@@ -747,7 +797,7 @@ export default function AdminPanel() {
 
     const talent = talents.find(t => t.id === talentId);
     if (!talent) return;
-    const newMatch: Match = { id: `match_${Date.now()}_${talentId}`, requestId: selectedRequest.id, talentId, score: Math.floor(Math.random() * 15) + 84, breakdown: { skillFit: Math.floor(Math.random() * 15) + 80, behaviorFit: Math.floor(Math.random() * 15) + 80, personalityFit: Math.floor(Math.random() * 15) + 80, availability: Math.floor(Math.random() * 15) + 80, pastPerformance: Math.floor(Math.random() * 15) + 80 }, status: 'Shortlisted' };
+    const newMatch: Match = { id: `match_${Date.now()}_${talentId}`, requestId: selectedRequest.id, talentId, score: Math.floor(Math.random() * 15) + 84, breakdown: { skillFit: Math.floor(Math.random() * 15) + 80, behaviourFit: Math.floor(Math.random() * 15) + 80, personalityFit: Math.floor(Math.random() * 15) + 80, availability: Math.floor(Math.random() * 15) + 80, pastPerformance: Math.floor(Math.random() * 15) + 80 }, status: 'Shortlisted' };
     const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Shortlist Candidate', details: `Manually shortlisted ${talent.name} for request ${selectedRequest.serviceType}.`, timestamp: new Date().toISOString() };
     const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Matching Agent', message: `Candidate ${talent.name} shortlisted. Score: ${newMatch.score}% Fit.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
     const updatedMatches = [...matches, newMatch];
@@ -928,6 +978,122 @@ export default function AdminPanel() {
       </div>
     );
   }
+
+  const handleRetryWorkflow = async (instanceId: string) => {
+    try {
+      const res = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'retry', workflow_instance_id: instanceId })
+      });
+      if (res.ok) {
+        syncFromDb();
+        alert('Workflow retry initiated successfully.');
+      } else {
+        alert('Failed to retry workflow.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error retrying workflow.');
+    }
+  };
+
+  const renderWorkflowsTab = () => {
+    const failedWorkflows = workflows.filter(w => w.state === 'failed');
+    
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">Workflow Orchestration Engine</h1>
+            <p className="page-subtitle">Multi-step business processes spanning Kongila and Remotan (REM-WORKFLOW).</p>
+          </div>
+        </div>
+
+        {failedWorkflows.length > 0 && (
+          <div style={{ marginBottom: '32px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: '#EF4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className="pulse-dot" style={{ background: '#EF4444' }}></span>
+              Failed Workflow Queue
+            </h2>
+            <div className="data-table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Workflow ID</th>
+                    <th>Type</th>
+                    <th>Trigger Entity</th>
+                    <th>Failed At Step</th>
+                    <th>Failure Reason</th>
+                    <th>Last Updated</th>
+                    <th style={{ textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {failedWorkflows.map(wf => (
+                    <tr key={wf.workflow_instance_id}>
+                      <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-secondary)' }}>{wf.workflow_instance_id.slice(0, 8)}...</td>
+                      <td style={{ fontWeight: 600 }}>{wf.workflow_type.replace(/_/g, ' ')}</td>
+                      <td>{wf.trigger_entity_id}</td>
+                      <td>Step {wf.failed_at_step || wf.last_step_completed + 1}</td>
+                      <td style={{ color: '#EF4444', maxWidth: '300px' }} className="truncate" title={wf.failure_reason}>{wf.failure_reason}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{new Date(wf.updated_at).toLocaleDateString()}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#EF4444' }} onClick={() => handleRetryWorkflow(wf.workflow_instance_id)}>
+                          Retry Step
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: 'var(--text-primary)' }}>Workflow Monitor</h2>
+          <div className="data-table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Workflow ID</th>
+                  <th>Type</th>
+                  <th>State</th>
+                  <th>Trigger Entity</th>
+                  <th>Step Progress</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workflows.map(wf => (
+                  <tr key={wf.workflow_instance_id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-secondary)' }}>{wf.workflow_instance_id.slice(0, 8)}...</td>
+                    <td style={{ fontWeight: 600 }}>{wf.workflow_type.replace(/_/g, ' ')}</td>
+                    <td>
+                      <span className={`status-pill status-${wf.state.replace(/_/g, '-')}`}>
+                        {wf.state.replace(/_/g, ' ').toUpperCase()}
+                      </span>
+                    </td>
+                    <td>{wf.trigger_entity_id}</td>
+                    <td>{wf.last_step_completed} steps completed</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{new Date(wf.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+                {workflows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                      No workflow instances found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderTab = () => {
     switch (activeTab) {
@@ -1516,7 +1682,6 @@ export default function AdminPanel() {
                       </div>
                     </div>
                   </div>
-
                   <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end' }}>
                       <button onClick={() => router.push(`/talents/${selectedTalent.id}?return=vetting`)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--kongila-blue)', background: 'var(--kongila-blue)', color: '#fff', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Open Full Profile</button>
@@ -1530,25 +1695,34 @@ export default function AdminPanel() {
 
                     <div style={{ height: '60px', width: '1px', background: 'var(--border-glass)' }}></div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div style={{
-                        width: '70px', height: '70px', borderRadius: '50%',
-                        background: `conic-gradient(${getGradeColor(selectedTalent.grade)} ${calculateCompositeVettingGrade(selectedTalent.vettingScores).score * 3.6}deg, var(--border-glass) 0deg)`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                          <span style={{ fontSize: '18px', fontWeight: 800, color: getGradeColor(selectedTalent.grade) }}>
-                            {calculateCompositeVettingGrade(selectedTalent.vettingScores).score}
-                          </span>
-                        </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        {(() => {
+                          const calc = calculateCompositeVettingGrade(selectedTalent.vettingScores);
+                          return (
+                            <>
+                              <div style={{
+                                width: '70px', height: '70px', borderRadius: '50%',
+                                background: `conic-gradient(${getGradeColor(calc.grade)} ${calc.score * 3.6}deg, var(--border-glass) 0deg)`,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}>
+                                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '18px', fontWeight: 800, color: getGradeColor(calc.grade) }}>
+                                    {calc.score}
+                                  </span>
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '18px', fontWeight: 900, color: getGradeColor(calc.grade), marginBottom: '2px' }}>
+                                  {selectedTalent.vettingStatus === 'Vetted' || selectedTalent.vettingStatus === 'Matched' || selectedTalent.vettingStatus === 'Deployed'
+                                    ? (calc.grade === 'A+' ? '⭐ A+' : calc.grade === 'A' ? '🏆 A' : calc.grade === 'B' ? '📈 B' : calc.grade)
+                                    : `Score: ${calc.score}`}
+                                </div>
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{selectedTalent.vettingStatus}</div>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
-                      <div>
-                        <div style={{ fontSize: '18px', fontWeight: 900, color: getGradeColor(selectedTalent.grade), marginBottom: '2px' }}>
-                          {selectedTalent.grade === 'A+' ? '⭐ A+' : selectedTalent.grade === 'A' ? '🏆 A' : selectedTalent.grade === 'B' ? '📈 B' : 'Ungraded'}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{selectedTalent.vettingStatus}</div>
-                      </div>
-                    </div>
                   </div>
                 </GlassCard>
 
@@ -1680,12 +1854,46 @@ export default function AdminPanel() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                               {!assessmentAssigned ? (
                                 <>
-                                  <div>
+                                  <div style={{ position: 'relative' }}>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Select Assessment to Assign</label>
-                                    <select value={stageAssessmentId} onChange={e => setStageAssessmentId(e.target.value)} className="form-input" style={{ width: '100%', fontSize: '14px', padding: '12px' }}>
-                                      <option value="">-- Select Role-based Assessment --</option>
-                                      {skillAssessments.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.title} ({sa.total_time_limit_minutes || 0}m)</option>)}
-                                    </select>
+                                    <div 
+                                      onClick={() => setAssessmentDropdownOpen(!assessmentDropdownOpen)}
+                                      className="form-input" 
+                                      style={{ width: '100%', fontSize: '14px', padding: '12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)' }}
+                                    >
+                                      <span style={{ color: stageAssessmentId ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                                        {stageAssessmentId ? skillAssessments.find((sa: any) => sa.id === stageAssessmentId)?.title : '-- Select Role-based Assessment --'}
+                                      </span>
+                                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>▼</span>
+                                    </div>
+                                    {assessmentDropdownOpen && (
+                                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '8px', marginTop: '4px', zIndex: 50, maxHeight: '250px', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+                                        <input 
+                                          autoFocus
+                                          type="text" 
+                                          placeholder="Search assessments..." 
+                                          value={assessmentSearch} 
+                                          onChange={e => setAssessmentSearch(e.target.value)} 
+                                          style={{ padding: '12px', borderBottom: '1px solid var(--border-glass)', borderTop: 'none', borderLeft: 'none', borderRight: 'none', background: 'transparent', color: 'var(--text-primary)', outline: 'none', width: '100%' }}
+                                        />
+                                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                                          {skillAssessments.filter((sa: any) => sa.title.toLowerCase().includes(assessmentSearch.toLowerCase())).map((sa: any) => (
+                                            <div 
+                                              key={sa.id} 
+                                              onClick={() => { setStageAssessmentId(sa.id); setAssessmentDropdownOpen(false); setAssessmentSearch(''); }}
+                                              style={{ padding: '10px 12px', cursor: 'pointer', fontSize: '14px', borderBottom: '1px solid var(--border-glass)' }}
+                                              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                            >
+                                              {sa.title} ({sa.total_time_limit_minutes || 0}m)
+                                            </div>
+                                          ))}
+                                          {skillAssessments.filter((sa: any) => sa.title.toLowerCase().includes(assessmentSearch.toLowerCase())).length === 0 && (
+                                            <div style={{ padding: '10px 12px', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>No assessments found</div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Deadline for Submission</label>
@@ -1738,14 +1946,66 @@ export default function AdminPanel() {
                                   {submittedResult?.hasSubjective && submittedResult.subjectiveAnswers && Object.keys(submittedResult.subjectiveAnswers).length > 0 && (
                                     <div style={{ background: 'var(--bg-tertiary)', borderRadius: '10px', padding: '16px', border: '1px solid var(--border-glass)' }}>
                                       <div style={{ fontSize: '12px', fontWeight: 700, color: '#8B5CF6', marginBottom: '12px' }}>📝 Written Answers — Requires Manual Grading</div>
-                                      {Object.entries(submittedResult.subjectiveAnswers).map(([qId, answer]: [string, any]) => (
-                                        <div key={qId} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid var(--border-glass)' }}>
-                                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>Q: {qId}</div>
-                                          <div style={{ fontSize: '13px', color: 'var(--text-primary)', background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
-                                            {answer || <em style={{ color: 'var(--text-muted)' }}>No answer provided</em>}
+                                      {Object.entries(submittedResult.subjectiveAnswers).map(([qId, answer]: [string, any]) => {
+                                        const question = assessmentQuestions.find(q => q.id === qId);
+                                        return (
+                                          <div key={qId} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid var(--border-glass)' }}>
+                                            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>Q: {question?.question_text || qId}</div>
+                                            <div style={{ fontSize: '13px', color: 'var(--text-primary)', background: 'var(--bg-primary)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
+                                              {answer || <em style={{ color: 'var(--text-muted)' }}>No answer provided</em>}
+                                            </div>
                                           </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Detailed Answers Review */}
+                                  {submittedResult?.answers && Object.keys(submittedResult.answers).length > 0 && (
+                                    <div style={{ background: 'var(--bg-tertiary)', borderRadius: '10px', padding: '16px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
+                                      <details>
+                                        <summary style={{ fontSize: '14px', fontWeight: 800, color: '#10B981', cursor: 'pointer', outline: 'none', padding: '12px', background: 'var(--bg-primary)', borderRadius: '8px', border: '1px solid var(--border-glass)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                          🔍 Click to View Question Breakdown & Correct Answers
+                                        </summary>
+                                        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                          {Object.entries(submittedResult.answers).map(([qId, answer]: [string, any]) => {
+                                            const question = assessmentQuestions.find(q => q.id === qId);
+                                            if (!question) return null;
+                                            const isMCQ = question.type === 'multiple_choice';
+                                            const correctAnswer: string[] = Array.isArray(question.correct_answer) ? question.correct_answer : (question.correct_answer ? [question.correct_answer] : []);
+                                            const givenAnswer: string[] = Array.isArray(answer) ? answer : (answer ? [answer] : []);
+                                            
+                                            // Check correctness for MCQ
+                                            let isCorrect = false;
+                                            if (isMCQ) {
+                                              isCorrect = correctAnswer.length === givenAnswer.length && correctAnswer.every((c: string) => givenAnswer.includes(c));
+                                            }
+
+                                            return (
+                                              <div key={qId} style={{ padding: '16px', background: 'var(--bg-primary)', borderRadius: '8px', border: `1px solid ${isMCQ ? (isCorrect ? '#10B98140' : '#EF444440') : 'var(--border-glass)'}` }}>
+                                                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '12px' }}>
+                                                  Q: {question.question_text || qId}
+                                                </div>
+                                                <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                  <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-tertiary)', padding: '10px', borderRadius: '6px' }}>
+                                                    <span style={{ color: 'var(--text-muted)', width: '100px', flexShrink: 0, fontWeight: 600 }}>Talent Answer:</span>
+                                                    <span style={{ color: isMCQ ? (isCorrect ? '#10B981' : '#EF4444') : 'var(--text-primary)', fontWeight: 700 }}>
+                                                      {givenAnswer.join(', ') || <em style={{ color: 'var(--text-muted)' }}>No answer</em>}
+                                                      {isMCQ && (isCorrect ? ' ✅ (Correct)' : ' ❌ (Failed)')}
+                                                    </span>
+                                                  </div>
+                                                  {isMCQ && !isCorrect && (
+                                                    <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-tertiary)', padding: '10px', borderRadius: '6px' }}>
+                                                      <span style={{ color: 'var(--text-muted)', width: '100px', flexShrink: 0, fontWeight: 600 }}>Correct Answer:</span>
+                                                      <span style={{ color: '#10B981', fontWeight: 700 }}>{correctAnswer.join(', ')}</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
                                         </div>
-                                      ))}
+                                      </details>
                                     </div>
                                   )}
 
@@ -1805,9 +2065,12 @@ export default function AdminPanel() {
                                           <input type="url" value={stageInterviewLink} onChange={e => setStageInterviewLink(e.target.value)} placeholder="https://meet.google.com/..." className="form-input" style={{ width: '100%', fontSize: '14px', padding: '10px', borderColor: '#FCD34D', background: '#FFFBEB' }} />
                                         </div>
                                       </div>
-                                      <div style={{ marginTop: '12px' }}>
-                                        <button disabled={saving || !stageInterviewDate || !stageInterviewTime} onClick={() => handleStageDecision(2, 'Assign', undefined, stageNotesInput)} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: 'none', cursor: !stageInterviewDate || !stageInterviewTime ? 'not-allowed' : 'pointer', background: '#F59E0B', color: '#fff', fontSize: '13px', fontWeight: 800 }}>
+                                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                                        <button disabled={saving || !stageInterviewDate || !stageInterviewTime} onClick={() => handleStageDecision(2, 'Assign', undefined, stageNotesInput)} style={{ flex: 2, padding: '12px', borderRadius: '8px', border: 'none', cursor: !stageInterviewDate || !stageInterviewTime ? 'not-allowed' : 'pointer', background: '#F59E0B', color: '#fff', fontSize: '13px', fontWeight: 800 }}>
                                           🔄 Reschedule & Notify Candidate
+                                        </button>
+                                        <button disabled={saving} onClick={handleRejectReschedule} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #D97706', cursor: 'pointer', background: 'transparent', color: '#D97706', fontSize: '13px', fontWeight: 800 }}>
+                                          Keep Original Time
                                         </button>
                                       </div>
                                     </div>
@@ -1834,7 +2097,10 @@ export default function AdminPanel() {
                                           <span>{rubric.label} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— {rubric.hint}</span></span>
                                         </label>
                                         <input type="number" min="0" max="100" value={stageRubricScores[rubric.key] !== undefined ? stageRubricScores[rubric.key] : ''} onChange={e => {
-                                          const val = parseInt(e.target.value) || 0;
+                                          let val = parseInt(e.target.value);
+                                          if (isNaN(val)) val = 0;
+                                          if (val > 100) val = 100;
+                                          if (val < 0) val = 0;
                                           const newScores = { ...stageRubricScores, [rubric.key]: val };
                                           setStageRubricScores(newScores);
                                           
@@ -1852,13 +2118,18 @@ export default function AdminPanel() {
                                         }} className="form-input" style={{ width: '100%', fontSize: '14px' }} placeholder="0-100" />
                                       </div>
                                     ))}
+                                    {stageScoreInput !== undefined && (
+                                      <div style={{ fontSize: '13px', color: '#10B981', fontWeight: 700, padding: '12px', background: '#10B98115', borderRadius: '8px', border: '1px solid #10B98140' }}>
+                                        Stage Average: {stageScoreInput}% — (This contributes {Math.round(stageScoreInput * 0.3)}% to the final composite score)
+                                      </div>
+                                    )}
                                   </div>
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Interview Notes & Feedback</label>
                                     <textarea value={stageNotesInput} onChange={e => setStageNotesInput(e.target.value)} placeholder="Summarise interview performance, strengths, concerns..." rows={3} className="form-input" style={{ width: '100%', resize: 'none', fontSize: '14px', padding: '12px' }} />
                                   </div>
                                   <div style={{ display: 'flex', gap: '12px' }}>
-                                    <button disabled={saving} onClick={() => handleStageDecision(2, 'Proceed', stageScoreInput, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Interview Done — Move to Personality Test</button>
+                                    <button disabled={saving} onClick={() => setShowPrivateNoteModal(true)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Interview Done — Move to Personality Test</button>
                                     <button disabled={saving} onClick={() => handleStageDecision(2, 'Reject', stageScoreInput, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
                                   </div>
                                 </>
@@ -2128,9 +2399,8 @@ export default function AdminPanel() {
                         Scores are automatically updated when passing stages. You can manually override them below if needed.
                       </p>
                       {[
-                        { label: 'Application Screening', key: 'experience', value: editScoresMode ? editScores.experience : selectedTalent.vettingScores.experience, weight: '10%', color: '#EF4444' },
                         { label: 'Skill Assessment', key: 'technical', value: editScoresMode ? editScores.technical : selectedTalent.vettingScores.technical, weight: '30%', color: '#3B82F6' },
-                        { label: 'Behavioural Interview', key: 'behavioral', value: editScoresMode ? editScores.behavioral : selectedTalent.vettingScores.behavioral, weight: '20%', color: '#8B5CF6' },
+                        { label: 'Behavioural Interview', key: 'behavioral', value: editScoresMode ? editScores.behavioral : selectedTalent.vettingScores.behavioral, weight: '30%', color: '#8B5CF6' },
                         { label: 'Personality Test', key: 'personality', value: editScoresMode ? editScores.personality : selectedTalent.vettingScores.personality, weight: '10%', color: '#10B981' },
                         { label: 'Remote Readiness', key: 'remoteReadiness', value: editScoresMode ? editScores.remoteReadiness : selectedTalent.vettingScores.remoteReadiness, weight: '10%', color: '#F59E0B' },
                         { label: 'Work Simulation', key: 'workSimulation', value: editScoresMode ? editScores.workSimulation : selectedTalent.vettingScores.workSimulation, weight: '20%', color: '#F97316' },
@@ -2307,6 +2577,22 @@ export default function AdminPanel() {
           setContracts={setContracts}
           setContractTemplates={setContractTemplates}
           setAuditLogs={setAuditLogs}
+        />
+      );
+
+      // ── FINANCE MANAGER ────────────────────────────────────────────────────
+      case 'workflows': return renderWorkflowsTab();
+      case 'finance': return (
+        <FinanceManager
+          invoices={invoices}
+          talentPayouts={talentPayouts}
+          feeConfigs={feeConfigs}
+          feeAuditLogs={feeAuditLogs}
+          talents={talents}
+          contracts={contracts}
+          documents={documents}
+          syncFromDb={syncFromDb}
+          saveToDb={saveToDb}
         />
       );
 
@@ -3053,6 +3339,13 @@ export default function AdminPanel() {
             <polyline points="10 9 9 9 8 9" />
           </svg>
         );
+      case 'finance':
+        return (
+          <svg {...props}>
+            <line x1="12" y1="1" x2="12" y2="23" />
+            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+          </svg>
+        );
       case 'compliance':
         return (
           <svg {...props}>
@@ -3133,7 +3426,7 @@ export default function AdminPanel() {
             badge = documents.filter((d: any) => d.isMandatory && !d.isHidden && !d.userId && (d.signedByTalentIds?.length || 0) < vettedCount).length;
           }
           else if (key === 'vetting') badge = talents.filter((t: any) => t.vettingStage === 'Application Under Review').length;
-          else if (key === 'matching') badge = matches.filter((m: any) => m.status === 'Draft' || m.status === 'Matched').length;
+          else if ((key as string) === 'matching') badge = matches.filter((m: any) => m.status === 'Draft' || m.status === 'Matched').length;
           else if (key === 'assessments') badge = assessmentResults.filter((r: any) => r.passed == null).length;
           return (
             <div key={key} className={`menu-item ${activeTab === key ? 'active' : ''}`} onClick={() => { setActiveTab(key as AdminTab); setMobileSidebarOpen(false); }}>
@@ -3270,6 +3563,51 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {showPrivateNoteModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ width: '100%', maxWidth: '520px', background: 'var(--bg-card)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '24px', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}>
+            <div style={{ fontSize: '12px', color: '#8B5CF6', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>Internal Talent Note</div>
+            <h3 style={{ fontSize: '20px', fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 8px 0' }}>
+              Add a private note (Talent Management Only)
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 16px 0' }}>
+              This note will only be visible to internal admins and talent managers. It will not be shared with the talent or external clients.
+            </p>
+            <textarea
+              value={privateNoteInput}
+              onChange={e => setPrivateNoteInput(e.target.value)}
+              rows={4}
+              placeholder="Private observations, flags, or notes..."
+              className="form-input"
+              style={{ width: '100%', resize: 'vertical', fontSize: '14px', padding: '12px', marginBottom: '16px' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => {
+                  setShowPrivateNoteModal(false);
+                  setPrivateNoteInput('');
+                  handleStageDecision(2, 'Proceed', stageScoreInput, stageNotesInput);
+                }}
+                style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-glass)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
+              >
+                Skip
+              </button>
+              <button
+                disabled={saving}
+                onClick={() => {
+                  const finalNotes = privateNoteInput.trim() ? stageNotesInput + '\n\n--- Private Note (Talent Management Only) ---\n' + privateNoteInput : stageNotesInput;
+                  handleStageDecision(2, 'Proceed', stageScoreInput, finalNotes);
+                  setShowPrivateNoteModal(false);
+                  setPrivateNoteInput('');
+                }}
+                style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: '#10B981', color: '#fff', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
+              >
+                Submit & Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Main Content */}
       <div className="main-content">
         {renderTab()}

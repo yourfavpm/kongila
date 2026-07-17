@@ -60,6 +60,24 @@ export default function ContractsManager({
     if (selectedContract && selectedContract.id === contractId) setSelectedContract({ ...selectedContract, status: newStatus });
 
     await saveToDb({ contracts: updated, auditLogs: [newLog, ...auditLogs] });
+
+    if (newStatus === 'Active') {
+      try {
+        await fetch('/api/workflows', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'trigger',
+            workflow_type: 'talent_onboarding',
+            trigger_event: 'contract_activation',
+            trigger_entity_id: contractId
+          })
+        });
+      } catch (e) {
+        console.error('Failed to trigger workflow', e);
+      }
+    }
+
     setSaving(false);
   };
 

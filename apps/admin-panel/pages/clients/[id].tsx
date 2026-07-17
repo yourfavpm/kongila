@@ -34,6 +34,18 @@ export default function ClientProfileView() {
 
   useEffect(() => {
     if (!id) return;
+    
+    // Optimistically render if we have cached data for this client
+    if (typeof window !== 'undefined') {
+      const cached = sessionStorage.getItem(`kongila_client_${id}`);
+      if (cached) {
+        try {
+          setClient(JSON.parse(cached));
+          setLoading(false);
+        } catch(e) {}
+      }
+    }
+    
     fetchClientData();
     // Re-fetch every 5 seconds to ensure cross-tab data consistency (REQ-KA-203)
     const interval = setInterval(fetchClientData, 5000);
@@ -42,50 +54,57 @@ export default function ClientProfileView() {
 
   const fetchClientData = async () => {
     try {
-      // Don't set loading to true on every poll, rely on the initial state
-      const orgPromise = supabase.from('organizations').select('*').eq('id', id);
+      const { data: orgs } = await supabase.from('organizations').select('*').eq('id', id);
+      const org = orgs && orgs.length > 0 ? orgs[0] : null;
+
+      if (!org) {
+        setLoading(false);
+        return;
+      }
+
+      // 1. Immediately render the core CRM page and cache it
+      setClient(org);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(`kongila_client_${id}`, JSON.stringify(org));
+      }
+      setLoading(false);
+
+      // 2. Fetch heavy relational data asynchronously in the background
       const adminsPromise = supabase.from('users').select('*').in('role', ['admin', 'ops_manager']);
       const dbPromise = fetch('/api/db').then(res => res.json());
 
-      const [{ data: orgs }, { data: admins }, db] = await Promise.all([
-        orgPromise,
+      const [{ data: admins }, db] = await Promise.all([
         adminsPromise,
         dbPromise
       ]);
 
-      const org = orgs && orgs.length > 0 ? orgs[0] : null;
-
-      if (org) {
-        setClient(org);
-        setAdminUsers(admins || []);
+      setAdminUsers(admins || []);
         
-        // Fetch client profiles
-        const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
-        const orgUserIds = (profiles || []).map((cp: any) => cp.user_id);
+      // Fetch client profiles
+      const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
+      const orgUserIds = (profiles || []).map((cp: any) => cp.user_id);
         
-        // Fetch real requests
-        let requests: any[] = [];
-        if (orgUserIds.length > 0) {
-          const { data: supabaseRequests } = await supabase.from('talent_requests').select('*').in('client_id', orgUserIds);
-          if (supabaseRequests) {
-            requests = supabaseRequests.map((r: any) => ({ ...r.payload, dbId: r.id }));
-          }
+      // Fetch real requests
+      let requests: any[] = [];
+      if (orgUserIds.length > 0) {
+        const { data: supabaseRequests } = await supabase.from('talent_requests').select('*').in('client_id', orgUserIds);
+        if (supabaseRequests) {
+          requests = supabaseRequests.map((r: any) => ({ ...r.payload, dbId: r.id }));
         }
-        
-        const contracts = (db.contracts || []).filter((c: any) => orgUserIds.includes(c.clientId));
-        const invoices = (db.invoices || []).filter((i: any) => orgUserIds.includes(i.clientId));
-        const invoiceIds = invoices.map((i: any) => i.id);
-        const payments = (db.payments || []).filter((p: any) => invoiceIds.includes(p.invoiceId));
-        
-        setClientRequests(requests);
-        setClientContracts(contracts);
-        setClientInvoices(invoices);
-        setClientPayments(payments);
-        setClientMessages([]);
       }
+        
+      const contracts = (db.contracts || []).filter((c: any) => orgUserIds.includes(c.clientId));
+      const invoices = (db.invoices || []).filter((i: any) => orgUserIds.includes(i.clientId));
+      const invoiceIds = invoices.map((i: any) => i.id);
+      const payments = (db.payments || []).filter((p: any) => invoiceIds.includes(p.invoiceId));
+        
+      setClientRequests(requests);
+      setClientContracts(contracts);
+      setClientInvoices(invoices);
+      setClientPayments(payments);
+      setClientMessages([]);
     } catch (err) {
       console.error(err);
-    } finally {
       setLoading(false);
     }
   };

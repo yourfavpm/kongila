@@ -223,13 +223,11 @@ export function calculateCompositeVettingGrade(scores: VettingScoresInput): {
   grade: 'A+' | 'A' | 'B' | 'Reject';
 } {
   const compositeScore = Math.round(
-    (scores.technical * 0.25) +
+    (scores.technical * 0.30) +
+    (scores.behavioral * 0.30) +
     (scores.workSimulation * 0.20) +
-    (scores.behavioral * 0.15) +
-    (scores.communication * 0.15) +
     (scores.personality * 0.10) +
-    (scores.remoteReadiness * 0.10) +
-    (scores.experience * 0.05)
+    (scores.remoteReadiness * 0.10)
   );
 
   let grade: 'A+' | 'A' | 'B' | 'Reject' = 'Reject';

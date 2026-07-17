@@ -1,7 +1,7 @@
 import { 
   TalentProfile, ServiceRequest, Match, MatchBreakdown, Task, Contract, Notification, AuditLog, AgentLog,
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
-  Invoice, Payment, TalentPayout, Message, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
+  Invoice, Payment, TalentPayout, Message, Conversation, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
 } from '@kongila/shared-types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -31,6 +31,7 @@ export interface Schema {
   payments: Payment[];
   talentPayouts: TalentPayout[];
   messages: Message[];
+  conversations: Conversation[];
   roles: any[];
   userRoles: any[];
   supportTickets: SupportTicket[];
@@ -49,6 +50,7 @@ export interface Schema {
   tagDictionary?: any[];
   performanceReviews?: any[];
   classificationEvents?: any[];
+  workflows?: any[];
 }
 
 // ─── Empty baseline — NO seed data ───────────────────────────────────────────
@@ -73,6 +75,7 @@ const EMPTY_DB: Schema = {
   payments: [],
   talentPayouts: [],
   messages: [],
+  conversations: [],
   roles: [],
   userRoles: [],
   supportTickets: [],
@@ -89,7 +92,8 @@ const EMPTY_DB: Schema = {
   platformSettings: [],
   tagDictionary: [],
   performanceReviews: [],
-  classificationEvents: []
+  classificationEvents: [],
+  workflows: []
 };
 
 // ─── Supabase client ─────────────────────────────────────────────────────────
@@ -110,7 +114,7 @@ function getSupabaseClient() {
 let _lastSuccessfulRead: Schema | null = null;
 
 // ─── Local file helpers — ONLY used for assessments (not yet in Supabase) ────
-function readLocalAssessments(): Pick<Schema, 'assessments' | 'assessmentCategories' | 'assessmentQuestions' | 'assessmentAssignments' | 'skillAssessmentResults' | 'talentSkillAssessments' | 'workSimulationTasks'> {
+function readLocalAssessments(): Pick<Schema, 'assessments' | 'assessmentCategories' | 'assessmentQuestions' | 'assessmentAssignments' | 'skillAssessmentResults' | 'talentSkillAssessments' | 'workSimulationTasks' | 'workflows'> {
   try {
     if (fs.existsSync(DB_FILE_PATH)) {
       const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
@@ -122,13 +126,14 @@ function readLocalAssessments(): Pick<Schema, 'assessments' | 'assessmentCategor
         assessmentAssignments: data.assessmentAssignments || [],
         skillAssessmentResults: data.skillAssessmentResults || [],
         talentSkillAssessments: data.talentSkillAssessments || [],
-        workSimulationTasks: data.workSimulationTasks || []
+        workSimulationTasks: data.workSimulationTasks || [],
+        workflows: data.workflows || []
       };
     }
   } catch (e) {
     console.error('[DB] Failed to read assessments from db.json:', e);
   }
-  return { assessments: [], assessmentCategories: [], assessmentQuestions: [], assessmentAssignments: [], skillAssessmentResults: [], talentSkillAssessments: [], workSimulationTasks: [] };
+  return { assessments: [], assessmentCategories: [], assessmentQuestions: [], assessmentAssignments: [], skillAssessmentResults: [], talentSkillAssessments: [], workSimulationTasks: [], workflows: [] };
 }
 
 // ─── Synchronous helpers (legacy API compatibility — server-side only) ────────
@@ -150,7 +155,8 @@ export function writeDb(db: Schema): void {
       assessmentAssignments: db.assessmentAssignments ?? existing.assessmentAssignments,
       skillAssessmentResults: db.skillAssessmentResults ?? existing.skillAssessmentResults,
       talentSkillAssessments: db.talentSkillAssessments ?? existing.talentSkillAssessments,
-      workSimulationTasks: db.workSimulationTasks ?? existing.workSimulationTasks
+      workSimulationTasks: db.workSimulationTasks ?? existing.workSimulationTasks,
+      workflows: db.workflows ?? existing.workflows
     };
     fs.writeFileSync(DB_FILE_PATH, JSON.stringify(toWrite, null, 2), 'utf-8');
   } catch (e) {
@@ -247,7 +253,8 @@ export async function readDbAsync(): Promise<Schema> {
       supabase.from('support_tickets').select('*'),
       supabase.from('support_messages').select('*'),
       supabase.from('interviews').select('*'),
-      supabase.from('request_activity_logs').select('*')
+      supabase.from('request_activity_logs').select('*'),
+      supabase.from('conversations').select('*')
     ]);
 
     const [
@@ -257,7 +264,7 @@ export async function readDbAsync(): Promise<Schema> {
       rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts
     ] = batch2;
     const [
-      rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs
+      rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations
     ] = batch3;
 
     if (rUsers.error) {
@@ -320,7 +327,14 @@ export async function readDbAsync(): Promise<Schema> {
       organizationId: cp.organization_id,
       position: cp.position,
       phone: cp.phone,
-      permissionLevel: cp.permission_level || 'Full Access'
+      permissionLevel: cp.permission_level || 'Full Access',
+      settings: cp.settings || {
+        notifications: {
+          email: { Requests: true, Matches: true, Interviews: true, Contracts: true, Billing: true, Messages: true, Marketing: false },
+          whatsapp: { Requests: false, Matches: true, Interviews: true, Contracts: false, Billing: true, Messages: true, Marketing: false }
+        },
+        paymentMethods: []
+      }
     }));
 
     // ── Map documents ──────────────────────────────────────────────────────
@@ -448,6 +462,16 @@ export async function readDbAsync(): Promise<Schema> {
         cvName: telemetry.cvName || '',
         cvSize: telemetry.cvSize || null,
         certificationFiles: telemetry.certificationFiles || [],
+        hasLaptop: telemetry.hasLaptop || false,
+        hasInternet: telemetry.hasInternet || false,
+        hasPowerBackup: telemetry.hasPowerBackup || false,
+        settings: t.settings || {
+          notifications: {
+            email: { VettingUpdates: true, InterviewAlerts: true, PaymentAlerts: true, Messages: true, Marketing: false },
+            whatsapp: { VettingUpdates: true, InterviewAlerts: true, PaymentAlerts: true, Messages: true, Marketing: false }
+          }
+        },
+        classificationHistory: telemetry.classificationHistory || [],
         seniorityLevel: t.seniority_level || telemetry.seniorityLevel || '',
         primaryRoleCategory: telemetry.primaryRoleCategory || '',
         employmentPreference: telemetry.employmentPreference || '',
@@ -645,14 +669,21 @@ export async function readDbAsync(): Promise<Schema> {
       amount: Number(tp.amount || 0), status: tp.status, paidAt: tp.paid_at
     }));
 
+    const conversations: Conversation[] = (rConversations.data || []).map((conv: any) => ({
+      id: conv.id, type: conv.type, participantIds: conv.participant_ids || [],
+      contextType: conv.context_type, contextId: conv.context_id,
+      createdAt: conv.created_at, updatedAt: conv.updated_at
+    }));
+
     const messages: Message[] = (rMessages.data || []).map((msg: any) => ({
-      id: msg.id, senderId: msg.sender_id, receiverId: msg.receiver_id,
-      content: msg.content, timestamp: msg.timestamp, readStatus: msg.read_status
+      id: msg.id, conversationId: msg.conversation_id, senderId: msg.sender_id,
+      content: msg.content, attachmentUrl: msg.attachment_url, attachmentName: msg.attachment_name,
+      timestamp: msg.timestamp, isRead: msg.is_read || msg.read_status || false, readAt: msg.read_at
     }));
 
     const notifications: Notification[] = (rNotifs.data || []).map((n: any) => ({
       id: n.id, userId: n.user_id, title: n.title, message: n.message,
-      read: n.read, createdAt: n.created_at
+      read: n.read, createdAt: n.created_at, category: n.category, sourceRecordId: n.source_record_id
     }));
 
     const auditLogs: AuditLog[] = (rAudit.data || []).map((al: any) => ({
@@ -665,8 +696,9 @@ export async function readDbAsync(): Promise<Schema> {
     }));
 
     const supportTickets: SupportTicket[] = (rTickets.data || []).map((st: any) => ({
-      id: st.id, talentId: st.talent_id, subject: st.subject, category: st.category,
-      status: st.status, priority: st.priority, createdAt: st.created_at, lastActivity: 'Active'
+      id: st.id, talentId: st.talent_id, clientId: st.client_id, linkedContractId: st.linked_contract_id,
+      assignedTo: st.assigned_to, subject: st.subject, category: st.category,
+      status: st.status, priority: st.priority, createdAt: st.created_at, lastActivity: st.last_activity || 'Active'
     }));
 
     const supportMessages: SupportMessage[] = (rSupportMessages.data || []).map((sm: any) => ({
@@ -715,6 +747,7 @@ export async function readDbAsync(): Promise<Schema> {
       payments,
       talentPayouts,
       messages,
+      conversations,
       roles: [],
       userRoles: [],
       supportTickets,
@@ -783,7 +816,7 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     if (db.clientProfiles && db.clientProfiles.length > 0) {
       const rows = db.clientProfiles.map((cp: any) => ({
         id: cp.id, user_id: cp.userId, organization_id: cp.organizationId,
-        position: cp.position || 'Admin', phone: cp.phone, permission_level: cp.permissionLevel
+        position: cp.position || 'Admin', phone: cp.phone, permission_level: cp.permissionLevel, settings: cp.settings
       }));
       const { error } = await supabase.from('client_profiles').upsert(rows);
       if (error) console.error('[DB] client_profiles upsert error:', error.message);
@@ -946,9 +979,10 @@ export async function writeDbAsync(db: Schema): Promise<void> {
 
     if (db.supportTickets && db.supportTickets.length > 0) {
       const rows = db.supportTickets.map((st: any) => ({
-        id: st.id, talent_id: st.talentId, subject: st.subject,
+        id: st.id, talent_id: st.talentId, client_id: st.clientId, linked_contract_id: st.linkedContractId,
+        assigned_to: st.assignedTo, subject: st.subject,
         category: st.category, status: st.status, priority: st.priority,
-        created_at: st.createdAt
+        created_at: st.createdAt, last_activity: st.lastActivity
       }));
       const { error } = await supabase.from('support_tickets').upsert(rows);
       if (error) console.error('[DB] support_tickets upsert error:', error.message);
@@ -978,10 +1012,31 @@ export async function writeDbAsync(db: Schema): Promise<void> {
       const rows = db.notifications.map((n: any) => ({
         id: n.id, user_id: n.userId, title: n.title,
         message: n.message, read: n.read || false,
+        category: n.category, source_record_id: n.sourceRecordId,
         created_at: n.createdAt || new Date().toISOString()
       }));
       const { error } = await supabase.from('notifications').upsert(rows);
       if (error) console.error('[DB] notifications upsert error:', error.message);
+    }
+
+    if (db.conversations && db.conversations.length > 0) {
+      const rows = db.conversations.map((c: any) => ({
+        id: c.id, type: c.type, participant_ids: c.participantIds,
+        context_type: c.contextType, context_id: c.contextId,
+        created_at: c.createdAt, updated_at: c.updatedAt
+      }));
+      const { error } = await supabase.from('conversations').upsert(rows);
+      if (error) console.error('[DB] conversations upsert error:', error.message);
+    }
+
+    if (db.messages && db.messages.length > 0) {
+      const rows = db.messages.map((m: any) => ({
+        id: m.id, conversation_id: m.conversationId, sender_id: m.senderId,
+        content: m.content, attachment_url: m.attachmentUrl, attachment_name: m.attachmentName,
+        timestamp: m.timestamp, is_read: m.isRead, read_at: m.readAt
+      }));
+      const { error } = await supabase.from('messages').upsert(rows);
+      if (error) console.error('[DB] messages upsert error:', error.message);
     }
 
     if (db.agentLogs && db.agentLogs.length > 0) {

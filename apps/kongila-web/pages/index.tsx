@@ -195,14 +195,21 @@ export default function KongilaWeb() {
     }));
   };
 
+  // NOTE: Name pre-fill is now handled in restoreUserFromSession and handleSignUpSubmit
+  // to ensure the correct user's name is always used. This effect is intentionally
+  // left as a safety net only for edge cases where name is truly missing.
   useEffect(() => {
     if (authView === 'onboarding' && currentUser?.name && !talentOnboardingData.fullName) {
-      setTalentOnboardingData(prev => ({
-        ...prev,
-        fullName: currentUser.name,
-      }));
+      // Only prefill if fullName is empty and we have a valid name (not just email)
+      const name = currentUser.name;
+      if (name && name !== currentUser.email) {
+        setTalentOnboardingData(prev => ({
+          ...prev,
+          fullName: name,
+        }));
+      }
     }
-  }, [authView, currentUser?.name, talentOnboardingData.fullName]);
+  }, [authView, currentUser?.name, currentUser?.email, talentOnboardingData.fullName]);
 
   useEffect(() => {
     const needsOnboarding = currentUser?.role === 'talent' && currentUser?.onboardingStatus !== 'complete';
@@ -449,19 +456,39 @@ export default function KongilaWeb() {
         .maybeSingle();
 
       const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
-      let isOnboardingComplete = dbUser?.status === 'active';
+      // The user is considered to have completed onboarding only when their talent_profile
+      // bio contains the __kongila envelope with 100% completion. status='inactive' means
+      // they are a talent that has not yet finished onboarding.
+      let isOnboardingComplete = false;
+      let draftOnboardingData: any = null;
+      let draftWizardStep = 1;
+
       if (role === 'talent') {
         const { data: dbTalentProfile } = await supabase
           .from('talent_profiles')
-          .select('id,bio')
+          .select('id,bio,full_name')
           .eq('id', dbUser?.id || authUser.id)
           .maybeSingle();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+
+        // If not complete, try to restore draft onboarding state
+        if (!isOnboardingComplete && dbTalentProfile?.bio) {
+          try {
+            const parsed = JSON.parse(dbTalentProfile.bio);
+            if (parsed?.__kongila_draft === true) {
+              draftOnboardingData = parsed.onboardingData || null;
+              draftWizardStep = parsed.wizardStep || 1;
+            }
+          } catch (e) { /* no draft */ }
+        }
       }
+
+      // Use the name stored in Supabase auth metadata for THIS user specifically
+      const authName = authUser.user_metadata?.full_name || dbUser?.email || 'User';
 
       const restoredUser = {
         id: dbUser?.id || authUser.id,
-        name: authUser.user_metadata?.full_name || dbUser?.email || 'User',
+        name: authName,
         email: authUser.email || '',
         role,
         onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
@@ -473,6 +500,15 @@ export default function KongilaWeb() {
       setCurrentUser(restoredUser);
 
       if (!isOnboardingComplete && role === 'talent') {
+        // Restore draft data so user continues from where they left off
+        if (draftOnboardingData) {
+          setTalentOnboardingData(prev => ({ ...prev, ...draftOnboardingData }));
+          setTalentWizardStep(draftWizardStep);
+        } else {
+          // Fresh onboarding — pre-fill name from this user's auth metadata
+          setTalentOnboardingData(prev => ({ ...prev, fullName: authName !== restoredUser.email ? authName : '' }));
+          setTalentWizardStep(1);
+        }
         setAuthView('onboarding');
       } else {
         setAuthView(null);
@@ -694,15 +730,18 @@ export default function KongilaWeb() {
 
       const authUserId = data.user?.id || crypto.randomUUID();
 
-      // Write to public.users table
+      // Write to public.users table.
+      // status must be one of: 'active', 'suspended', 'inactive' (per DB constraint).
+      // Talent users start as 'inactive' until onboarding is complete;
+      // the handleTalentWizardSubmit sets them to 'active' when done.
       const { error: userErr } = await supabase.from('users').upsert({
         id: authUserId,
         email: emailInput,
         password_hash: 'auth_managed',
         role: authRole,
-        status: authRole === 'talent' ? 'onboarding' : 'active',
+        status: authRole === 'talent' ? 'inactive' : 'active',
         email_verified: false
-      });
+      }, { onConflict: 'id' });
       if (userErr) throw new Error(`User DB Error: ${userErr.message}`);
 
       if (authRole === 'client') {
@@ -769,10 +808,12 @@ export default function KongilaWeb() {
       await syncAuthSignupToDb(newUser);
 
       if (authRole === 'talent') {
+        // Always use the name the user just typed — never fall back to stale metadata
         setTalentOnboardingData(prev => ({
           ...prev,
           fullName: nameInput,
         }));
+        setTalentWizardStep(1);
         setAuthView('onboarding');
       } else {
         setAuthView(null);
@@ -853,6 +894,27 @@ export default function KongilaWeb() {
   };
 
 
+
+  // Persists partial onboarding state to talent_profiles.bio as a draft envelope.
+  // Called whenever the user advances a step so they can resume if they leave.
+  const saveDraftOnboarding = async (step: number, data: typeof talentOnboardingData) => {
+    const userId = currentUser?.id;
+    if (!userId) return;
+    try {
+      const draftPayload = JSON.stringify({
+        __kongila_draft: true,
+        wizardStep: step,
+        onboardingData: data,
+        savedAt: new Date().toISOString()
+      });
+      await supabase
+        .from('talent_profiles')
+        .upsert({ id: userId, user_id: userId, full_name: data.fullName || currentUser?.name || '', bio: draftPayload }, { onConflict: 'id' });
+    } catch (e) {
+      // Non-critical — draft save failure should not block user
+      console.warn('[Onboarding] Draft save failed:', e);
+    }
+  };
 
   const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
     return supabase.storage.from(bucket).upload(fileName, file, { upsert: true });
@@ -3520,7 +3582,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                   <NeonButton variant="ghost" onClick={handleSignOut}>Exit Onboarding</NeonButton>
-                  <NeonButton onClick={() => setTalentWizardStep(2)}>Continue</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(2, talentOnboardingData); setTalentWizardStep(2); }}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -3821,7 +3883,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <NeonButton variant="secondary" onClick={() => setTalentWizardStep(1)}>Back</NeonButton>
-                  <NeonButton onClick={() => setTalentWizardStep(3)}>Continue</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(3, talentOnboardingData); setTalentWizardStep(3); }}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -3918,7 +3980,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <NeonButton variant="secondary" onClick={() => setTalentWizardStep(2)}>Back</NeonButton>
-                  <NeonButton onClick={() => setTalentWizardStep(4)}>Continue</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(4, talentOnboardingData); setTalentWizardStep(4); }}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -4045,7 +4107,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <NeonButton variant="secondary" onClick={() => setTalentWizardStep(3)}>Back</NeonButton>
-                  <NeonButton onClick={() => setTalentWizardStep(5)} disabled={uploadProgress < 100}>Continue</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(5, talentOnboardingData); setTalentWizardStep(5); }} disabled={uploadProgress < 100}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -4098,7 +4160,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <NeonButton variant="secondary" onClick={() => setTalentWizardStep(4)}>Back</NeonButton>
-                  <NeonButton onClick={() => setTalentWizardStep(6)}>Continue to Finalization</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setTalentWizardStep(6); }}>Continue to Finalization</NeonButton>
                 </div>
               </div>
             )}

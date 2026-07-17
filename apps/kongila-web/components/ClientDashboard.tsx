@@ -8,6 +8,9 @@ import MatchedTalentPanel from "./MatchedTalentPanel";
 import ClientInterviewsPanel from "./ClientInterviewsPanel";
 import ScheduleInterviewModal from "./ScheduleInterviewModal";
 import MyTeamPanel from "./MyTeamPanel";
+import ClientSettingsPanel from "./ClientSettingsPanel";
+import ClientNotificationsPanel from "./ClientNotificationsPanel";
+import ClientSupportPanel from "./ClientSupportPanel";
 
 // ─── SVG Navigation Icons Component ──────────────────────────────────────────
 const SidebarIcon = ({
@@ -308,6 +311,8 @@ interface ClientDashboardProps {
   saveToDb?: (updatedDb: any) => Promise<void>;
   rehireRequests?: any[];
   setRehireRequests?: (rehireRequests: any[]) => void;
+  supportTickets?: any[];
+  setSupportTickets?: (supportTickets: any[]) => void;
 }
 
 // ─── Styled Components ────────────────────────────────────────────────────────
@@ -434,6 +439,8 @@ export default function ClientDashboard({
   saveToDb,
   rehireRequests,
   setRehireRequests,
+  supportTickets = [],
+  setSupportTickets,
 }: ClientDashboardProps) {
   // Billing States
   // Removed injected invoices state
@@ -449,6 +456,24 @@ export default function ClientDashboard({
   const [msgInput, setMsgInput] = React.useState("");
   const [msgAttachment, setMsgAttachment] = React.useState<File | null>(null);
   const [uploadingAttachment, setUploadingAttachment] = React.useState(false);
+
+  React.useEffect(() => {
+    const markRead = async () => {
+      const myConvos = conversations.filter(c => c.client_id === currentUser?.id);
+      const activeConvo = myConvos.find(c => c.id === selectedThreadId);
+      const convo = activeConvo ? activeConvo : myConvos[0];
+      if (!convo) return;
+      
+      const unreadMsgIds = messages
+        .filter(m => m.conversation_id === convo.id && m.sender_id !== currentUser?.id && !m.is_read)
+        .map(m => m.id);
+        
+      if (unreadMsgIds.length > 0) {
+        await supabase.from('messages').update({ is_read: true }).in('id', unreadMsgIds);
+      }
+    };
+    markRead();
+  }, [messages, selectedThreadId, currentUser?.id, conversations]);
 
   // Scheduling State
   const [scheduleModalData, setScheduleModalData] = React.useState<{ talent: any, request: any } | null>(null);
@@ -2401,17 +2426,7 @@ export default function ClientDashboard({
     // Filter messages for this conversation
     const activeMessages = convo ? messages.filter(m => m.conversation_id === convo.id).sort((a,b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) : [];
 
-    // Mark as read immediately
-    React.useEffect(() => {
-      const markRead = async () => {
-        if (!convo) return;
-        const unreadMsgIds = activeMessages.filter(m => m.sender_id !== currentUser?.id && !m.is_read).map(m => m.id);
-        if (unreadMsgIds.length > 0) {
-          await supabase.from('messages').update({ is_read: true }).in('id', unreadMsgIds);
-        }
-      };
-      markRead();
-    }, [activeMessages, convo]);
+    // Mark as read immediately logic moved to top level of ClientDashboard to avoid Hook Rules violations
 
     const handleSendMessage = async (e?: React.FormEvent) => {
       if (e) e.preventDefault();
@@ -6491,7 +6506,14 @@ export default function ClientDashboard({
                     💳 Pay via Card (Stripe)
                   </div>
                   <div style={{ fontSize: "12px", color: "#64748B" }}>
-                    Instant clearance. Visa •••• 4412 on file.
+                    {(() => {
+                      const profile = clientProfiles.find((cp: any) => cp.userId === currentUser?.id);
+                      const defaultCard = profile?.settings?.paymentMethods?.find((pm: any) => pm.isDefault);
+                      if (defaultCard) {
+                        return `Instant clearance. ${defaultCard.brand || 'Card'} •••• ${defaultCard.last4} on file.`;
+                      }
+                      return "Instant clearance. Click Confirm to securely add a card via Stripe.";
+                    })()}
                   </div>
                 </div>
                 <div
@@ -6805,6 +6827,8 @@ export default function ClientDashboard({
   );
 
   const renderSection = () => {
+    const profile = clientProfiles?.find((cp: any) => cp.userId === currentUser?.id);
+
     switch (activeSection) {
       case 'dashboard':      return renderDashboard();
       case 'company':        return <MyCompanyPanel currentUser={currentUser} organizations={organizations} clientProfiles={clientProfiles} users={users} />;
@@ -6865,10 +6889,66 @@ export default function ClientDashboard({
         );
       case 'billing':        return renderBilling();
       case 'messaging':      return renderMessaging();
-      case 'profile':        return renderSettings();
-      case 'remotan':
+      case 'profile':
+        return (
+          <ClientSettingsPanel 
+            currentUser={currentUser} 
+            clientProfile={profile} 
+            contracts={contracts} 
+            onSaveSettings={async (settings) => {
+              if (profile) {
+                await supabase.from('client_profiles').update({ settings }).eq('id', profile.id);
+                // Also trigger sync
+              }
+            }} 
+          />
+        );
       case 'notifications':
+        return (
+          <ClientNotificationsPanel 
+            notifications={notifications.filter((n: any) => n.userId === currentUser?.id)}
+            onMarkAllAsRead={async () => {
+              const myNotifs = notifications.filter((n: any) => n.userId === currentUser?.id);
+              const unreadIds = myNotifs.filter((n: any) => !n.read).map((n: any) => n.id);
+              if (unreadIds.length > 0) {
+                await supabase.from('notifications').update({ read: true }).in('id', unreadIds);
+                if (setNotifications) {
+                  setNotifications(notifications.map((n: any) => unreadIds.includes(n.id) ? { ...n, read: true } : n));
+                }
+              }
+            }}
+            onNavigate={(category, sourceRecordId) => {
+              const catMap: Record<string, any> = {
+                Requests: 'requests', Matches: 'radar', Interviews: 'scheduling', Contracts: 'contracts', Billing: 'billing', Messages: 'messaging'
+              };
+              const targetSection = catMap[category] || 'dashboard';
+              setActiveSection(targetSection);
+              
+              if (sourceRecordId) {
+                if (targetSection === 'billing') {
+                  setSelectedInvoice(invoices.find((i: any) => i.id === sourceRecordId) || null);
+                } else if (targetSection === 'requests') {
+                  const req = requests.find((r: any) => r.id === sourceRecordId);
+                  if (req) setSelectedRequest(req);
+                } else if (targetSection === 'messaging') {
+                  // Messaging section handles its own selection but we can set the top level state if it existed.
+                }
+              }
+            }}
+          />
+        );
       case 'support':
+        return (
+          <ClientSupportPanel 
+            currentUser={currentUser}
+            clientProfile={profile!}
+            contracts={contracts}
+            supportTickets={supportTickets}
+            talents={talents}
+            setSupportTickets={setSupportTickets || (() => {})}
+          />
+        );
+      case 'remotan':
       default:
         return (
           <div style={{ padding: '48px', textAlign: 'center' }}>

@@ -3,6 +3,10 @@ import { formatCurrency } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
 import type { Interview, Contract } from '@kongila/shared-types';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import TalentMessagesPanel from './TalentMessagesPanel';
+import TalentNotificationsPanel from './TalentNotificationsPanel';
+import TalentSettingsPanel from './TalentSettingsPanel';
+import TalentSupportPanel from './TalentSupportPanel';
 
 export const MOCK_PLATFORM_SETTINGS = {
   globalScoreVisibility: 'full' as 'full' | 'grade-only' | 'hidden',
@@ -183,7 +187,6 @@ const SidebarIcon = ({ id, color = 'currentColor', size = 18 }: { id: string; co
 // ─── Nav Items ────────────────────────────────────────────────────────────────
 const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: 'dashboard',        label: 'Home/Overview' },
-  { id: 'profile',          label: 'My Profile' },
   { id: 'compliance',       label: 'Documents' },
   { id: 'vetting_progress',  label: 'Vetting Progress' },
   { id: 'scores_grades',    label: 'Scores & Grades' },
@@ -194,6 +197,7 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: 'tasks',            label: 'Tasks' },
   { id: 'messages',         label: 'Messages' },
   { id: 'notifications',     label: 'Notifications' },
+  { id: 'profile',          label: 'My Profile' },
   { id: 'settings',         label: 'Settings' },
   { id: 'support',          label: 'Support' },
 ];
@@ -332,7 +336,7 @@ const getStageNextAction = (stageIdx: number, status: string) => {
   const actions = [
     'The Talent Manager is screening your application and profile documents.',
     'Complete the skill assessment once it is assigned to you.',
-    'Confirm your interview availability and join the scheduled call.',
+    'Waiting for admin to schedule your live interview.',
     'Complete the personality test when the system sends the invite.',
     'Keep your remote readiness details current for ops review.',
     'Submit the work simulation task before the deadline.',
@@ -356,8 +360,8 @@ const getStageStateLabel = (stage: any, totalStages: number) => {
   return `Stage ${stage.stageIndex + 1} of ${totalStages}`;
 };
 
-const getStageAgeLabel = (stage: any) => {
-  const source = stage?.startedAt || stage?.createdAt || stage?.assignedAt || stage?.completedAt;
+const getStageAgeLabel = (stage: any, fallbackDate?: string) => {
+  const source = stage?.started_at || stage?.startedAt || stage?.assigned_at || stage?.assignedAt || stage?.created_at || stage?.createdAt || stage?.completed_at || stage?.completedAt || fallbackDate;
   if (!source) return 'Just started';
   const then = new Date(source).getTime();
   if (Number.isNaN(then)) return 'Just started';
@@ -410,6 +414,11 @@ const isAssessmentSubmittable = (
   if (!tsa) return false;
   const lockedStatuses = ['submitted', 'graded', 'Passed', 'Failed'];
   if (lockedStatuses.includes(tsa.status)) return false;
+  
+  if (tsa.deadline) {
+    if (new Date(tsa.deadline).getTime() < Date.now()) return false;
+  }
+
   const hasResult = skillAssessmentResults.some((r: any) =>
     r.talentSkillAssessmentId === tsa.id &&
     (r.talentId === talentId || r.talent_id === talentId)
@@ -458,15 +467,32 @@ const ProfileSection = ({
   const talentContracts = contracts?.filter((c: any) => c.talentId === profile?.id || c.talentName === profile?.name) || [];
   const activeContract = talentContracts.find(c => c.status === 'Active' || c.status === 'Signed') || null;
   const talentMatches = matches?.filter((m: any) => m.talentId === profile?.id || m.talentName === profile?.name) || [];
-  const scheduledInterviews = talentMatches
-    .filter((m: any) => m.status === 'Interview Scheduled' && m.requestedDate)
+  
+  const pipeline = Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : [];
+  const vettingInterviews = pipeline
+    .filter((s: any) => s.interviewDate && s.status !== 'passed' && s.status !== 'skipped' && s.status !== 'failed')
+    .map((s: any) => ({
+      id: `vetting-int-${s.stageIndex}`,
+      title: s.stageName === 'Behavioural Interview' ? 'Live Interview' : s.stageName,
+      status: s.rescheduleRequested ? 'Reschedule Requested' : 'Interview Scheduled',
+      requestedDate: s.interviewDate,
+      requestedTime: s.interviewTime,
+      meetingLink: s.meetingLink,
+      isVetting: true,
+      stageIndex: s.stageIndex,
+    }));
+
+  const matchInterviews = talentMatches
+    .filter((m: any) => (m.status === 'Interview Scheduled' || m.status === 'Reschedule Requested') && m.requestedDate);
+
+  const scheduledInterviews = [...matchInterviews, ...vettingInterviews]
     .sort((a: any, b: any) => String(a.requestedDate).localeCompare(String(b.requestedDate)));
+
   const recentNotifications = (dashboardNotifications ?? []).slice(0, 5);
   const unreadNotifications = recentNotifications.filter((n: any) => !n.read).length;
   const activeVettingStage = getActiveVettingStage(profile);
   const activeStageIndex = Number(activeVettingStage?.stageIndex ?? 0);
   const totalStages = profile?.vettingPipeline?.length || 7;
-  const pipeline = Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : [];
   const passedCount = pipeline.filter((s: any) => s.status === 'passed').length;
   const hasCompletedVetting = passedCount >= totalStages || ['Vetted', 'Matched', 'Deployed'].includes(vettingStatus);
   const isNewTalent = (() => {
@@ -518,6 +544,10 @@ const ProfileSection = ({
       onUpdateProfile({ ...profile, ...updates });
     }
   };
+
+  const displayStatus = hasCompletedVetting 
+    ? (vettingStatus === 'Rejected' ? 'Rejected' : `Vetting Complete - ${profile?.grade || activeContract?.grade || 'VETTED'}`)
+    : (vettingStatus === 'Applied' && passedCount === 0 && activeVettingStage?.status === 'pending' ? 'Applied' : 'Vetting In Progress');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -574,30 +604,124 @@ const ProfileSection = ({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: '280px' }}>
-          <div style={{ fontSize: '13px', color: '#0047CC', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Talent Dashboard</div>
           <h1 style={{ fontSize: '30px', fontWeight: 900, color: '#1A2340', margin: '6px 0 8px 0', lineHeight: 1.05 }}>
             Welcome back, {user?.name?.split(' ')[0] || profile?.name?.split(' ')[0] || 'Talent'}
           </h1>
           <p style={{ fontSize: '14px', color: '#6B7A99', margin: 0, maxWidth: '720px' }}>
-            This is your live home base. Check your current vetting stage, finish what’s pending, and jump directly into the next action.
+            Check your current vetting stage, finish what’s pending, and jump directly into the next action.
           </p>
         </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          background: '#EEF3FF',
-          padding: '10px 16px',
-          borderRadius: '999px',
-          border: '1px solid rgba(0, 71, 204, 0.15)',
-          flexShrink: 0,
-        }}>
-          <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#0047CC' }} />
-          <span style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC' }}>
-            Status: {vettingStatus}
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            background: '#EEF3FF',
+            padding: '10px 16px',
+            borderRadius: '999px',
+            border: '1px solid rgba(0, 71, 204, 0.15)',
+            flexShrink: 0,
+          }}>
+            <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#0047CC' }} />
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC' }}>
+              Status: {displayStatus}
+            </span>
+          </div>
+          {activeContract && (
+            <a 
+              href={process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : 'https://remotan.kongila.io'}
+              target="_blank" 
+              rel="noreferrer"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: 'linear-gradient(135deg, #0ABFBC, #0284C7)',
+                color: '#fff',
+                padding: '10px 16px',
+                borderRadius: '999px',
+                fontSize: '13px',
+                fontWeight: 800,
+                textDecoration: 'none',
+                boxShadow: '0 4px 12px rgba(10, 191, 188, 0.3)',
+                transition: 'transform 0.2s'
+              }}
+            >
+              <span>⚡</span> Go to Remotan Workspace
+            </a>
+          )}
         </div>
       </div>
+
+      <Card style={{
+        padding: '22px',
+        background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.08), rgba(16, 185, 129, 0.08))',
+        border: '1px solid rgba(0, 71, 204, 0.14)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: '#6B7A99', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Active Vetting Stage</div>
+            <div style={{ fontSize: '16px', fontWeight: 900, color: '#1A2340', margin: '6px 0 2px 0' }}>{(activeVettingStage?.stageName === 'Behavioural Interview' ? 'Live Interview' : activeVettingStage?.stageName) || 'Application Screening'}</div>
+            <div style={{ fontSize: '12px', color: '#6B7A99', marginBottom: '12px' }}>{getStageAgeLabel(activeVettingStage, profile?.createdAt || profile?.user?.createdAt)}</div>
+            <p style={{ fontSize: '13px', color: '#475569', margin: 0, maxWidth: '720px' }}>
+              {hasCompletedVetting ? 'Your vetting cycle has been completed. Any future review updates will appear here.' : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending')}
+            </p>
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '160px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC', marginBottom: '6px' }}>{vettingProgressLabel}</div>
+            <div style={{ height: '8px', background: 'rgba(255,255,255,0.45)', borderRadius: '999px', overflow: 'hidden' }}>
+              <div style={{ width: `${vettingProgressPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #10B981)', borderRadius: '999px' }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '16px' }}>
+          <StatusPill label={hasCompletedVetting ? 'Ready for deployment' : 'Vetting in progress'} color={hasCompletedVetting ? '#10B981' : '#0047CC'} />
+          <StatusPill label={`Days: ${getStageAgeLabel(activeVettingStage, profile?.createdAt || profile?.user?.createdAt)}`} color="#6B7280" />
+          <StatusPill label={hasCompletedVetting ? `Final status: ${displayStatus}` : `Current status: ${displayStatus}`} color="#0047CC" />
+        </div>
+
+        {activeVettingStage?.assessmentId && (
+          <div style={{ marginTop: '16px', background: canStartSkillAssessment ? '#F8FAFC' : '#F0FDF4', border: `1px solid ${canStartSkillAssessment ? '#E2E8F0' : '#BBF7D0'}`, borderRadius: '14px', padding: '16px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 800, color: canStartSkillAssessment ? '#0047CC' : '#15803D', marginBottom: '6px' }}>Skill Assessment</div>
+            {canStartSkillAssessment ? (
+              <>
+                <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#475569' }}>
+                  Complete the assigned assessment to move to the next vetting stage.
+                  {activeSkillAssessment?.deadline && (
+                    <span style={{ display: 'block', color: '#EF4444', fontWeight: 700, marginTop: '4px' }}>
+                      ⚠️ Deadline: {new Date(activeSkillAssessment.deadline).toLocaleDateString()}
+                    </span>
+                  )}
+                </p>
+                <button
+                  onClick={() => onOpenAssessment?.(activeSkillAssessment?.id || activeVettingStage.assessmentId)}
+                  style={{
+                    background: 'linear-gradient(135deg, #0047CC, #3B82F6)',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px 16px',
+                    borderRadius: '10px',
+                    fontSize: '12px',
+                    fontWeight: 800,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Start Assessment
+                </button>
+              </>
+            ) : (
+              <p style={{ margin: 0, fontSize: '13px', color: '#475569' }}>
+                {activeSkillAssessment?.deadline && new Date(activeSkillAssessment.deadline).getTime() < Date.now() && !skillAssessmentResults.some((r: any) => r.talentSkillAssessmentId === activeSkillAssessment?.id) ? (
+                  <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠️ The deadline for this assessment has passed. You can no longer submit it.</span>
+                ) : (
+                  "Your assessment has been submitted and is awaiting review by the vetting team. You will be notified once it has been graded."
+                )}
+              </p>
+            )}
+          </div>
+        )}
+      </Card>
 
       {profileCompletion < 100 && (
         <Card style={{ padding: '20px', borderLeft: '4px solid #0047CC' }}>
@@ -642,73 +766,12 @@ const ProfileSection = ({
         </Card>
       )}
 
-      <Card style={{
-        padding: '22px',
-        background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.08), rgba(16, 185, 129, 0.08))',
-        border: '1px solid rgba(0, 71, 204, 0.14)',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: '12px', color: '#6B7A99', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Active Vetting Stage</div>
-            <h2 style={{ fontSize: '24px', fontWeight: 900, color: '#1A2340', margin: '6px 0 4px 0' }}>
-              Stage {activeStageIndex + 1}: {activeVettingStage?.stageName || profile?.vettingStage || 'Application Screening'}
-            </h2>
-            <p style={{ fontSize: '13px', color: '#475569', margin: 0, maxWidth: '720px' }}>
-              {hasCompletedVetting ? 'Your vetting cycle has been completed. Any future review updates will appear here.' : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending')}
-            </p>
-          </div>
-          <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '160px' }}>
-            <div style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC', marginBottom: '6px' }}>{vettingProgressLabel}</div>
-            <div style={{ fontSize: '12px', color: '#6B7A99' }}>{getStageAgeLabel(activeVettingStage)}</div>
-            <div style={{ height: '8px', background: 'rgba(255,255,255,0.45)', borderRadius: '999px', overflow: 'hidden', marginTop: '10px' }}>
-              <div style={{ width: `${vettingProgressPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #10B981)', borderRadius: '999px' }} />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '16px' }}>
-          <StatusPill label={hasCompletedVetting ? 'Ready for deployment' : 'Vetting in progress'} color={hasCompletedVetting ? '#10B981' : '#0047CC'} />
-          <StatusPill label={`Days: ${getStageAgeLabel(activeVettingStage)}`} color="#6B7280" />
-          <StatusPill label={hasCompletedVetting ? `Final status: ${vettingStatus}` : `Current status: ${vettingStatus}`} color="#0047CC" />
-        </div>
-
-        {activeStageIndex === 1 && activeVettingStage?.assessmentId && (
-          <div style={{ marginTop: '16px', background: canStartSkillAssessment ? '#F8FAFC' : '#F0FDF4', border: `1px solid ${canStartSkillAssessment ? '#E2E8F0' : '#BBF7D0'}`, borderRadius: '14px', padding: '16px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 800, color: canStartSkillAssessment ? '#0047CC' : '#15803D', marginBottom: '6px' }}>Skill Assessment</div>
-            {canStartSkillAssessment ? (
-              <>
-                <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#475569' }}>
-                  Complete the assigned assessment to move to the next vetting stage.
-                </p>
-                <button
-                  onClick={() => onOpenAssessment?.(activeSkillAssessment?.id || activeVettingStage.assessmentId)}
-                  style={{
-                    background: 'linear-gradient(135deg, #0047CC, #3B82F6)',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '10px 16px',
-                    borderRadius: '10px',
-                    fontSize: '12px',
-                    fontWeight: 800,
-                    cursor: 'pointer'
-                  }}
-                >
-                  Start Assessment
-                </button>
-              </>
-            ) : (
-              <p style={{ margin: 0, fontSize: '13px', color: '#475569' }}>
-                Your assessment has been submitted and is awaiting review by the vetting team. You will be notified once it has been graded.
-              </p>
-            )}
-          </div>
-        )}
-      </Card>
 
       {shouldShowOnboardingVideo && (
         <Card style={{ padding: 0, overflow: 'hidden', border: '1px solid rgba(0, 71, 204, 0.16)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 360px) 1fr', gap: 0, alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch' }}>
             <div style={{
+              flex: '1 1 320px',
               minHeight: '240px',
               background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
               position: 'relative',
@@ -723,11 +786,11 @@ const ProfileSection = ({
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               />
             </div>
-            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '10px' }}>
+            <div style={{ flex: '2 1 300px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '10px' }}>
               <div style={{ fontSize: '12px', color: '#0047CC', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Welcome Video</div>
               <h3 style={{ fontSize: '22px', fontWeight: 900, color: '#1A2340', margin: 0 }}>Watch this before your next step</h3>
               <p style={{ fontSize: '14px', color: '#475569', margin: 0, lineHeight: 1.6 }}>
-                New talent sees this walkthrough immediately after signup so the portal, vetting flow, and next actions are clear from day one.
+                Watch this quick orientation video to learn how to navigate your dashboard, manage your vetting stages, and get fully onboarded with Kongila.
               </p>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '6px' }}>
                 <button
@@ -812,12 +875,12 @@ const ProfileSection = ({
           </Card>
         )}
 
-        {hasCompletedVetting && upcomingInterviews.length > 0 && (
+        {upcomingInterviews.length > 0 && (
           <Card style={{ padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
               <div>
                 <div style={{ fontSize: '12px', color: '#6B7A99', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Upcoming Interviews</div>
-                <h3 style={{ fontSize: '18px', fontWeight: 900, color: '#1A2340', margin: '6px 0 0 0' }}>Next 3 scheduled calls</h3>
+                <h3 style={{ fontSize: '18px', fontWeight: 900, color: '#1A2340', margin: '6px 0 0 0' }}>Next {upcomingInterviews.length} scheduled {upcomingInterviews.length === 1 ? 'call' : 'calls'}</h3>
               </div>
               <button
                 onClick={() => setActiveSection('interviews')}
@@ -831,15 +894,23 @@ const ProfileSection = ({
                 <div key={match.id} style={{ border: '1px solid #E2E8F0', borderRadius: '12px', padding: '12px 14px', background: '#F8FAFC' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
                     <div>
-                      <div style={{ fontSize: '13px', fontWeight: 900, color: '#1A2340' }}>{match.clientName || match.talentName || 'Interview'}</div>
+                      <div style={{ fontSize: '13px', fontWeight: 900, color: '#1A2340' }}>{match.clientName || match.talentName || match.title || 'Interview'}</div>
                       <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px' }}>{match.requestedNotes || match.title || 'Video interview'}</div>
                     </div>
-                    <StatusPill label={match.status} color="#0047CC" />
+                    <StatusPill label={match.status} color={match.status === 'Reschedule Requested' ? '#F59E0B' : '#0047CC'} />
                   </div>
                   <div style={{ fontSize: '12px', color: '#6B7A99', marginTop: '8px' }}>
                     {match.requestedDate ? new Date(match.requestedDate).toLocaleDateString() : 'TBD'}
                     {' · '}
                     {match.requestedTime || 'TBD'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                    {match.meetingLink && match.status !== 'Reschedule Requested' && (
+                      <a href={match.meetingLink} target="_blank" rel="noreferrer" style={{ padding: '6px 12px', background: '#0047CC', color: '#fff', borderRadius: '6px', fontSize: '11px', fontWeight: 700, textDecoration: 'none' }}>Join Call</a>
+                    )}
+                    {match.status !== 'Reschedule Requested' && (
+                      <button onClick={() => alert('Reschedule requested for ' + match.title)} style={{ padding: '6px 12px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Request Reschedule</button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1057,34 +1128,24 @@ const MOCK_INTERVIEWS: Interview[] = [
   }
 ];
 
-const InterviewsSection = () => {
-  const [activeTab, setActiveTab] = useState<'action'|'upcoming'|'past'>('action');
-  const [interviews, setInterviews] = useState<Interview[]>(MOCK_INTERVIEWS);
+const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[] }) => {
+  const [activeTab, setActiveTab] = useState<'upcoming'|'reschedules'|'past'>('upcoming');
+  const interviews = scheduledInterviews || MOCK_INTERVIEWS;
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
 
-  const actionRequired = interviews.filter(i => i.status === 'Proposed');
-  const upcoming = interviews.filter(i => i.status === 'Scheduled' || i.status === 'Rescheduled');
-  const past = interviews.filter(i => i.status === 'Completed' || i.status === 'Cancelled');
-
-  const handleConfirm = (id: string) => {
-    setInterviews(prev => prev.map(i => i.id === id ? { ...i, status: 'Scheduled' } : i));
-    alert('Interview confirmed! An email and calendar invite have been sent to you and the client.');
-    setActiveTab('upcoming');
-  };
-
-  const handleRequestDifferentTime = () => {
-    alert('Opening a message thread with your Account Officer to renegotiate the time.');
-  };
+  const upcoming = interviews.filter((i: any) => i.status === 'Interview Scheduled' || i.status === 'Scheduled');
+  const reschedules = interviews.filter((i: any) => i.status === 'Reschedule Requested');
+  const past = interviews.filter((i: any) => i.status === 'Completed' || i.status === 'Cancelled' || i.status === 'failed' || i.status === 'passed');
 
   const handleSaveNotes = (id: string) => {
-    setInterviews(prev => prev.map(i => i.id === id ? { ...i, talentNotes: notesValue } : i));
+    // Implement save notes logic
     setEditingNotesId(null);
   };
 
-  const generateGoogleCalendarLink = (i: Interview) => {
-    const start = new Date(`${i.date}T${i.time}`).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = new Date(new Date(`${i.date}T${i.time}`).getTime() + 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
+  const generateGoogleCalendarLink = (i: any) => {
+    const start = new Date(`${i.requestedDate || i.date}T${i.requestedTime || i.time}`).toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const end = new Date(new Date(`${i.requestedDate || i.date}T${i.requestedTime || i.time}`).getTime() + 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Interview+-+${encodeURIComponent(i.title)}&dates=${start}/${end}&details=Meeting+Link:+${encodeURIComponent(i.meetingLink || '')}`;
   };
 
@@ -1095,28 +1156,11 @@ const InterviewsSection = () => {
           Interviews
         </h1>
         <p style={{ color: '#6B7A99', fontSize: '15px', margin: 0 }}>
-          Manage your upcoming interviews and review past feedback.
+          Manage your upcoming interviews and requested reschedules.
         </p>
       </div>
 
       <div style={{ display: 'flex', gap: '32px', borderBottom: '1px solid #DDE2EC', marginBottom: '24px' }}>
-        <button 
-          onClick={() => setActiveTab('action')}
-          style={{ 
-            padding: '0 0 12px 0', background: 'none', border: 'none', 
-            fontSize: '15px', fontWeight: activeTab === 'action' ? 700 : 500,
-            color: activeTab === 'action' ? '#0047CC' : '#6B7A99',
-            borderBottom: activeTab === 'action' ? '3px solid #0047CC' : '3px solid transparent',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
-          }}
-        >
-          Action Required
-          {actionRequired.length > 0 && (
-            <span style={{ background: '#EF4444', color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '12px' }}>
-              {actionRequired.length}
-            </span>
-          )}
-        </button>
         <button 
           onClick={() => setActiveTab('upcoming')}
           style={{ 
@@ -1124,10 +1168,27 @@ const InterviewsSection = () => {
             fontSize: '15px', fontWeight: activeTab === 'upcoming' ? 700 : 500,
             color: activeTab === 'upcoming' ? '#0047CC' : '#6B7A99',
             borderBottom: activeTab === 'upcoming' ? '3px solid #0047CC' : '3px solid transparent',
-            cursor: 'pointer'
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
           }}
         >
           Upcoming ({upcoming.length})
+        </button>
+        <button 
+          onClick={() => setActiveTab('reschedules')}
+          style={{ 
+            padding: '0 0 12px 0', background: 'none', border: 'none', 
+            fontSize: '15px', fontWeight: activeTab === 'reschedules' ? 700 : 500,
+            color: activeTab === 'reschedules' ? '#0047CC' : '#6B7A99',
+            borderBottom: activeTab === 'reschedules' ? '3px solid #0047CC' : '3px solid transparent',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
+          }}
+        >
+          Reschedules Requested
+          {reschedules.length > 0 && (
+            <span style={{ background: '#F59E0B', color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '12px' }}>
+              {reschedules.length}
+            </span>
+          )}
         </button>
         <button 
           onClick={() => setActiveTab('past')}
@@ -1143,39 +1204,34 @@ const InterviewsSection = () => {
         </button>
       </div>
 
-      {activeTab === 'action' && (
+      {activeTab === 'reschedules' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {actionRequired.length === 0 ? (
+          {reschedules.length === 0 ? (
             <Card style={{ padding: '32px', textAlign: 'center', color: '#6B7A99' }}>
-              No action required right now.
+              No pending reschedule requests.
             </Card>
-          ) : actionRequired.map(i => (
+          ) : reschedules.map(i => (
             <Card key={i.id} style={{ padding: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
                   <div style={{ fontSize: '12px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', display: 'inline-block', padding: '4px 8px', borderRadius: '4px', marginBottom: '8px' }}>
-                    Awaiting Your Confirmation
+                    Reschedule Requested
                   </div>
                   <div style={{ fontSize: '18px', fontWeight: 800, color: '#1A2340', marginBottom: '4px' }}>
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {new Date(i.date).toLocaleDateString()}</span>
-                    <span>🕒 {i.time} (Your Local Time)</span>
-                    <span>⏳ Est. 60 mins</span>
+                    <span>📅 {i.requestedDate ? new Date(i.requestedDate).toLocaleDateString() : 'TBD'}</span>
+                    <span>🕒 {i.requestedTime || 'TBD'} (Your Local Time)</span>
                   </div>
+                  {i.requestedNotes && (
+                    <div style={{ marginTop: '12px', fontSize: '13px', color: '#475569', background: '#F8FAFC', padding: '8px 12px', borderRadius: '6px' }}>
+                      <strong>Reason: </strong> {i.requestedNotes}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
-                  <button onClick={handleRequestDifferentTime} style={{
-                    padding: '10px 16px', background: '#F5F7FA', color: '#1A2340', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
-                  }}>
-                    Request Different Time
-                  </button>
-                  <button onClick={() => handleConfirm(i.id)} style={{
-                    padding: '10px 16px', background: '#0047CC', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
-                  }}>
-                    Confirm Slot
-                  </button>
+                  <span style={{ fontSize: '13px', color: '#6B7A99', fontStyle: 'italic' }}>Waiting for Admin</span>
                 </div>
               </div>
             </Card>
@@ -1197,8 +1253,8 @@ const InterviewsSection = () => {
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {new Date(i.date).toLocaleDateString()}</span>
-                    <span>🕒 {i.time} (Your Local Time)</span>
+                    <span>📅 {new Date(i.requestedDate || i.date).toLocaleDateString()}</span>
+                    <span>🕒 {i.requestedTime || i.time} (Your Local Time)</span>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -2825,7 +2881,7 @@ function getExpiryState(expiryDate?: string | null): 'expired' | 'expiring_soon'
 }
 
 const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpdateDocument }: { profile: any; allDocuments?: any[]; onUpdateProfile?: (p: any) => void; onUpdateDocument?: (d: any) => void }) => {
-  const [activeTab, setActiveTab] = useState<'my_docs' | 'compliance' | 'history'>('my_docs');
+  const [activeTab, setActiveTab] = useState<'my_docs' | 'compliance' | 'history'>('compliance');
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -2886,7 +2942,16 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
   const userId = profile?.id || '';
   const allUserDocs: any[] = (profile?.documents || []).filter((d: any) => d.status !== 'deleted');
 
-  const activeCv = allUserDocs.find((d: any) => d.type === 'cv' && d.status === 'uploaded');
+  const activeCv = allUserDocs.find((d: any) => d.type === 'cv' && d.status === 'uploaded') || (profile?.cvUrl ? {
+    id: 'onboarding_cv',
+    type: 'cv',
+    name: profile.cvName || 'CV / Resume',
+    fileUrl: profile.cvUrl,
+    fileSizeBytes: profile.cvSize || 0,
+    uploadedAt: profile.createdAt || new Date().toISOString(),
+    status: 'uploaded',
+    versionNumber: 1
+  } : undefined);
   const cvVersions = allUserDocs.filter((d: any) => d.type === 'cv').sort((a: any, b: any) => (b.versionNumber || 1) - (a.versionNumber || 1));
   const nextCvVersion = cvVersions.length > 0 ? (cvVersions[0].versionNumber || 1) + 1 : 1;
 
@@ -3887,8 +3952,8 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
         <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '220px', height: '220px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)' }} />
         <div style={{ position: 'absolute', bottom: '-40px', left: '30%', width: '160px', height: '160px', borderRadius: '50%', background: 'rgba(0,71,204,0.15)' }} />
         {!isEditingHeader ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '28px', position: 'relative' }}>
-            <div style={{ width: '96px', height: '96px', borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #0047CC, #38BDF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '36px', fontWeight: 900, flexShrink: 0, border: '3px solid rgba(255,255,255,0.2)' }}>
+          <div className="profile-header-row" style={{ display: 'flex', alignItems: 'center', gap: '28px', position: 'relative' }}>
+            <div className="profile-avatar" style={{ width: '96px', height: '96px', borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #0047CC, #38BDF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '36px', fontWeight: 900, flexShrink: 0, border: '3px solid rgba(255,255,255,0.2)' }}>
               {profilePhotoUrl ? (
                 <img src={profilePhotoUrl} alt={`${fullName} profile`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
@@ -4919,22 +4984,28 @@ const OnboardingSection = ({ profile }: { profile: any }) => {
   return (
     <div>
       <SectionHeader title="Onboarding Experience" subtitle="Your journey from signup to full deployment." />
-      <div className="db-grid-2" style={{}}>
+      <div className="db-grid-2" style={{ maxWidth: '100%', overflowX: 'hidden' }}>
         {/* Welcome video placeholder */}
         <Card style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{
-            background: 'linear-gradient(135deg, #002B7F 0%, #0047CC 100%)',
+            background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)',
             height: '200px', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: '12px'
+            alignItems: 'center', justifyContent: 'center', gap: '16px'
           }}>
             <div style={{
-              width: '60px', height: '60px', borderRadius: '50%',
-              background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(8px)',
-              border: '2px solid rgba(255,255,255,0.3)',
+              width: '64px', height: '64px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)',
+              border: '1px solid rgba(255,255,255,0.2)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '24px', cursor: 'pointer'
-            }}>▶</div>
-            <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: '13px', fontWeight: 600 }}>Welcome to Kongila</span>
+              cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+            }}>
+              <div style={{
+                width: '0', height: '0', borderStyle: 'solid',
+                borderWidth: '10px 0 10px 16px', borderColor: 'transparent transparent transparent #ffffff',
+                marginLeft: '4px'
+              }}></div>
+            </div>
+            <span style={{ color: '#FFFFFF', fontSize: '15px', fontWeight: 600, letterSpacing: '0.02em' }}>Welcome to Kongila</span>
           </div>
           <div style={{ padding: '16px 20px' }}>
             <div style={{ fontWeight: 700, fontSize: '14px', color: '#1A2340' }}>Welcome Video</div>
@@ -6036,72 +6107,84 @@ const SkillAssessmentEngine = ({
     return (
       <div style={{
         position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(6, 11, 24, 0.96)', backdropFilter: 'blur(16px)',
+        background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(8px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
       }}>
         <div style={{
-          background: '#0F172A', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '20px', padding: '48px', maxWidth: '520px', width: '100%',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
-          fontFamily: 'Inter, sans-serif'
+          background: '#FFFFFF', border: '1px solid #E2E8F0',
+          borderRadius: '24px', padding: '48px', maxWidth: '640px', width: '100%',
+          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+          fontFamily: 'Inter, sans-serif',
+          maxHeight: '90vh', overflowY: 'auto'
         }}>
-          <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-            <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'linear-gradient(135deg, #0047CC, #38BDF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', color: '#fff', margin: '0 auto 20px', boxShadow: '0 8px 24px rgba(0,71,204,0.3)' }}>
-              K
+          <div style={{ marginBottom: '32px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
+              Skill Assessment
             </div>
-            <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#F8FAFC', marginBottom: '8px', letterSpacing: '-0.02em' }}>
+            <h2 style={{ fontSize: '32px', fontWeight: 900, color: '#1A2340', margin: '0 0 12px 0', lineHeight: 1.2 }}>
               {assessment.title}
             </h2>
-            <p style={{ fontSize: '14px', color: '#94A3B8', maxWidth: '400px', margin: '0 auto', lineHeight: 1.6 }}>
-              {assessment.description}
+            <p style={{ fontSize: '15px', color: '#4E5D78', margin: 0, lineHeight: 1.6 }}>
+              {assessment.description || 'Please review the instructions and structure below. Ensure you have a stable internet connection and a quiet environment before starting.'}
             </p>
           </div>
 
-          {/* Stats grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '32px' }}>
-            {[
-              { label: 'Time Limit', value: `${assessment.total_time_limit_minutes || 60} minutes` },
-              { label: 'Categories', value: `${orderedCategories.length} sections` },
-              { label: 'Passing Score', value: `${assessment.passing_score || 70}%` },
-            ].map((stat, i) => (
-              <div key={i} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '12px', padding: '16px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div style={{ fontSize: '16px', fontWeight: 800, color: '#F8FAFC', marginBottom: '4px' }}>{stat.value}</div>
-                <div style={{ fontSize: '11px', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{stat.label}</div>
+          <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '16px', padding: '24px', marginBottom: '32px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340', margin: '0 0 16px 0' }}>
+              Assessment Guidelines
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Time Limit</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#1A2340' }}>{assessment.total_time_limit_minutes || 60} minutes</div>
               </div>
-            ))}
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Passing Score</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#1A2340' }}>{assessment.passing_score || 70}% required</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Format</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#1A2340' }}>Multiple Choice & Written</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Attempts</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#1A2340' }}>Single attempt only</div>
+              </div>
+            </div>
+            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #E2E8F0', fontSize: '13px', color: '#4E5D78', lineHeight: 1.6 }}>
+              <strong>Important:</strong> The timer cannot be paused once started. If the time expires, your progress will be automatically submitted. Do not refresh the page during the assessment.
+            </div>
           </div>
 
-          {/* Sections list */}
-          <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', padding: '16px', marginBottom: '28px', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '12px' }}>Assessment Sections</div>
-            {orderedCategories.map((cat: any, i: number) => {
-              const catQs = questions.filter((q: any) => q.category_id === cat.id);
-              return (
-                <div key={cat.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < orderedCategories.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: '#1E3A5F', color: '#38BDF8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, flexShrink: 0 }}>{i + 1}</div>
-                    <span style={{ fontSize: '13px', color: '#CBD5E1', fontWeight: 500 }}>{cat.name}</span>
+          <div style={{ marginBottom: '36px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 800, color: '#1A2340', marginBottom: '16px' }}>Section Breakdown</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {orderedCategories.map((cat: any, i: number) => {
+                const catQs = questions.filter((q: any) => q.category_id === cat.id);
+                return (
+                  <div key={cat.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: '#F1F5F9', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 800 }}>{i + 1}</div>
+                      <div style={{ fontSize: '14px', color: '#1A2340', fontWeight: 700 }}>{cat.name}</div>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600 }}>
+                      {catQs.length} question{catQs.length !== 1 ? 's' : ''} {cat.time_limit_minutes ? `· ${cat.time_limit_minutes}m` : ''}
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#64748B' }}>
-                    <span>{catQs.length} question{catQs.length !== 1 ? 's' : ''}</span>
-                    <span>·</span>
-                    <span>{cat.time_limit_minutes || '—'} min</span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
-          {/* Warning banner */}
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button onClick={onClose} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#94A3B8', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
-              Cancel
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <button onClick={onClose} style={{ flex: 1, padding: '16px', borderRadius: '12px', border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#4E5D78', fontSize: '15px', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+              Back to Dashboard
             </button>
             <button
               onClick={() => setPhase('in_progress')}
-              style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', background: '#0047CC', color: '#fff', fontSize: '14px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 20px rgba(0,71,204,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              style={{ flex: 2, padding: '16px', borderRadius: '12px', border: 'none', background: '#0047CC', color: '#fff', fontSize: '15px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,71,204,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}
             >
-              Start Assessment
+              Start Assessment Now
             </button>
           </div>
         </div>
@@ -6296,7 +6379,7 @@ const SkillAssessmentEngine = ({
         <p style={{ fontSize: '14px', color: '#94A3B8', margin: '0 0 32px 0' }}>
           {autoSubmitted
             ? 'Your answers have been auto-submitted as your time expired.'
-            : 'Your assessment has been submitted successfully.'}
+            : 'Your assessment has been submitted and is awaiting review by the vetting team.'}
         </p>
 
         {/* Score card */}
@@ -6502,22 +6585,22 @@ const QuestionCard = ({
 
 // ─── Section: Vetting Progress (Dedicated Full View) ─────────────────────────
 const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], onOpenAssessment, onUpdateProfile }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void }) => {
-  const [pipeline, setPipeline] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [stage5ModalOpen, setStage5ModalOpen] = useState(false);
-  const [form5, setForm5] = useState({ speed: '', hardware: false, quiet: false });
-  const [stage6Active, setStage6Active] = useState(false);
-  const [stage6TimeLeft, setStage6TimeLeft] = useState(0);
-
   const STAGE_META = [
     { name: 'Application Screening', color: '#EF4444', icon: '📋', responsible: 'Talent Manager', desc: 'Initial review of your application and submitted documents.' },
     { name: 'Skill Assessment',       color: '#3B82F6', icon: '🧪', responsible: 'Skill Assessor', desc: 'Role-specific technical evaluation assigned by the vetting team.' },
-    { name: 'Behavioural Interview',  color: '#8B5CF6', icon: '🎙️', responsible: 'Talent Manager', desc: 'Structured interview covering situational and behavioural competencies.' },
+    { name: 'Live Interview',         color: '#8B5CF6', icon: '🎙️', responsible: 'Talent Manager', desc: 'Structured interview covering situational and behavioural competencies.' },
     { name: 'Personality Test',       color: '#10B981', icon: '🧠', responsible: 'System (Auto)', desc: 'Automated psychometric profile assessment via external platform.' },
     { name: 'Remote Readiness',       color: '#F59E0B', icon: '🌐', responsible: 'Ops Team', desc: 'Infrastructure check: internet, device, workspace and timezone compatibility.' },
     { name: 'Work Simulation',        color: '#F97316', icon: '🔬', responsible: 'Team Lead', desc: 'Live task or case-study simulation evaluated by a senior team lead.' },
     { name: 'Final Review',           color: '#EAB308', icon: '⭐', responsible: 'Review Panel', desc: 'Panel-level classification into the Kongila Vetted Talent Pool.' },
   ];
+
+  const [pipeline, setPipeline] = useState<any[]>(profile?.vettingPipeline || STAGE_META.map((s, i) => ({ stageIndex: i, stageName: s.name, status: i===0?'in_progress':'pending', assignee: s.responsible })));
+  const [loading, setLoading] = useState(false);
+  const [stage5ModalOpen, setStage5ModalOpen] = useState(false);
+  const [form5, setForm5] = useState({ speed: '', hardware: false, quiet: false });
+  const [stage6Active, setStage6Active] = useState(false);
+  const [stage6TimeLeft, setStage6TimeLeft] = useState(0);
 
   // Initialize and run SLA check on mount
   useEffect(() => {
@@ -7240,13 +7323,48 @@ export default function TalentDashboard({
     { id: 2, title: 'Compliance Action', message: 'You have a document requiring review.', time: '5h ago', read: false },
     { id: 3, title: 'Radar Match', message: 'Successfully matched to Horizon Fintech.', time: '1d ago', read: true }
   ]);
-  const [messages, setMessages] = useState([
-    { id: 1, sender: 'Amara Anya', text: 'Can you upload your updated ID card?', time: '10m ago', read: false },
-    { id: 2, sender: 'Vetting Officer', text: 'Operational Assessment sandbox scoring complete.', time: '2d ago', read: true }
-  ]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const [showMsgDropdown, setShowMsgDropdown] = useState(false);
+
+  // Reschedule state
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [rescheduleData, setRescheduleData] = useState<any>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [rescheduleReason, setRescheduleReason] = useState('');
+
+  const handleRequestReschedule = (interview: any) => {
+    setRescheduleData(interview);
+    setRescheduleDate('');
+    setRescheduleTime('');
+    setRescheduleReason('');
+    setRescheduleModalOpen(true);
+  };
+
+  const submitRescheduleRequest = () => {
+    if (onUpdateProfile && rescheduleData?.isVetting) {
+      const pipeline = [...(talentProfile?.vettingPipeline || [])];
+      pipeline[rescheduleData.stageIndex] = {
+        ...pipeline[rescheduleData.stageIndex],
+        rescheduleRequested: true,
+        rescheduleReason: `${rescheduleDate} ${rescheduleTime} - ${rescheduleReason}`,
+      };
+      onUpdateProfile({ ...talentProfile, vettingPipeline: pipeline });
+    } else if (onUpdateMatch && rescheduleData?.id) {
+      onUpdateMatch({
+        id: rescheduleData.id,
+        status: 'Reschedule Requested',
+        requestedDate: rescheduleDate,
+        requestedTime: rescheduleTime,
+        requestedNotes: rescheduleReason,
+      });
+    }
+    setRescheduleModalOpen(false);
+    alert('Reschedule request sent to admin.');
+  };
 
   const effectiveNotifications = dashboardNotifications ?? notifications;
   const unreadNotifsCount = effectiveNotifications.filter(n => !n.read).length;
@@ -7328,10 +7446,25 @@ export default function TalentDashboard({
       case 'contracts':        return <ContractSection profile={talentProfile} />;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
       case 'tasks':            return <TasksSection profile={talentProfile} />;
-      case 'messages':         return <MessagesSection messages={messages} setMessages={setMessages} profile={talentProfile} />;
-      case 'notifications':    return <NotificationsSection profile={talentProfile} notifications={effectiveNotifications} setNotifications={syncNotifications} />;
-      case 'settings':         return <SettingsSection profile={talentProfile} onUpdateProfile={onUpdateProfile} />;
-      case 'support':          return <SupportSection profile={talentProfile} onUpdateProfile={onUpdateProfile} />;
+      case 'messages':
+        return (
+          <TalentMessagesPanel
+            currentUser={currentUser}
+            conversations={conversations}
+            messages={messages}
+            setMessages={setMessages || (() => {})}
+          />
+        );
+      case 'notifications':
+        return (
+          <TalentNotificationsPanel
+            notifications={effectiveNotifications}
+            setNotifications={syncNotifications}
+            setActiveSection={setActiveSection}
+          />
+        );
+      case 'settings':         return <TalentSettingsPanel profile={talentProfile} onUpdateProfile={onUpdateProfile} />;
+      case 'support':          return <TalentSupportPanel currentUser={currentUser} profile={talentProfile} supportTickets={talentProfile?.supportTickets || []} setSupportTickets={(val) => { if(onUpdateProfile) onUpdateProfile({...talentProfile, supportTickets: typeof val === 'function' ? val(talentProfile?.supportTickets || []) : val}) }} />;
     }
   };
 
@@ -7356,13 +7489,23 @@ export default function TalentDashboard({
 
       {/* ── Mobile Top Nav ── */}
       <div className="mobile-nav-bar">
+        <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)} style={{ padding: '8px 0' }}>
+          <span></span><span></span><span></span>
+        </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#0047CC', fontSize: '18px' }}>
           <div style={{ width: '24px', height: '24px', background: '#0047CC', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
           Kongila
         </div>
-        <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}>
-          <span></span><span></span><span></span>
-        </button>
+        <div 
+          style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', border: '1px solid #DDE2EC', cursor: 'pointer', flexShrink: 0 }}
+          onClick={() => { setActiveSection('profile'); setMobileSidebarOpen(false); }}
+        >
+          <img 
+            src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80"}
+            alt="Profile"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        </div>
       </div>
 
       {/* ── Mobile Sidebar Drawer ── */}
@@ -7688,7 +7831,10 @@ export default function TalentDashboard({
             </div>
 
             {/* Profile Avatar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderLeft: '1px solid #DDE2EC', paddingLeft: '20px' }}>
+            <div 
+              style={{ display: 'flex', alignItems: 'center', gap: '10px', borderLeft: '1px solid #DDE2EC', paddingLeft: '20px', cursor: 'pointer' }}
+              onClick={() => setActiveSection('profile')}
+            >
               <div style={{ position: 'relative' }}>
                 <img
                   src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80"}
@@ -7775,6 +7921,34 @@ export default function TalentDashboard({
         </button>
       </div>
 
+      {rescheduleModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '24px' }}>
+          <div style={{ background: '#fff', padding: '32px', borderRadius: '24px', width: '100%', maxWidth: '440px' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 900, color: '#1A2340' }}>Request Reschedule</h3>
+            <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: '#6B7A99' }}>Choose a new date and time that works for you, and tell us why you need to reschedule.</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, color: '#6B7A99', marginBottom: '8px', display: 'block' }}>Preferred New Date</label>
+                <input type="date" value={rescheduleDate} onChange={e => setRescheduleDate(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #DDE2EC', fontSize: '14px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, color: '#6B7A99', marginBottom: '8px', display: 'block' }}>Preferred New Time</label>
+                <input type="time" value={rescheduleTime} onChange={e => setRescheduleTime(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #DDE2EC', fontSize: '14px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 700, color: '#6B7A99', marginBottom: '8px', display: 'block' }}>Reason for Rescheduling</label>
+                <textarea value={rescheduleReason} onChange={e => setRescheduleReason(e.target.value)} rows={3} placeholder="Please explain why you need to reschedule..." style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #DDE2EC', fontSize: '14px', resize: 'none' }} />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => setRescheduleModalOpen(false)} style={{ flex: 1, padding: '12px', background: '#F5F7FA', color: '#475569', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={submitRescheduleRequest} disabled={!rescheduleDate || !rescheduleTime || !rescheduleReason} style={{ flex: 2, padding: '12px', background: (!rescheduleDate || !rescheduleTime || !rescheduleReason) ? '#94A3B8' : '#0047CC', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: (!rescheduleDate || !rescheduleTime || !rescheduleReason) ? 'not-allowed' : 'pointer' }}>Submit Request</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   </>
   );
