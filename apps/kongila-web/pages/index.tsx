@@ -83,6 +83,19 @@ const NOTICE_PERIOD_OPTIONS = [
   'One Month Plus',
 ] as const;
 
+// Seniority levels with corresponding years-of-experience ranges.
+const SENIORITY_LEVELS = [
+  { label: 'Entry Level',  min: 0, max: 1 },
+  { label: 'Associate',    min: 1, max: 3 },
+  { label: 'Mid-level',    min: 3, max: 6 },
+  { label: 'Senior',       min: 6, max: 10 },
+  { label: 'Lead',         min: 8, max: 15 },
+  { label: 'Expert',       min: 12, max: 99 },
+] as const;
+
+const getSeniorityRange = (level: string) =>
+  SENIORITY_LEVELS.find(s => s.label === level) ?? null;
+
 const isTalentProfileOnboardingComplete = (profileRow: any) => {
   if (!profileRow?.bio || typeof profileRow.bio !== 'string') return false;
   try {
@@ -129,6 +142,7 @@ export default function KongilaWeb() {
   
   // Talent Wizard Steps (1 to 6)
   const [talentWizardStep, setTalentWizardStep] = useState(1);
+  const [wizardStepErrors, setWizardStepErrors] = useState<string[]>([]);
   const [talentOnboardingData, setTalentOnboardingData] = useState({
     fullName: '',
     phoneCode: '+1',
@@ -179,6 +193,12 @@ export default function KongilaWeb() {
   const [skillSearch, setSkillSearch] = useState('');
   const [showSkillDropdown, setShowSkillDropdown] = useState(false);
   const [secondarySkillSearch, setSecondarySkillSearch] = useState('');
+  const [countrySearch, setCountrySearch] = useState('');
+  const [showCountryDropdown, setShowCountryDropdown] = useState(false);
+  const [phoneCodeSearch, setPhoneCodeSearch] = useState('');
+  const [showPhoneCodeDropdown, setShowPhoneCodeDropdown] = useState(false);
+  const [timezoneSearch, setTimezoneSearch] = useState('');
+  const [showTimezoneDropdown, setShowTimezoneDropdown] = useState(false);
   const selectedSecondarySkills = String(talentOnboardingData.secondarySkills || '')
     .split(',')
     .map(s => s.trim())
@@ -211,14 +231,16 @@ export default function KongilaWeb() {
     }
   }, [authView, currentUser?.name, currentUser?.email, talentOnboardingData.fullName]);
 
+  // Only redirect to onboarding when the talent has never completed it.
+  // Once onboardingStatus is 'complete' we NEVER send them back — all profile
+  // edits happen through the profile module inside the dashboard.
   useEffect(() => {
-    const needsOnboarding = currentUser?.role === 'talent' && currentUser?.onboardingStatus !== 'complete';
-    if (needsOnboarding) {
-      if (authView !== 'onboarding') {
-        setAuthView('onboarding');
-      }
+    if (currentUser?.role !== 'talent') return;
+    if (currentUser?.onboardingStatus === 'complete') return;
+    if (authView !== 'onboarding') {
+      setAuthView('onboarding');
     }
-  }, [currentUser?.role, currentUser?.onboardingStatus, authView]);
+  }, [currentUser?.role, currentUser?.onboardingStatus]); // intentionally omit authView
 
   // Client Smart Intake (Smart Intake FIRST flow)
   const [clientIntakeActive, setClientIntakeActive] = useState(false);
@@ -914,6 +936,59 @@ export default function KongilaWeb() {
       // Non-critical — draft save failure should not block user
       console.warn('[Onboarding] Draft save failed:', e);
     }
+  };
+
+  // Returns a list of missing/invalid field labels for each wizard step.
+  const validateWizardStep = (step: number): string[] => {
+    const d = talentOnboardingData;
+    const errors: string[] = [];
+    if (step === 1) {
+      if (!d.profilePhotoUrl) errors.push('Profile Photo');
+      if (!d.fullName?.trim()) errors.push('Full Name');
+      if (!d.phone?.trim()) errors.push('Phone Number');
+      if (!d.country?.trim()) errors.push('Country');
+      if (!d.city?.trim()) errors.push('City');
+      if (!d.dateOfBirth) errors.push('Date of Birth');
+      if (!d.gender) errors.push('Gender');
+      if (!d.timezone?.trim()) errors.push('Timezone');
+    } else if (step === 2) {
+      if (!d.primaryRole?.trim()) errors.push('Professional Title');
+      if (!d.primaryRoleCategory) errors.push('Role Category');
+      if (!d.seniorityLevel) errors.push('Seniority Level');
+      if (!d.yearsExperience && d.yearsExperience !== '0') {
+        errors.push('Years of Experience');
+      } else {
+        const yrs = Number(d.yearsExperience);
+        const range = getSeniorityRange(d.seniorityLevel);
+        if (range && (yrs < range.min || yrs > range.max)) {
+          errors.push(`Years of Experience must be ${range.min}–${range.max === 99 ? '12+' : range.max} for ${d.seniorityLevel}`);
+        }
+      }
+      if (!d.bio?.trim()) errors.push('Short Bio');
+      if (d.skills.length === 0) errors.push('At least one Primary Skill');
+      if (!d.employmentPreference) errors.push('Employment Preference');
+    } else if (step === 3) {
+      if (!d.preferredEngagementType) errors.push('Preferred Engagement Type');
+      if (!d.hourlyMonthly) errors.push('Expected Salary Format');
+      if (!d.noticePeriod) errors.push('Notice Period');
+      if (!d.salaryExpectationMin) errors.push('Salary Range (minimum)');
+      if (!d.salaryExpectationMax) errors.push('Salary Range (maximum)');
+    } else if (step === 4) {
+      if (!d.cvUrl) errors.push('CV / Resume (PDF)');
+    }
+    return errors;
+  };
+
+  const advanceStep = (nextStep: number) => {
+    const currentStep = nextStep - 1;
+    const errors = validateWizardStep(currentStep);
+    if (errors.length > 0) {
+      setWizardStepErrors(errors);
+      return;
+    }
+    setWizardStepErrors([]);
+    saveDraftOnboarding(nextStep, talentOnboardingData);
+    setTalentWizardStep(nextStep);
   };
 
   const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
@@ -3534,20 +3609,52 @@ export default function KongilaWeb() {
 
                 <div className="form-group">
                   <label className="form-label">Mobile Phone Number</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <select 
-                      className="form-input" 
-                      style={{ width: '120px' }}
-                      value={talentOnboardingData.phoneCode}
-                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, phoneCode: e.target.value })}
-                    >
-                      {COUNTRIES_AND_CODES.map(c => (
-                        <option key={c.name} value={c.code}>{c.code} ({c.name})</option>
-                      ))}
-                    </select>
-                    <input 
-                      type="text" 
-                      className="form-input" 
+                  <div style={{ display: 'flex', gap: '8px', position: 'relative' }}>
+                    {/* Phone code searchable dropdown */}
+                    <div style={{ position: 'relative', width: '140px', flexShrink: 0 }}>
+                      <div
+                        className="form-input"
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', paddingRight: '10px' }}
+                        onClick={() => { setShowPhoneCodeDropdown(v => !v); setPhoneCodeSearch(''); }}
+                      >
+                        <span style={{ fontWeight: 600 }}>{talentOnboardingData.phoneCode || '+?'}</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                      </div>
+                      {showPhoneCodeDropdown && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 50, background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '10px', marginTop: '4px', width: '260px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+                          <div style={{ padding: '8px' }}>
+                            <input
+                              autoFocus
+                              type="text"
+                              className="form-input"
+                              style={{ width: '100%', boxSizing: 'border-box' }}
+                              placeholder="Search country…"
+                              value={phoneCodeSearch}
+                              onChange={e => setPhoneCodeSearch(e.target.value)}
+                            />
+                          </div>
+                          <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                            {COUNTRIES_AND_CODES
+                              .filter(c => c.name.toLowerCase().includes(phoneCodeSearch.toLowerCase()) || c.code.includes(phoneCodeSearch))
+                              .map(c => (
+                                <div
+                                  key={c.name + c.code}
+                                  onMouseDown={() => { setTalentOnboardingData({ ...talentOnboardingData, phoneCode: c.code }); setShowPhoneCodeDropdown(false); }}
+                                  style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid var(--border-glass)' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <span>{c.name}</span>
+                                  <span style={{ fontWeight: 700, color: 'var(--accent-cyan)' }}>{c.code}</span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      className="form-input"
                       style={{ flex: 1 }}
                       value={talentOnboardingData.phone}
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, phone: e.target.value })}
@@ -3559,30 +3666,58 @@ export default function KongilaWeb() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
                     <label className="form-label">Country</label>
-                    <select
-                      className="form-input"
-                      value={talentOnboardingData.country || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        const matched = COUNTRIES_AND_CODES.find(c => c.name === val);
-                        setTalentOnboardingData({ 
-                          ...talentOnboardingData, 
-                          country: val,
-                          phoneCode: matched ? matched.code : talentOnboardingData.phoneCode
-                        });
-                      }}
-                    >
-                      <option value="" disabled>Select a country</option>
-                      {COUNTRIES_AND_CODES.map(c => (
-                        <option key={c.name} value={c.name}>{c.name}</option>
-                      ))}
-                    </select>
+                    {/* Searchable country dropdown */}
+                    <div style={{ position: 'relative' }}>
+                      <div
+                        className="form-input"
+                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                        onClick={() => { setShowCountryDropdown(v => !v); setCountrySearch(''); }}
+                      >
+                        <span style={{ color: talentOnboardingData.country ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          {talentOnboardingData.country || 'Select a country'}
+                        </span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                      </div>
+                      {showCountryDropdown && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 50, background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '10px', marginTop: '4px', width: '100%', minWidth: '240px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+                          <div style={{ padding: '8px' }}>
+                            <input
+                              autoFocus
+                              type="text"
+                              className="form-input"
+                              style={{ width: '100%', boxSizing: 'border-box' }}
+                              placeholder="Search country…"
+                              value={countrySearch}
+                              onChange={e => setCountrySearch(e.target.value)}
+                            />
+                          </div>
+                          <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                            {COUNTRIES_AND_CODES
+                              .filter(c => c.name.toLowerCase().includes(countrySearch.toLowerCase()))
+                              .map(c => (
+                                <div
+                                  key={c.name}
+                                  onMouseDown={() => {
+                                    setTalentOnboardingData({ ...talentOnboardingData, country: c.name, phoneCode: c.code });
+                                    setShowCountryDropdown(false);
+                                  }}
+                                  style={{ padding: '10px 14px', cursor: 'pointer', fontSize: '13px', borderBottom: '1px solid var(--border-glass)' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  {c.name}
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="form-label">City</label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
+                    <input
+                      type="text"
+                      className="form-input"
                       value={talentOnboardingData.city}
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, city: e.target.value })}
                       placeholder="e.g. Lagos"
@@ -3614,50 +3749,85 @@ export default function KongilaWeb() {
 
                 <div className="form-group">
                   <label className="form-label">Timezone Alignment</label>
-                  <input 
-                    type="text"
-                    list="timezone-list"
-                    className="form-input"
-                    value={talentOnboardingData.timezone}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, timezone: e.target.value })}
-                    placeholder="e.g. Africa/Lagos (GMT+1)"
-                  />
-                  <datalist id="timezone-list">
-                    <option value="Africa/Lagos (GMT+1)" />
-                    <option value="Africa/Johannesburg (GMT+2)" />
-                    <option value="Africa/Nairobi (GMT+3)" />
-                    <option value="Africa/Cairo (GMT+2)" />
-                    <option value="Africa/Accra (GMT)" />
-                    <option value="Europe/London (GMT)" />
-                    <option value="Europe/Paris (GMT+1)" />
-                    <option value="Europe/Berlin (GMT+1)" />
-                    <option value="Europe/Madrid (GMT+1)" />
-                    <option value="Europe/Moscow (GMT+3)" />
-                    <option value="America/New_York (EST/EDT)" />
-                    <option value="America/Chicago (CST/CDT)" />
-                    <option value="America/Los_Angeles (PST/PDT)" />
-                    <option value="America/Denver (MST/MDT)" />
-                    <option value="America/Toronto (EST/EDT)" />
-                    <option value="America/Sao_Paulo (BRT)" />
-                    <option value="America/Mexico_City (CST/CDT)" />
-                    <option value="Asia/Kolkata (IST)" />
-                    <option value="Asia/Singapore (SGT)" />
-                    <option value="Asia/Tokyo (JST)" />
-                    <option value="Asia/Dubai (GST)" />
-                    <option value="Asia/Shanghai (CST)" />
-                    <option value="Asia/Hong_Kong (HKT)" />
-                    <option value="Asia/Seoul (KST)" />
-                    <option value="Asia/Bangkok (ICT)" />
-                    <option value="Australia/Sydney (AEST/AEDT)" />
-                    <option value="Australia/Perth (AWST)" />
-                    <option value="Australia/Brisbane (AEST)" />
-                    <option value="Pacific/Auckland (NZST/NZDT)" />
-                  </datalist>
+                  {/* Searchable timezone dropdown */}
+                  {(() => {
+                    const TZ_OPTIONS = [
+                      'Africa/Lagos (GMT+1)', 'Africa/Johannesburg (GMT+2)', 'Africa/Nairobi (GMT+3)',
+                      'Africa/Cairo (GMT+2)', 'Africa/Accra (GMT)', 'Africa/Abidjan (GMT)',
+                      'Europe/London (GMT)', 'Europe/Paris (GMT+1)', 'Europe/Berlin (GMT+1)',
+                      'Europe/Madrid (GMT+1)', 'Europe/Rome (GMT+1)', 'Europe/Amsterdam (GMT+1)',
+                      'Europe/Moscow (GMT+3)', 'Europe/Istanbul (GMT+3)',
+                      'America/New_York (EST/EDT)', 'America/Chicago (CST/CDT)',
+                      'America/Los_Angeles (PST/PDT)', 'America/Denver (MST/MDT)',
+                      'America/Toronto (EST/EDT)', 'America/Sao_Paulo (BRT)',
+                      'America/Mexico_City (CST/CDT)', 'America/Vancouver (PST/PDT)',
+                      'Asia/Kolkata (IST)', 'Asia/Singapore (SGT)', 'Asia/Tokyo (JST)',
+                      'Asia/Dubai (GST)', 'Asia/Shanghai (CST)', 'Asia/Hong_Kong (HKT)',
+                      'Asia/Seoul (KST)', 'Asia/Bangkok (ICT)', 'Asia/Karachi (PKT)',
+                      'Asia/Dhaka (BST)', 'Asia/Jakarta (WIB)',
+                      'Australia/Sydney (AEST/AEDT)', 'Australia/Perth (AWST)',
+                      'Australia/Brisbane (AEST)', 'Pacific/Auckland (NZST/NZDT)',
+                    ];
+                    const filtered = TZ_OPTIONS.filter(tz => tz.toLowerCase().includes(timezoneSearch.toLowerCase()));
+                    return (
+                      <div style={{ position: 'relative' }}>
+                        <div
+                          className="form-input"
+                          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                          onClick={() => { setShowTimezoneDropdown(v => !v); setTimezoneSearch(''); }}
+                        >
+                          <span style={{ color: talentOnboardingData.timezone ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                            {talentOnboardingData.timezone || 'Select your timezone'}
+                          </span>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                        </div>
+                        {showTimezoneDropdown && (
+                          <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 50, background: 'var(--bg-secondary)', border: '1px solid var(--border-glass)', borderRadius: '10px', marginTop: '4px', width: '100%', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+                            <div style={{ padding: '8px' }}>
+                              <input
+                                autoFocus
+                                type="text"
+                                className="form-input"
+                                style={{ width: '100%', boxSizing: 'border-box' }}
+                                placeholder="Search timezone…"
+                                value={timezoneSearch}
+                                onChange={e => setTimezoneSearch(e.target.value)}
+                              />
+                            </div>
+                            <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                              {filtered.map(tz => (
+                                <div
+                                  key={tz}
+                                  onMouseDown={() => { setTalentOnboardingData({ ...talentOnboardingData, timezone: tz }); setShowTimezoneDropdown(false); }}
+                                  style={{ padding: '10px 14px', cursor: 'pointer', fontSize: '13px', borderBottom: '1px solid var(--border-glass)' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  {tz}
+                                </div>
+                              ))}
+                              {filtered.length === 0 && (
+                                <div style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--text-muted)' }}>No results</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
+                {wizardStepErrors.length > 0 && talentWizardStep === 1 && (
+                  <div style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', fontSize: '13px' }}>
+                    <strong>Please complete the following fields before continuing:</strong>
+                    <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px' }}>
+                      {wizardStepErrors.map(e => <li key={e}>{e}</li>)}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                   <NeonButton variant="ghost" onClick={handleSignOut}>Exit Onboarding</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(2, talentOnboardingData); setTalentWizardStep(2); }}>Continue</NeonButton>
+                  <NeonButton onClick={() => advanceStep(2)}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -3708,24 +3878,42 @@ export default function KongilaWeb() {
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, seniorityLevel: e.target.value })}
                     >
                       <option value="">Select level</option>
-                      <option>Associate</option>
-                      <option>Specialist</option>
-                      <option>Consultant</option>
-                      <option>Manager</option>
-                      <option>Director</option>
+                      {SENIORITY_LEVELS.map(s => (
+                        <option key={s.label} value={s.label}>
+                          {s.label} ({s.min}–{s.max === 99 ? '12+' : s.max} yrs)
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 <div className="form-group">
                   <label className="form-label">Years of Relevant Experience</label>
-                  <input 
-                    type="number" 
-                    className="form-input" 
-                    value={talentOnboardingData.yearsExperience}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, yearsExperience: e.target.value })}
-                    placeholder="e.g. 5"
-                  />
+                  {(() => {
+                    const yrs = Number(talentOnboardingData.yearsExperience);
+                    const range = getSeniorityRange(talentOnboardingData.seniorityLevel);
+                    const outOfRange = range && talentOnboardingData.yearsExperience !== '' && (yrs < range.min || yrs > range.max);
+                    return (
+                      <>
+                        <input
+                          type="number"
+                          min={0}
+                          className="form-input"
+                          value={talentOnboardingData.yearsExperience}
+                          onChange={e => setTalentOnboardingData({ ...talentOnboardingData, yearsExperience: e.target.value })}
+                          placeholder="e.g. 5"
+                          style={{ borderColor: outOfRange ? '#EF4444' : undefined }}
+                        />
+                        {range && (
+                          <div style={{ fontSize: '12px', marginTop: '5px', color: outOfRange ? '#EF4444' : 'var(--text-muted)' }}>
+                            {outOfRange
+                              ? `⚠ ${talentOnboardingData.seniorityLevel} expects ${range.min}–${range.max === 99 ? '12+' : range.max} years.`
+                              : `Expected range for ${talentOnboardingData.seniorityLevel}: ${range.min}–${range.max === 99 ? '12+' : range.max} years.`}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <div className="form-group">
@@ -3956,9 +4144,17 @@ export default function KongilaWeb() {
                   </select>
                 </div>
 
+                {wizardStepErrors.length > 0 && talentWizardStep === 2 && (
+                  <div style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', fontSize: '13px' }}>
+                    <strong>Please complete the following fields before continuing:</strong>
+                    <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px' }}>
+                      {wizardStepErrors.map(e => <li key={e}>{e}</li>)}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setTalentWizardStep(1)}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(3, talentOnboardingData); setTalentWizardStep(3); }}>Continue</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(1); }}>Back</NeonButton>
+                  <NeonButton onClick={() => advanceStep(3)}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -3980,18 +4176,6 @@ export default function KongilaWeb() {
                     <option>Full-time</option>
                     <option>Part-time</option>
                     <option>Either</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Work Hours Format</label>
-                  <select
-                    className="form-select"
-                    value={talentOnboardingData.hourlyMonthly}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, hourlyMonthly: e.target.value })}
-                  >
-                    <option value="Hourly">Hourly</option>
-                    <option value="Monthly">Monthly</option>
                   </select>
                 </div>
 
@@ -4018,6 +4202,18 @@ export default function KongilaWeb() {
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, preferredProjectType: e.target.value })}
                     placeholder="e.g. Product operations, client delivery, or platform support"
                   />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Expected Salary Format</label>
+                  <select
+                    className="form-select"
+                    value={talentOnboardingData.hourlyMonthly}
+                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, hourlyMonthly: e.target.value })}
+                  >
+                    <option value="Hourly">Hourly (per hour)</option>
+                    <option value="Monthly">Monthly (per month)</option>
+                  </select>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }} className="form-group">
@@ -4053,9 +4249,17 @@ export default function KongilaWeb() {
                   </div>
                 </div>
 
+                {wizardStepErrors.length > 0 && talentWizardStep === 3 && (
+                  <div style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', fontSize: '13px' }}>
+                    <strong>Please complete the following fields before continuing:</strong>
+                    <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px' }}>
+                      {wizardStepErrors.map(e => <li key={e}>{e}</li>)}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setTalentWizardStep(2)}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(4, talentOnboardingData); setTalentWizardStep(4); }}>Continue</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(2); }}>Back</NeonButton>
+                  <NeonButton onClick={() => advanceStep(4)}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -4180,9 +4384,17 @@ export default function KongilaWeb() {
                   )}
                 </div>
 
+                {wizardStepErrors.length > 0 && talentWizardStep === 4 && (
+                  <div style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', fontSize: '13px' }}>
+                    <strong>Please complete the following fields before continuing:</strong>
+                    <ul style={{ margin: '6px 0 0 0', paddingLeft: '20px' }}>
+                      {wizardStepErrors.map(e => <li key={e}>{e}</li>)}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setTalentWizardStep(3)}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(5, talentOnboardingData); setTalentWizardStep(5); }} disabled={uploadProgress < 100}>Continue</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(3); }}>Back</NeonButton>
+                  <NeonButton onClick={() => advanceStep(5)}>Continue</NeonButton>
                 </div>
               </div>
             )}
@@ -4234,8 +4446,8 @@ export default function KongilaWeb() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => setTalentWizardStep(4)}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setTalentWizardStep(6); }}>Continue to Finalization</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(4); }}>Back</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setWizardStepErrors([]); setTalentWizardStep(6); }}>Continue to Finalization</NeonButton>
                 </div>
               </div>
             )}
@@ -4250,7 +4462,7 @@ export default function KongilaWeb() {
                 </p>
 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
-                  <NeonButton variant="secondary" onClick={() => setTalentWizardStep(5)}>Review Setup</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(5); }}>Review Setup</NeonButton>
                   <button 
                     type="button" 
                     onClick={handleTalentWizardSubmit}
