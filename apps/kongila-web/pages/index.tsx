@@ -98,25 +98,19 @@ const getSeniorityRange = (level: string) =>
 
 const isTalentProfileOnboardingComplete = (profileRow: any) => {
   if (!profileRow) return false;
-  // Check 1: bio envelope with __kongila marker and 100% completion
+  // Primary check: bio envelope with __kongila marker means onboarding was submitted
   if (profileRow.bio && typeof profileRow.bio === 'string') {
     try {
       const envelope = JSON.parse(profileRow.bio);
-      const telemetry = envelope?.telemetry || {};
-      if (envelope?.__kongila === true && Number(telemetry.profileCompletionPercent || 0) >= 100) {
-        return true;
-      }
-      // Also accept if __kongila is true and has meaningful fields (completed onboarding but percent not 100 due to optional fields)
-      if (envelope?.__kongila === true && (envelope.tags?.length > 0 || telemetry.title || telemetry.primaryRole)) {
-        return true;
-      }
+      // Any bio written by the onboarding wizard has __kongila: true — that's the signal
+      if (envelope?.__kongila === true) return true;
     } catch (e) {
-      // bio is not JSON
+      // bio is not JSON — fall through to the structural check
     }
   }
-  // Check 2: profile has meaningful data (full_name + level/country) — indicates completed onboarding
-  // This handles cases where the bio envelope was not written correctly
-  if (profileRow.full_name && profileRow.level && profileRow.country && profileRow.vetting_status === 'Applied') {
+  // Fallback: if the talent_profiles row has core fields populated, they completed onboarding
+  // This handles accounts where the bio envelope wasn't written (e.g. older accounts)
+  if (profileRow.full_name && profileRow.level && profileRow.country) {
     return true;
   }
   return false;
@@ -1272,10 +1266,15 @@ export default function KongilaWeb() {
         documents: []
       });
 
-      if (completionCheck.percent < 100) {
-        triggerBanner(`Complete your profile before finishing onboarding. Missing: ${completionCheck.incomplete.join(', ')}`, 'error');
+      if (!completionCheck.coreComplete) {
+        triggerBanner(`Please fill in all required fields before finishing: ${completionCheck.coreIncomplete.join(', ')}`, 'error');
         setLoading(false);
         return;
+      }
+
+      // Warn if optional fields are missing, but allow completion
+      if (completionCheck.percent < 100 && completionCheck.incomplete.length > 0) {
+        console.info('[Onboarding] Optional fields not filled:', completionCheck.incomplete);
       }
 
       onboardingTelemetry.profileCompletionPercent = completionCheck.percent;

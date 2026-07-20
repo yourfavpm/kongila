@@ -168,6 +168,24 @@ export interface TalentProfile {
   talentManagerId?: string;
 }
 
+// These fields MUST be filled for onboarding to be considered complete.
+// Missing any of these blocks the talent from accessing their dashboard.
+export const PROFILE_CORE_FIELDS = [
+  'name',
+  'country',
+  'phone',
+  'title',
+  'primaryRoleCategory',
+  'seniorityLevel',
+  'experienceYears',
+  'primarySkills',
+  'preferredEngagementType',
+  'timezone',
+  'noticePeriod',
+  'salaryExpectationUsd',
+] as const;
+
+// These are tracked for profile completeness % but do NOT block onboarding completion.
 export const PROFILE_REQUIRED_FIELDS = [
   'name',
   'dateOfBirth',
@@ -195,7 +213,7 @@ export const PROFILE_REQUIRED_FIELDS = [
 
 export function calculateTalentProfileCompletion(profile: Partial<TalentProfile> | null | undefined) {
   const total = PROFILE_REQUIRED_FIELDS.length;
-  if (!profile) return { percent: 0, completed: [], incomplete: [...PROFILE_REQUIRED_FIELDS] };
+  if (!profile) return { percent: 0, completed: [], incomplete: [...PROFILE_REQUIRED_FIELDS], coreComplete: false, coreIncomplete: [...PROFILE_CORE_FIELDS] };
 
   const primarySkills = Array.isArray(profile.primarySkills) ? profile.primarySkills : (Array.isArray(profile.skills) ? profile.skills : []);
   const salaryUsd = profile.salaryExpectationUsd ?? profile.salaryExpectation ?? 0;
@@ -233,10 +251,13 @@ export function calculateTalentProfileCompletion(profile: Partial<TalentProfile>
 
   const completed = PROFILE_REQUIRED_FIELDS.filter(field => checks[field]);
   const incomplete = PROFILE_REQUIRED_FIELDS.filter(field => !checks[field]);
+  const coreIncomplete = PROFILE_CORE_FIELDS.filter(field => !checks[field as string]);
   return {
     percent: Math.round((completed.length / total) * 100),
     completed,
-    incomplete
+    incomplete,
+    coreComplete: coreIncomplete.length === 0,
+    coreIncomplete
   };
 }
 
