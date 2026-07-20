@@ -101,7 +101,7 @@ let supabaseClient: any = null;
 const defaultSupabaseUrl = 'https://bsmwuofugczuhdbintgs.supabase.co';
 const defaultSupabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzbXd1b2Z1Z2N6dWhkYmludGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDAzMTQsImV4cCI6MjA5NDY3NjMxNH0.yhVLhHb0BRfZZjGagF_PwQbYzKVhIOFgAhzoTURvpJc';
 
-function getSupabaseClient() {
+export function getSupabaseClient() {
   if (!supabaseClient) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultSupabaseUrl;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
@@ -113,55 +113,14 @@ function getSupabaseClient() {
 // ─── In-memory cache — used as fallback when Supabase is unreachable ──────────
 let _lastSuccessfulRead: Schema | null = null;
 
-// ─── Local file helpers — ONLY used for assessments (not yet in Supabase) ────
-function readLocalAssessments(): Pick<Schema, 'assessments' | 'assessmentCategories' | 'assessmentQuestions' | 'assessmentAssignments' | 'skillAssessmentResults' | 'talentSkillAssessments' | 'workSimulationTasks' | 'workflows'> {
-  try {
-    if (fs.existsSync(DB_FILE_PATH)) {
-      const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-      const data = JSON.parse(raw);
-      return {
-        assessments: data.assessments || [],
-        assessmentCategories: data.assessmentCategories || [],
-        assessmentQuestions: data.assessmentQuestions || [],
-        assessmentAssignments: data.assessmentAssignments || [],
-        skillAssessmentResults: data.skillAssessmentResults || [],
-        talentSkillAssessments: data.talentSkillAssessments || [],
-        workSimulationTasks: data.workSimulationTasks || [],
-        workflows: data.workflows || []
-      };
-    }
-  } catch (e) {
-    console.error('[DB] Failed to read assessments from db.json:', e);
-  }
-  return { assessments: [], assessmentCategories: [], assessmentQuestions: [], assessmentAssignments: [], skillAssessmentResults: [], talentSkillAssessments: [], workSimulationTasks: [], workflows: [] };
-}
-
-// ─── Synchronous helpers (legacy API compatibility — server-side only) ────────
-// These only read/write assessments from the local file.
+// ─── Local file helpers REMOVED since Assessments are now in Supabase ────
 
 export function readDb(): Schema {
-  const assessments = readLocalAssessments();
-  return { ...EMPTY_DB, ...assessments };
+  return { ...EMPTY_DB };
 }
 
 export function writeDb(db: Schema): void {
-  // Only persist assessments locally; all other data goes to Supabase
-  try {
-    const existing = readLocalAssessments();
-    const toWrite = {
-      assessments: db.assessments ?? existing.assessments,
-      assessmentCategories: db.assessmentCategories ?? existing.assessmentCategories,
-      assessmentQuestions: db.assessmentQuestions ?? existing.assessmentQuestions,
-      assessmentAssignments: db.assessmentAssignments ?? existing.assessmentAssignments,
-      skillAssessmentResults: db.skillAssessmentResults ?? existing.skillAssessmentResults,
-      talentSkillAssessments: db.talentSkillAssessments ?? existing.talentSkillAssessments,
-      workSimulationTasks: db.workSimulationTasks ?? existing.workSimulationTasks,
-      workflows: db.workflows ?? existing.workflows
-    };
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(toWrite, null, 2), 'utf-8');
-  } catch (e) {
-    console.error('[DB] Failed to write assessments to db.json:', e);
-  }
+  // Deprecated synchronous write. All data goes to Supabase via async methods.
 }
 
 // ─── Legacy no-op wrappers (keep API surface intact) ─────────────────────────
@@ -220,7 +179,6 @@ export function deleteInterview(_id: string): void {}
 // ─── MAIN: readDbAsync — Supabase ONLY, no local db merge ────────────────────
 export async function readDbAsync(): Promise<Schema> {
   const supabase = getSupabaseClient();
-  const localAssessments = readLocalAssessments();
 
   try {
     const batch1 = await Promise.all([
@@ -254,7 +212,16 @@ export async function readDbAsync(): Promise<Schema> {
       supabase.from('support_messages').select('*'),
       supabase.from('interviews').select('*'),
       supabase.from('request_activity_logs').select('*'),
-      supabase.from('conversations').select('*')
+      supabase.from('conversations').select('*'),
+    ]);
+
+    const batch4 = await Promise.all([
+      supabase.from('assessments').select('*'),
+      supabase.from('assessment_categories').select('*'),
+      supabase.from('assessment_questions').select('*'),
+      supabase.from('assessment_assignments').select('*'),
+      supabase.from('skill_assessment_results').select('*'),
+      supabase.from('talent_skill_assessments').select('*')
     ]);
 
     const [
@@ -266,23 +233,26 @@ export async function readDbAsync(): Promise<Schema> {
     const [
       rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations
     ] = batch3;
+    const [
+      rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments
+    ] = batch4;
 
     if (rUsers.error) {
       console.error('[DB] Supabase users query failed:', rUsers.error.message);
       if (_lastSuccessfulRead) {
         console.warn('[DB] Returning cached data due to Supabase failure.');
-        return { ..._lastSuccessfulRead, ...localAssessments };
+        return _lastSuccessfulRead;
       }
-      return { ...EMPTY_DB, ...localAssessments };
+      return EMPTY_DB;
     }
 
     if (rTalents.error) {
       console.error('[DB] Supabase talent_profiles query failed:', rTalents.error.message);
       if (_lastSuccessfulRead) {
         console.warn('[DB] Returning cached data due to Supabase failure.');
-        return { ..._lastSuccessfulRead, ...localAssessments };
+        return _lastSuccessfulRead;
       }
-      return { ...EMPTY_DB, ...localAssessments };
+      return EMPTY_DB;
     }
 
     // ── Map users ──────────────────────────────────────────────────────────────
@@ -755,7 +725,12 @@ export async function readDbAsync(): Promise<Schema> {
       interviews,
       requestActivityLogs,
       rehireRequests: [],
-      ...localAssessments
+      assessments: rAssessments?.data || [],
+      assessmentCategories: rAssessmentCategories?.data || [],
+      assessmentQuestions: rAssessmentQuestions?.data || [],
+      assessmentAssignments: rAssessmentAssignments?.data || [],
+      skillAssessmentResults: rSkillAssessmentResults?.data || [],
+      talentSkillAssessments: rTalentSkillAssessments?.data || []
     };
     // Cache the successful result for fallback
     _lastSuccessfulRead = result;
@@ -765,9 +740,9 @@ export async function readDbAsync(): Promise<Schema> {
     console.error('[DB] Critical error reading from Supabase:', err);
     if (_lastSuccessfulRead) {
       console.warn('[DB] Returning cached data due to network error.');
-      return { ..._lastSuccessfulRead, ...localAssessments };
+      return _lastSuccessfulRead;
     }
-    return { ...EMPTY_DB, ...localAssessments };
+    return EMPTY_DB;
   }
 }
 

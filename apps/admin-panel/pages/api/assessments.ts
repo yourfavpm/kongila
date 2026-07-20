@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, writeDbAsync } from '@kongila/database';
+import { readDbAsync, getSupabaseClient } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const rawDb = await readDbAsync();
@@ -10,6 +10,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!db.assessmentAssignments) db.assessmentAssignments = [];
   if (!db.skillAssessmentResults) db.skillAssessmentResults = [];
 
+  const supabase = getSupabaseClient();
   const { method } = req;
   const { entity, id } = req.query; // entity can be 'assessment', 'category', 'question', 'assignment'
 
@@ -39,32 +40,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const actionEntity = body.entity || entity;
 
     if (actionEntity === 'category') {
-      const newCat = { ...body.data, id: `cat_${Date.now()}`, created_at: new Date().toISOString() };
-      db.assessmentCategories.push(newCat);
-      await writeDbAsync(db);
-      return res.status(201).json(newCat);
+      const newCat = { ...body.data };
+      const { data, error } = await supabase.from('assessment_categories').insert([newCat]).select().single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(201).json(data);
     }
 
     if (actionEntity === 'question') {
-      const newQ = { ...body.data, id: `q_${Date.now()}` };
-      db.assessmentQuestions.push(newQ);
-      
-      // Also attach to category if needed
-      const cat = db.assessmentCategories.find((c: any) => c.id === newQ.category_id);
-      if (cat) {
-        if (!cat.questions) cat.questions = [];
-        cat.questions.push(newQ.id);
-      }
-      
-      await writeDbAsync(db);
-      return res.status(201).json(newQ);
+      const newQ = { ...body.data };
+      const { data, error } = await supabase.from('assessment_questions').insert([newQ]).select().single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(201).json(data);
     }
 
     if (actionEntity === 'assignment') {
-      const newAsg = { ...body.data, id: `asg_${Date.now()}`, start_time: new Date().toISOString(), status: 'in_progress' };
-      db.assessmentAssignments.push(newAsg);
-      await writeDbAsync(db);
-      return res.status(201).json(newAsg);
+      const newAsg = { ...body.data, start_time: new Date().toISOString(), status: 'in_progress' };
+      const { data, error } = await supabase.from('assessment_assignments').insert([newAsg]).select().single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(201).json(data);
     }
 
     if (actionEntity === 'submit_assignment') {
@@ -89,23 +82,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         
         const questions = db.assessmentQuestions.filter((q: any) => q.category_id === catId);
         for (const q of questions) {
-          catMaxScore += q.max_score;
-          maxTotalScore += q.max_score;
+          catMaxScore += q.max_score || 0;
+          maxTotalScore += q.max_score || 0;
           
           if (q.type === 'multiple_choice') {
             const userAnswer = asg.answers?.[q.id];
-            // Compare answers (can be single string or array of strings, we'll do JSON stringify for arrays, exact string matching for single)
             if (Array.isArray(q.correct_answer)) {
               if (Array.isArray(userAnswer) && JSON.stringify([...userAnswer].sort()) === JSON.stringify([...q.correct_answer].sort())) {
-                catScore += q.max_score;
+                catScore += q.max_score || 0;
               }
             } else {
               if (userAnswer === q.correct_answer) {
-                catScore += q.max_score;
+                catScore += q.max_score || 0;
               }
             }
-          } else {
-            // Subjective questions need manual marking later, score is 0 for now
           }
         }
         
@@ -116,63 +106,69 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       asg.score = maxTotalScore > 0 ? (totalScore / maxTotalScore) * 100 : 0;
       asg.category_scores = categoryScores;
       
+      // Save assignment to Supabase
+      const { error: asgError } = await supabase.from('assessment_assignments').update({
+        status: asg.status,
+        end_time: asg.end_time,
+        answers: asg.answers,
+        score: asg.score,
+        category_scores: asg.category_scores
+      }).eq('id', asg.id);
+      if (asgError) return res.status(500).json({ error: asgError.message });
+      
       // Backward compatibility with results
-      db.skillAssessmentResults.push({
-        id: `asr_${Date.now()}`,
-        talentId: asg.talent_id,
-        assessmentId: asg.assessment_id,
+      const newResult = {
+        "talentId": asg.talent_id,
+        "assessmentId": asg.assessment_id,
         score: asg.score,
         passed: asg.score >= (assessment?.passing_score || 0),
-        completedAt: asg.end_time
-      });
+        "completedAt": asg.end_time
+      };
+      
+      const { error: resError } = await supabase.from('skill_assessment_results').insert([newResult]);
+      if (resError) console.error("Failed to insert skill_assessment_results:", resError.message);
 
-      await writeDbAsync(db);
       return res.status(200).json(asg);
     }
 
     // Grade subjective
     if (body.type === 'grade_subjective') {
-      const idx = db.skillAssessmentResults.findIndex((r: any) => r.id === body.resultId);
-      if (idx !== -1) {
-        db.skillAssessmentResults[idx].score = body.score;
-        db.skillAssessmentResults[idx].passed = body.passed;
-        db.skillAssessmentResults[idx].subjectiveScores = body.subjectiveScores;
-        db.skillAssessmentResults[idx].categoryScores = body.categoryScores;
-      }
+      const { error: resError } = await supabase.from('skill_assessment_results').update({
+        score: body.score,
+        passed: body.passed,
+        "subjectiveScores": body.subjectiveScores,
+        "categoryScores": body.categoryScores
+      }).eq('id', body.resultId);
+      
+      if (resError) return res.status(500).json({ error: resError.message });
       
       if (body.talentSkillAssessmentId) {
-        // Find and update the talentSkillAssessment as well if it exists
-        if (!db.talentSkillAssessments) db.talentSkillAssessments = [];
-        const tIdx = db.talentSkillAssessments.findIndex((t: any) => t.id === body.talentSkillAssessmentId);
-        if (tIdx !== -1) {
-           db.talentSkillAssessments[tIdx].status = body.passed ? 'Passed' : 'Failed';
-           db.talentSkillAssessments[tIdx].score = body.score;
-        }
+         await supabase.from('talent_skill_assessments').update({
+           status: body.passed ? 'Passed' : 'Failed',
+           score: body.score
+         }).eq('id', body.talentSkillAssessmentId);
       }
       
-      await writeDbAsync(db);
       return res.status(200).json({ success: true });
     }
 
     // Record raw result (legacy or simple)
     if (body.type === 'result') {
       const newResult = {
-        id: `asr_${Date.now()}`,
-        talentId: body.talentId,
-        assessmentId: body.assessmentId,
+        "talentId": body.talentId,
+        "assessmentId": body.assessmentId,
         score: body.score,
         passed: body.passed,
-        submittedAt: new Date().toISOString(),
+        "submittedAt": new Date().toISOString(),
       };
-      db.skillAssessmentResults.push(newResult);
-      await writeDbAsync(db);
-      return res.status(201).json(newResult);
+      const { data, error } = await supabase.from('skill_assessment_results').insert([newResult]).select().single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(201).json(data);
     }
 
     // Default: Create Assessment
     const newAssessment = {
       ...body.data,
-      id: `asmnt_${Date.now()}`,
       created_at: new Date().toISOString(),
       status: body.data.status || 'draft',
       categories: body.data.categories || [],
@@ -206,22 +202,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       
       if (!newAssessment.passing_score) return res.status(400).json({ error: 'Passing score must be set.' });
     }
-
-    db.assessments.push(newAssessment);
     
-    db.auditLogs = [
-      {
-        id: `audit_${Date.now()}`,
-        actor: 'Admin',
-        action: 'Create Assessment',
-        details: `Assessment "${newAssessment.title}" created.`,
-        timestamp: new Date().toISOString(),
-      },
-      ...(db.auditLogs || []),
-    ];
-
-    await writeDbAsync(db);
-    return res.status(201).json(newAssessment);
+    const { data, error } = await supabase.from('assessments').insert([newAssessment]).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(201).json(data);
   }
 
   if (method === 'PUT') {
@@ -229,14 +213,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const actionEntity = body.entity || entity;
 
     if (actionEntity === 'category') {
-      db.assessmentCategories = db.assessmentCategories.map((c: any) => c.id === body.id ? { ...c, ...body.data } : c);
-      await writeDbAsync(db);
+      const { error } = await supabase.from('assessment_categories').update(body.data).eq('id', body.id);
+      if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ success: true });
     }
 
     if (actionEntity === 'question') {
-      db.assessmentQuestions = db.assessmentQuestions.map((q: any) => q.id === body.id ? { ...q, ...body.data } : q);
-      await writeDbAsync(db);
+      const { error } = await supabase.from('assessment_questions').update(body.data).eq('id', body.id);
+      if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ success: true });
     }
 
@@ -273,27 +257,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!updated.passing_score) return res.status(400).json({ error: 'Passing score must be set.' });
     }
     
-    db.assessments[idx] = updated;
-    await writeDbAsync(db);
-    return res.status(200).json(updated);
+    const { data, error } = await supabase.from('assessments').update(body.data).eq('id', body.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.status(200).json(data);
   }
 
   if (method === 'DELETE') {
     if (entity === 'category') {
-      db.assessmentCategories = db.assessmentCategories.filter((c: any) => c.id !== id);
-      db.assessmentQuestions = db.assessmentQuestions.filter((q: any) => q.category_id !== id);
-      await writeDbAsync(db);
+      // Questions cascade on delete due to foreign keys, but just to be safe
+      const { error } = await supabase.from('assessment_categories').delete().eq('id', id);
+      if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ success: true });
     }
     if (entity === 'question') {
-      db.assessmentQuestions = db.assessmentQuestions.filter((q: any) => q.id !== id);
-      await writeDbAsync(db);
+      const { error } = await supabase.from('assessment_questions').delete().eq('id', id);
+      if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ success: true });
     }
     
     // Default Assessment delete
-    db.assessments = db.assessments.filter((a: any) => a.id !== id);
-    await writeDbAsync(db);
+    const { error } = await supabase.from('assessments').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
     return res.status(200).json({ success: true });
   }
 
