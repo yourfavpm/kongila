@@ -3579,7 +3579,7 @@ export default function KongilaWeb() {
         {/* TALENT PROGRESSIVE ONBOARDING WIZARD (Full Screen when active) */}
         {/* ====================================================================== */}
         {currentUser && authView === 'onboarding' && (
-          <GlassCard style={{ maxWidth: '700px', margin: '40px auto', padding: '32px', overflow: 'visible' }}>
+          <GlassCard style={{ maxWidth: '700px', margin: '40px auto', padding: '32px', paddingBottom: '250px', overflow: 'visible' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '20px' }}>🧙‍♂️</span>
