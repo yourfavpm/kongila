@@ -1769,14 +1769,61 @@ export default function KongilaWeb() {
     setTalents(updatedTalents);
 
     try {
-      const res = await fetch('/api/db');
-      if (res.ok) {
-        const dbData = await res.json();
-        dbData.talents = updatedTalents;
-        await saveToDb(dbData);
+      // Pack the bio envelope just like onboarding does
+      const onboardingTelemetry = {
+        ...nextProfile,
+        primarySkills: nextProfile.primarySkills || nextProfile.skills || [],
+        secondarySkills: nextProfile.secondarySkills || [],
+        skillLevels: nextProfile.skillLevels || {},
+        salaryExpectationUsd: nextProfile.salaryExpectationUsd || nextProfile.salaryExpectation || 0,
+        phoneCode: nextProfile.phoneCode || ''
+      };
+      // delete non-telemetry fields
+      delete onboardingTelemetry.id;
+      delete onboardingTelemetry.name;
+      delete onboardingTelemetry.bio;
+      delete onboardingTelemetry.tags;
+      delete onboardingTelemetry.vettingScores;
+      
+      const packedBio = JSON.stringify({
+        __kongila: true,
+        tags: nextProfile.primarySkills || [],
+        scores: nextProfile.vettingScores || {},
+        telemetry: onboardingTelemetry,
+        bio: nextProfile.bio || ''
+      });
+
+      const supabasePayload = {
+        id: nextProfile.id,
+        user_id: nextProfile.id,
+        full_name: nextProfile.name || null,
+        phone: nextProfile.phone || null,
+        country: nextProfile.country || null,
+        address: null,
+        gender: nextProfile.gender || null,
+        level: nextProfile.title || null,
+        availability_hours: Number(nextProfile.availability) || null,
+        salary_max: Number(nextProfile.salaryExpectationUsd) || null,
+        salary_expectation: Number(nextProfile.salaryExpectationUsd) || null,
+        experience_years: Number(nextProfile.experienceYears) || null,
+        vetting_stage: nextProfile.vettingStage || 'Application Screening',
+        vetting_status: nextProfile.vettingStatus || 'Applied',
+        grade: nextProfile.grade || 'Ungraded',
+        status: 'active',
+        timezone: nextProfile.timezone || null,
+        bio: packedBio,
+        avatar_url: nextProfile.profilePhotoUrl || nextProfile.avatar || null
+      };
+
+      const { error: spErr } = await supabase
+        .from('talent_profiles')
+        .upsert(supabasePayload, { onConflict: 'id' });
+        
+      if (spErr) {
+        throw spErr;
       }
     } catch (e) {
-      console.error("Failed to persist profile update", e);
+      console.error("Failed to persist profile update to Supabase", e);
     }
   };
 
@@ -1785,6 +1832,8 @@ export default function KongilaWeb() {
     setMatches(updatedMatches);
 
     let updatedContracts = contracts;
+    let newContractToUpsert = null;
+
     if (updatedMatch.status === 'Offer Accepted') {
       const matchRequest = requests.find(r => r.id === updatedMatch.requestId);
       const newContract = {
@@ -1811,15 +1860,41 @@ export default function KongilaWeb() {
       } as any;
       updatedContracts = [...contracts, newContract];
       setContracts(updatedContracts);
+      newContractToUpsert = newContract;
     }
 
     try {
-      const res = await fetch('/api/db');
-      if (res.ok) {
-        const dbData = await res.json();
-        dbData.matches = updatedMatches;
-        dbData.contracts = updatedContracts;
-        await saveToDb(dbData);
+      // Upsert match directly to Supabase
+      const matchPayload = {
+        id: updatedMatch.id,
+        request_id: updatedMatch.requestId,
+        talent_id: updatedMatch.talentId,
+        status: updatedMatch.status?.toLowerCase() || 'proposed',
+        score: updatedMatch.score || 0,
+        breakdown: updatedMatch.breakdown || null
+      };
+
+      const { error: matchErr } = await supabase.from('matches').upsert(matchPayload);
+      if (matchErr) throw matchErr;
+
+      // Upsert contract directly to Supabase if newly created
+      if (newContractToUpsert) {
+        const contractPayload = {
+          id: newContractToUpsert.id,
+          talent_id: newContractToUpsert.talentId,
+          client_id: newContractToUpsert.clientId,
+          service_type: newContractToUpsert.role,
+          rate_type: newContractToUpsert.rateType || 'Monthly',
+          rate_amount: newContractToUpsert.rateAmount || newContractToUpsert.salary || 0,
+          start_date: newContractToUpsert.startDate,
+          end_date: newContractToUpsert.endDate,
+          status: 'signed',
+          signed_at: newContractToUpsert.signedAt || null,
+          client_monthly_fee_usd: newContractToUpsert.clientMonthlyFeeUsd || 0,
+          performance_score: newContractToUpsert.performanceScore || 0
+        };
+        const { error: contractErr } = await supabase.from('contracts').upsert(contractPayload);
+        if (contractErr) throw contractErr;
       }
     } catch (e) {
       console.error("Failed to persist match update", e);
@@ -4408,35 +4483,76 @@ export default function KongilaWeb() {
             onUpdateDocument={async (updatedDoc) => {
               const updatedDocs = documents.map((d: any) => d.id === updatedDoc.id ? updatedDoc : d);
               setDocuments(updatedDocs);
-              await saveToDb({ documents: updatedDocs });
+              
+              try {
+                const docPayload = {
+                  id: updatedDoc.id,
+                  user_id: updatedDoc.userId || currentUser?.id,
+                  name: updatedDoc.name,
+                  file_name: updatedDoc.fileName || updatedDoc.name || null,
+                  type: updatedDoc.type || 'other',
+                  file_url: updatedDoc.fileUrl || null,
+                  file_size: updatedDoc.fileSize || null,
+                  file_size_bytes: updatedDoc.fileSizeBytes || 0,
+                  status: updatedDoc.status || 'uploaded',
+                  version_number: updatedDoc.versionNumber || 1,
+                  certification_name: updatedDoc.certificationName || null,
+                  issuing_body: updatedDoc.issuingBody || null,
+                  issue_date: updatedDoc.issueDate || null,
+                  expiry_date: updatedDoc.expiryDate || null,
+                  uploaded_at: updatedDoc.uploadedAt || new Date().toISOString(),
+                  updated_at: updatedDoc.updatedAt || new Date().toISOString(),
+                  is_mandatory: updatedDoc.isMandatory || false,
+                  is_hidden: updatedDoc.isHidden || false,
+                  template_id: updatedDoc.templateId || null,
+                  signature_data: updatedDoc.signatureData || null,
+                  signed_at: updatedDoc.signedAt || null,
+                  requires_re_review: updatedDoc.requiresReReview || false,
+                  description: updatedDoc.description || null
+                };
+                const { error } = await supabase.from('documents').upsert(docPayload);
+                if (error) throw error;
+              } catch (e) {
+                console.error("Failed to update document in Supabase", e);
+              }
             }}
             onSubmitAssessment={async (result: any) => {
-              // Persist assessment result to DB
-              const updatedResults = [...skillAssessmentResults, result];
               const updatedTSAs = talentSkillAssessments.map((tsa: any) =>
                 tsa.id === result.talentSkillAssessmentId
                   ? { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt }
                   : tsa
               );
-              // Also update the talent's vettingPipeline stage record with assessmentScore
+              setTalentSkillAssessments(updatedTSAs);
+
+              // Update the talent's vettingPipeline stage record with assessmentScore
               const profile = getCurrentTalentProfile();
-              const updatedTalents = talents.map((t: any) => {
-                if (t.id !== profile?.id) return t;
-                const pipeline = [...(t.vettingPipeline || [])];
+              if (profile) {
+                const pipeline = [...(profile.vettingPipeline || [])];
                 const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
                 if (stageIdx >= 0) {
                   pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore };
                 }
-                return { ...t, vettingPipeline: pipeline };
-              });
-              setSkillAssessmentResults(updatedResults);
-              setTalentSkillAssessments(updatedTSAs);
-              setTalents(updatedTalents);
-              await saveToDb({
-                skillAssessmentResults: updatedResults,
-                talentSkillAssessments: updatedTSAs,
-                talents: updatedTalents
-              });
+                const updatedProfile = { ...profile, vettingPipeline: pipeline };
+                await handleUpdateProfile(updatedProfile);
+              }
+
+              try {
+                // Upsert to talent_skill_assessments
+                const tsaPayload = {
+                  id: result.talentSkillAssessmentId,
+                  talent_id: profile?.id,
+                  assessment_id: result.assessmentId,
+                  status: 'submitted',
+                  score: result.autoScore,
+                  answers: result.answers || {},
+                  subjective_answers: result.subjectiveAnswers || {},
+                  submitted_at: result.submittedAt || new Date().toISOString()
+                };
+                const { error } = await supabase.from('talent_skill_assessments').upsert(tsaPayload);
+                if (error) throw error;
+              } catch (e) {
+                console.error("Failed to submit assessment to Supabase", e);
+              }
             }}
           />
         )}
