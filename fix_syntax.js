@@ -1,22 +1,44 @@
 const fs = require('fs');
 const path = require('path');
 
-const filePath = path.join(__dirname, 'apps/admin-panel/pages/index.tsx');
-let content = fs.readFileSync(filePath, 'utf8');
+const filePath = path.join(__dirname, 'apps/kongila-web/components/TalentDashboard.tsx');
+let source = fs.readFileSync(filePath, 'utf8');
 
-// 1. Fix talent-pipeline
-const tpBlockStart = content.indexOf(`case 'talent-pipeline':`);
-const cpBlockStart = content.indexOf(`case 'client-pipeline':`);
-let tpBlock = content.slice(tpBlockStart, cpBlockStart);
-tpBlock = tpBlock.replace(/<\/div>\n\s*<\/div>\n\s*\)\;/g, '</div>\n      );');
-content = content.substring(0, tpBlockStart) + tpBlock + content.substring(cpBlockStart);
+function removeComponentExact(sourceCode, startStr) {
+  const startIdx = sourceCode.indexOf(startStr);
+  if (startIdx === -1) return sourceCode;
 
-// 2. Fix client-pipeline
-const newCpBlockStart = content.indexOf(`case 'client-pipeline':`);
-const hrBlockStart = content.indexOf(`case 'hiring-requests':`);
-let cpBlock = content.slice(newCpBlockStart, hrBlockStart);
-cpBlock = cpBlock.replace(/<\/div>\n\s*<\/div>\n\s*\)\;/g, '</div>\n      );');
-content = content.substring(0, newCpBlockStart) + cpBlock + content.substring(hrBlockStart);
+  // Search forward for the opening brace of the component
+  let braceCount = 0;
+  let started = false;
+  let endIdx = -1;
 
-fs.writeFileSync(filePath, content);
-console.log('Successfully fixed syntax errors');
+  for (let i = startIdx; i < sourceCode.length; i++) {
+    if (sourceCode[i] === '{') {
+      braceCount++;
+      started = true;
+    } else if (sourceCode[i] === '}') {
+      braceCount--;
+      if (started && braceCount === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (endIdx !== -1) {
+    let trimEnd = endIdx + 1;
+    while(trimEnd < sourceCode.length && (sourceCode[trimEnd] === ';' || sourceCode[trimEnd] === ' ' || sourceCode[trimEnd] === '\n')) {
+      trimEnd++;
+    }
+    return sourceCode.substring(0, startIdx) + sourceCode.substring(trimEnd);
+  }
+  return sourceCode;
+}
+
+// Just match the start of the declaration precisely
+source = removeComponentExact(source, 'const SettingsSection = ({ profile, onUpdateProfile }');
+source = removeComponentExact(source, 'const SupportSection = ({ profile, onUpdateProfile }');
+
+fs.writeFileSync(filePath, source);
+console.log('Fixed syntax and stripped sections.');

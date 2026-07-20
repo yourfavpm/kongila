@@ -212,6 +212,24 @@
       "timeTakenSeconds": 14,
       "autoSubmitted": false,
       "submittedAt": "2026-07-04T13:27:16.794Z"
+    },
+    {
+      "id": "asr_1783805535084",
+      "talentSkillAssessmentId": "tsa_1783804827345",
+      "assessmentId": "asmnt_1782217937528",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "answers": {
+        "q_1782217937508": "A",
+        "q_1782217937520": "Went"
+      },
+      "subjectiveAnswers": {},
+      "autoScore": 50,
+      "score": null,
+      "passed": null,
+      "hasSubjective": false,
+      "timeTakenSeconds": 18,
+      "autoSubmitted": false,
+      "submittedAt": "2026-07-11T21:32:15.085Z"
     }
   ],
   "talentSkillAssessments": [
@@ -239,6 +257,15 @@
       "status": "submitted",
       "score": 100,
       "submittedAt": "2026-07-04T13:27:16.794Z"
+    },
+    {
+      "id": "tsa_1783804827345",
+      "talentId": "2903d670-35ef-4b67-824a-a279bfc41b36",
+      "assessmentId": "asmnt_1782217937528",
+      "assignedAt": "2026-07-11T21:20:27.345Z",
+      "status": "submitted",
+      "score": 50,
+      "submittedAt": "2026-07-11T21:32:15.085Z"
     }
   ],
   "workSimulationTasks": [
