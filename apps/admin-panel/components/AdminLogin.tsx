@@ -26,7 +26,7 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
       if (error) throw error;
 
       if (data.user) {
-        // Check if the user has the 'admin' role
+        // Check if the user has the 'admin' role — first from public.users, then from auth metadata
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select('role')
@@ -37,7 +37,24 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           throw new Error('Failed to verify admin role.');
         }
 
-        if (!userData || (userData.role !== 'admin' && userData.role !== 'ops_manager')) {
+        const role = userData?.role || data.user.user_metadata?.role || '';
+
+        if (!role || (role !== 'admin' && role !== 'ops_manager')) {
+          // If user doesn't exist yet in public.users, auto-provision admin row
+          if (!userData && data.user.email?.endsWith('@kongila.co')) {
+            const { error: upsertErr } = await supabase.from('users').upsert({
+              id: data.user.id,
+              email: data.user.email,
+              password_hash: 'auth_managed',
+              role: 'admin',
+              status: 'active',
+              email_verified: true
+            }, { onConflict: 'id' });
+            if (!upsertErr) {
+              onLoginSuccess();
+              return;
+            }
+          }
           await supabase.auth.signOut();
           throw new Error('Access denied. You do not have admin privileges.');
         }

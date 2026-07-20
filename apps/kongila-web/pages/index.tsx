@@ -97,14 +97,29 @@ const getSeniorityRange = (level: string) =>
   SENIORITY_LEVELS.find(s => s.label === level) ?? null;
 
 const isTalentProfileOnboardingComplete = (profileRow: any) => {
-  if (!profileRow?.bio || typeof profileRow.bio !== 'string') return false;
-  try {
-    const envelope = JSON.parse(profileRow.bio);
-    const telemetry = envelope?.telemetry || {};
-    return envelope?.__kongila === true && Number(telemetry.profileCompletionPercent || 0) >= 100;
-  } catch (e) {
-    return false;
+  if (!profileRow) return false;
+  // Check 1: bio envelope with __kongila marker and 100% completion
+  if (profileRow.bio && typeof profileRow.bio === 'string') {
+    try {
+      const envelope = JSON.parse(profileRow.bio);
+      const telemetry = envelope?.telemetry || {};
+      if (envelope?.__kongila === true && Number(telemetry.profileCompletionPercent || 0) >= 100) {
+        return true;
+      }
+      // Also accept if __kongila is true and has meaningful fields (completed onboarding but percent not 100 due to optional fields)
+      if (envelope?.__kongila === true && (envelope.tags?.length > 0 || telemetry.title || telemetry.primaryRole)) {
+        return true;
+      }
+    } catch (e) {
+      // bio is not JSON
+    }
   }
+  // Check 2: profile has meaningful data (full_name + level/country) — indicates completed onboarding
+  // This handles cases where the bio envelope was not written correctly
+  if (profileRow.full_name && profileRow.level && profileRow.country && profileRow.vetting_status === 'Applied') {
+    return true;
+  }
+  return false;
 };
 
 export default function KongilaWeb() {
@@ -488,7 +503,7 @@ export default function KongilaWeb() {
       if (role === 'talent') {
         const { data: dbTalentProfile } = await supabase
           .from('talent_profiles')
-          .select('id,bio,full_name')
+          .select('id,bio,full_name,level,country,vetting_status')
           .eq('id', dbUser?.id || authUser.id)
           .maybeSingle();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
@@ -877,7 +892,7 @@ export default function KongilaWeb() {
       if (role === 'talent') {
         const { data: dbTalentProfile } = await supabase
           .from('talent_profiles')
-          .select('id,bio')
+          .select('id,bio,full_name,level,country,vetting_status')
           .eq('id', dbUser?.id || data.user?.id)
           .maybeSingle();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);

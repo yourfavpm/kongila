@@ -389,7 +389,20 @@ export default function AdminPanel() {
       try {
         if (session?.user) {
           const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
-          if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
+          const role = userData?.role || session.user.user_metadata?.role || '';
+          if (role === 'admin' || role === 'ops_manager') {
+            setIsAuthenticated(true);
+            if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
+          } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
+            // Auto-provision admin row for @kongila.co email if missing from public.users
+            await supabase.from('users').upsert({
+              id: session.user.id,
+              email: session.user.email,
+              password_hash: 'auth_managed',
+              role: 'admin',
+              status: 'active',
+              email_verified: true
+            }, { onConflict: 'id' });
             setIsAuthenticated(true);
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else {
