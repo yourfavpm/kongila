@@ -502,6 +502,28 @@ export default function KongilaWeb() {
           .maybeSingle();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
 
+        // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
+        if (!isOnboardingComplete) {
+          try {
+            const legacyRes = await fetch('/api/db');
+            if (legacyRes.ok) {
+              const legacyDb = await legacyRes.json();
+              const legacyTalent = legacyDb.talents?.find((t: any) => t.email === authUser.email || t.id === (dbUser?.id || authUser.id));
+              if (legacyTalent && isTalentProfileOnboardingComplete({ 
+                bio: typeof legacyTalent.bio === 'string' ? legacyTalent.bio : JSON.stringify(legacyTalent.bio),
+                full_name: legacyTalent.name,
+                level: legacyTalent.title,
+                country: legacyTalent.country,
+                vetting_status: legacyTalent.vettingStatus
+              })) {
+                isOnboardingComplete = true;
+              }
+            }
+          } catch (e) {
+            console.error('Legacy DB fallback failed:', e);
+          }
+        }
+
         // If not complete, try to restore draft onboarding state
         if (!isOnboardingComplete && dbTalentProfile?.bio) {
           try {
@@ -890,6 +912,28 @@ export default function KongilaWeb() {
           .eq('id', dbUser?.id || data.user?.id)
           .maybeSingle();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
+
+        // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
+        if (!isOnboardingComplete) {
+          try {
+            const legacyRes = await fetch('/api/db');
+            if (legacyRes.ok) {
+              const legacyDb = await legacyRes.json();
+              const legacyTalent = legacyDb.talents?.find((t: any) => t.email === emailInput || t.id === (dbUser?.id || data.user?.id));
+              if (legacyTalent && isTalentProfileOnboardingComplete({ 
+                bio: typeof legacyTalent.bio === 'string' ? legacyTalent.bio : JSON.stringify(legacyTalent.bio),
+                full_name: legacyTalent.name,
+                level: legacyTalent.title,
+                country: legacyTalent.country,
+                vetting_status: legacyTalent.vettingStatus
+              })) {
+                isOnboardingComplete = true;
+              }
+            }
+          } catch (e) {
+            console.error('Legacy DB login fallback failed:', e);
+          }
+        }
       }
 
       const loggedInUser = {
@@ -998,6 +1042,8 @@ export default function KongilaWeb() {
     setWizardStepErrors([]);
     saveDraftOnboarding(nextStep, talentOnboardingData);
     setTalentWizardStep(nextStep);
+    // Always scroll to the very top of the page when moving between steps
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
@@ -4167,7 +4213,7 @@ export default function KongilaWeb() {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(1); }}>Back</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(1); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
                   <NeonButton onClick={() => advanceStep(3)}>Continue</NeonButton>
                 </div>
               </div>
@@ -4272,7 +4318,7 @@ export default function KongilaWeb() {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(2); }}>Back</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(2); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
                   <NeonButton onClick={() => advanceStep(4)}>Continue</NeonButton>
                 </div>
               </div>
@@ -4407,7 +4453,7 @@ export default function KongilaWeb() {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(3); }}>Back</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(3); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
                   <NeonButton onClick={() => advanceStep(5)}>Continue</NeonButton>
                 </div>
               </div>
@@ -4460,8 +4506,8 @@ export default function KongilaWeb() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(4); }}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setWizardStepErrors([]); setTalentWizardStep(6); }}>Continue to Finalization</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(4); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
+                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setWizardStepErrors([]); setTalentWizardStep(6); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Continue to Finalization</NeonButton>
                 </div>
               </div>
             )}
@@ -4476,7 +4522,7 @@ export default function KongilaWeb() {
                 </p>
 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(5); }}>Review Setup</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(5); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Review Setup</NeonButton>
                   <button 
                     type="button" 
                     onClick={handleTalentWizardSubmit}
