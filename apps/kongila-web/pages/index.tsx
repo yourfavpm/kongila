@@ -1332,8 +1332,21 @@ export default function KongilaWeb() {
         bio: bioText
       });
 
-      // ── 1. Upsert full onboarding data directly into Supabase talent_profiles ──
+      // ── 1. Ensure user row exists in public.users to avoid FK constraint violations ──
       if (authUserId) {
+        const { error: userErr } = await supabase.from('users').upsert({
+          id: authUserId,
+          email: currentUser?.email || emailInput || '',
+          password_hash: 'auth_managed',
+          role: 'talent',
+          status: 'active',
+          email_verified: true
+        }, { onConflict: 'id' });
+        if (userErr) {
+          console.warn('[Onboarding] Could not ensure public.users row:', userErr.message);
+        }
+
+        // ── 2. Upsert full onboarding data directly into Supabase talent_profiles ──
         const supabasePayload = {
           id: authUserId,
           user_id: authUserId,
@@ -3566,7 +3579,7 @@ export default function KongilaWeb() {
         {/* TALENT PROGRESSIVE ONBOARDING WIZARD (Full Screen when active) */}
         {/* ====================================================================== */}
         {currentUser && authView === 'onboarding' && (
-          <GlassCard style={{ maxWidth: '700px', margin: '40px auto', padding: '32px' }}>
+          <GlassCard style={{ maxWidth: '700px', margin: '40px auto', padding: '32px', overflow: 'visible' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '20px' }}>🧙‍♂️</span>
