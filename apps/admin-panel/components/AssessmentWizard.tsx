@@ -147,8 +147,14 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
 
   const addQuestion = () => {
     if (!showQuestionModal || !newQuestion.question_text) return;
-    const q = { ...newQuestion, id: `temp_q_${Date.now()}`, category_id: showQuestionModal } as AssessmentQuestion;
-    setDraftQuestions([...draftQuestions, q]);
+    
+    if (newQuestion.id) {
+      setDraftQuestions(draftQuestions.map(q => q.id === newQuestion.id ? { ...newQuestion, category_id: showQuestionModal } as AssessmentQuestion : q));
+    } else {
+      const q = { ...newQuestion, id: `temp_q_${Date.now()}`, category_id: showQuestionModal } as AssessmentQuestion;
+      setDraftQuestions([...draftQuestions, q]);
+    }
+    
     setShowQuestionModal(null);
     setNewQuestion({ type: 'multiple_choice', question_text: '', options: ['', '', '', ''], correct_answer: '', scoring_weight: 1, max_score: 10 });
   };
@@ -299,15 +305,23 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No questions added yet.</div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {questions.map((q, idx) => (
-                          <div key={q.id} style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', fontSize: '13px' }}>
-                            <div style={{ fontWeight: 600, marginBottom: '4px' }}>Q{idx + 1}. {q.question_text}</div>
-                            <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                              <span style={{ textTransform: 'capitalize' }}>{q.type.replace('_', ' ')}</span>
-                              <span>• {q.max_score} pts</span>
+                        {questions.map((q, idx) => {
+                          const isDraft = !!draftQuestions.find(dq => dq.id === q.id);
+                          return (
+                            <div key={q.id} style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', fontSize: '13px' }}>
+                              <div style={{ fontWeight: 600, marginBottom: '4px' }}>Q{idx + 1}. {q.question_text}</div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                  <span style={{ textTransform: 'capitalize' }}>{q.type.replace('_', ' ')}</span>
+                                  <span>• {q.max_score} pts</span>
+                                </div>
+                                {!isLinked && isDraft && (
+                                  <button type="button" onClick={() => { setNewQuestion(q); setShowQuestionModal(catId); }} style={{ background: 'none', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '2px 8px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>Edit</button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
