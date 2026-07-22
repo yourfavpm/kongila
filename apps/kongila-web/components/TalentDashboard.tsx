@@ -7413,15 +7413,29 @@ export default function TalentDashboard({
     setMessages(messages.map(m => ({ ...m, read: true })));
   };
 
-  const openAssessmentSession = (tsaId: string) => {
+  const openAssessmentSession = async (tsaId: string) => {
     let tsa = resolveTalentSkillAssessment(tsaId, talentProfile?.id, talentSkillAssessments)
       || talentSkillAssessments.find((t: any) => t.id === tsaId || t.assessmentId === tsaId || t.assessment_id === tsaId);
 
     const asmntRef = tsa?.assessmentId || tsa?.assessment_id || tsaId || activeVettingStage?.assessmentId;
-    const asmnt = assessments.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId);
+    let asmnt = assessments.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId);
 
     if (!asmnt) {
-      console.error("Assessment definition not found for ID:", asmntRef);
+      try {
+        const res = await fetch('/api/assessments');
+        if (res.ok) {
+          const fetchedData = await res.json();
+          const allAsmnts = Array.isArray(fetchedData) ? fetchedData : (fetchedData.assessments || []);
+          asmnt = allAsmnts.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId)
+            || allAsmnts.find((a: any) => a.status === 'published');
+        }
+      } catch (err) {
+        console.error('Failed to fetch fallback assessments:', err);
+      }
+    }
+
+    if (!asmnt) {
+      alert("Unable to load assessment data. Please refresh or contact support.");
       return;
     }
 
