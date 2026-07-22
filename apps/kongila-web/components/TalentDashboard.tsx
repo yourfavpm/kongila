@@ -7445,7 +7445,7 @@ export default function TalentDashboard({
       });
     }
     setRescheduleModalOpen(false);
-    alert('Reschedule request sent to admin.');
+    showToast('Reschedule request sent to admin.');
   };
 
   const effectiveNotifications = dashboardNotifications ?? notifications;
