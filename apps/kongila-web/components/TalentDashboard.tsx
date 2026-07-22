@@ -8069,6 +8069,8 @@ export default function TalentDashboard({
             </div>
           </div>
         </div>
+      )}
+
       {globalToast && (
         <div style={{
           position: 'fixed', bottom: '24px', right: '24px', zIndex: 10000,
