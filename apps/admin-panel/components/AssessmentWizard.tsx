@@ -59,33 +59,54 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
     setError(null);
     setSaving(true);
     try {
-      // 1. Create drafted categories via API
+      // 1. Save drafted categories to Supabase and collect real ID mapping
       const catIdsMap: Record<string, string> = {};
       for (const cat of draftCategories) {
-        if (!cat.id.startsWith('cat_')) {
+        const isTempId = cat.id.startsWith('temp_cat_');
+        if (isTempId) {
+          // Strip temp id so Supabase generates a real UUID
+          const { id: _tempId, ...catData } = cat as any;
           const res = await fetch('/api/assessments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entity: 'category', data: cat })
+            body: JSON.stringify({ entity: 'category', data: catData })
           });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed to save category');
+          }
           const savedCat = await res.json();
-          catIdsMap[cat.id] = savedCat.id; // Map temp ID to real ID
+          catIdsMap[cat.id] = savedCat.id; // Map temp ID -> real UUID
+        } else {
+          catIdsMap[cat.id] = cat.id; // already a real ID (re-edit scenario)
         }
       }
 
-      // 2. Create drafted questions via API
+      // 2. Save drafted questions to Supabase using the real category IDs
       for (const q of draftQuestions) {
-        const catId = catIdsMap[q.category_id] || q.category_id;
-        await fetch('/api/assessments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity: 'question', data: { ...q, category_id: catId } })
-        });
+        const realCatId = catIdsMap[q.category_id] || q.category_id;
+        const isTempQ = q.id.startsWith('temp_q_');
+        if (isTempQ) {
+          // Strip temp id so Supabase generates a real UUID
+          const { id: _tempQId, ...qData } = q as any;
+          const res = await fetch('/api/assessments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entity: 'question', data: { ...qData, category_id: realCatId } })
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed to save question');
+          }
+        }
       }
 
-      // 3. Create Assessment
+      // 3. Remap temp category IDs in the assessment payload to real IDs
       const finalCategories = (assessment.categories || []).map(id => catIdsMap[id] || id);
-      const finalOverrides = (assessment.category_overrides || []).map(o => ({ ...o, categoryId: catIdsMap[o.categoryId] || o.categoryId }));
+      const finalOverrides = (assessment.category_overrides || []).map(o => ({
+        ...o,
+        categoryId: catIdsMap[o.categoryId] || o.categoryId
+      }));
 
       const payload = {
         ...assessment,
@@ -113,6 +134,7 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
       setSaving(false);
     }
   };
+
 
   const addCategory = () => {
     if (!newCategory.name || !newCategory.time_limit_minutes) return;
