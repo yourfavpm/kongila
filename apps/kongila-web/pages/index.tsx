@@ -4842,7 +4842,6 @@ export default function KongilaWeb() {
               });
               setSkillAssessmentResults(updatedResults);
 
-              const profile = getCurrentTalentProfile();
               if (profile) {
                 const pipeline = [...(profile.vettingPipeline || [])];
                 const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
