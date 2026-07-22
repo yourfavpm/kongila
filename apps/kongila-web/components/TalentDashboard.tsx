@@ -7422,10 +7422,10 @@ export default function TalentDashboard({
 
     if (!asmnt) {
       try {
-        const res = await fetch('/api/assessments');
+        const res = await fetch('/api/db');
         if (res.ok) {
           const fetchedData = await res.json();
-          const allAsmnts = Array.isArray(fetchedData) ? fetchedData : (fetchedData.assessments || []);
+          const allAsmnts = fetchedData.assessments || [];
           asmnt = allAsmnts.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId)
             || allAsmnts.find((a: any) => a.status === 'published');
         }
