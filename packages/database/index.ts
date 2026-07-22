@@ -104,8 +104,8 @@ const defaultSupabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ
 export function getSupabaseClient() {
   if (!supabaseClient) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultSupabaseUrl;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
-    supabaseClient = createClient(supabaseUrl, supabaseKey);
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
+    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
   }
   return supabaseClient;
 }
