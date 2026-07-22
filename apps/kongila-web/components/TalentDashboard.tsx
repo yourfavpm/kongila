@@ -1181,7 +1181,7 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
 
-  const upcoming = interviews.filter((i: any) => i.status === 'Interview Scheduled' || i.status === 'Scheduled');
+  const upcoming = interviews.filter((i: any) => i.status === 'Interview Scheduled' || i.status === 'Scheduled' || i.status === 'Rescheduled');
   const reschedules = interviews.filter((i: any) => i.status === 'Reschedule Requested');
   const past = interviews.filter((i: any) => i.status === 'Completed' || i.status === 'Cancelled' || i.status === 'failed' || i.status === 'passed');
 
@@ -1191,8 +1191,8 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
   };
 
   const generateGoogleCalendarLink = (i: any) => {
-    const start = new Date(`${i.requestedDate || i.date}T${i.requestedTime || i.time}`).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = new Date(new Date(`${i.requestedDate || i.date}T${i.requestedTime || i.time}`).getTime() + 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const start = new Date(`${i.date}T${i.time}`).toISOString().replace(/-|:|\.\d\d\d/g, "");
+    const end = new Date(new Date(`${i.date}T${i.time}`).getTime() + 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Interview+-+${encodeURIComponent(i.title)}&dates=${start}/${end}&details=Meeting+Link:+${encodeURIComponent(i.meetingLink || '')}`;
   };
 
@@ -1268,12 +1268,12 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {i.requestedDate ? new Date(i.requestedDate).toLocaleDateString() : 'TBD'}</span>
-                    <span>🕒 {i.requestedTime || 'TBD'} (Your Local Time)</span>
+                    <span>📅 {i.proposedNewDate ? new Date(i.proposedNewDate).toLocaleDateString() : 'TBD'}</span>
+                    <span>🕒 {i.proposedNewTime || 'TBD'} (Your Local Time)</span>
                   </div>
-                  {i.requestedNotes && (
+                  {i.rescheduleReason && (
                     <div style={{ marginTop: '12px', fontSize: '13px', color: '#475569', background: '#F8FAFC', padding: '8px 12px', borderRadius: '6px' }}>
-                      <strong>Reason: </strong> {i.requestedNotes}
+                      <strong>Reason: </strong> {i.rescheduleReason}
                     </div>
                   )}
                 </div>
@@ -1300,8 +1300,8 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {new Date(i.requestedDate || i.date).toLocaleDateString()}</span>
-                    <span>🕒 {i.requestedTime || i.time} (Your Local Time)</span>
+                    <span>📅 {new Date(i.date).toLocaleDateString()}</span>
+                    <span>🕒 {i.time} (Your Local Time)</span>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -6633,7 +6633,7 @@ const QuestionCard = ({
 };
 
 // ─── Section: Vetting Progress (Dedicated Full View) ─────────────────────────
-const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], onOpenAssessment, onUpdateProfile }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void }) => {
+const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
   const STAGE_META = [
     { name: 'Application Screening', color: '#EF4444', icon: '📋', responsible: 'Talent Manager', desc: 'Initial review of your application and submitted documents.' },
     { name: 'Skill Assessment',       color: '#3B82F6', icon: '🧪', responsible: 'Skill Assessor', desc: 'Role-specific technical evaluation assigned by the vetting team.' },
@@ -6850,7 +6850,11 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                       </div>
                       <div style={{display:'flex',gap:'10px'}}>
                         {sr.meetingLink&&<a href={sr.meetingLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'#8B5CF6',color:'#fff',textDecoration:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700}}>Join Meeting →</a>}
-                        <button style={{background:'#F1F5F9',color:'#475569',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Request Reschedule</button>
+                        {!sr.rescheduleRequested ? (
+                          <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: idx, ...sr })} style={{background:'#F1F5F9',color:'#475569',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Request Reschedule</button>
+                        ) : (
+                          <span style={{ padding: '8px 12px', background: '#FEF3C7', color: '#D97706', borderRadius: '8px', fontSize: '11px', fontWeight: 800 }}>Reschedule Requested</span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -7550,7 +7554,7 @@ export default function TalentDashboard({
       case 'profile':          return <ProfileDetailSection user={currentUser} profile={talentProfile} contracts={talentContracts} onUpdateProfile={onUpdateProfile} />;
       case 'compliance':       return <ComplianceSection profile={talentProfile} allDocuments={allDocuments} onUpdateProfile={onUpdateProfile} onUpdateDocument={onUpdateDocument} />;
       case 'vetting_progress':
-        return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} />;
+        return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} onUpdateMatch={onUpdateMatch} />;
       case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} />;
