@@ -1062,7 +1062,7 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         proposed_new_time: iv.proposedNewTime || null,
         created_at: iv.createdAt || new Date().toISOString()
       }));
-      const { error } = await supabase.from('interviews').upsert(rows).catch(() => ({ error: null }));
+      const { error } = await supabase.from('interviews').upsert(rows);
       if (error) console.error('[DB] interviews upsert error:', (error as any).message);
     }
 

@@ -569,8 +569,6 @@ export default function AdminPanel() {
         // Schedule Interview
         const interview = {
           id: `int_${Date.now()}`,
-          requestId: 'system_vetting',
-          matchId: 'system_vetting',
           talentId: selectedTalent.id,
           talentName: selectedTalent.name,
           clientName: 'Kongila Vetting Panel',
