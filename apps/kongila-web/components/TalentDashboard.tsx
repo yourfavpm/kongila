@@ -409,21 +409,27 @@ const resolveTalentSkillAssessment = (
 const isAssessmentSubmittable = (
   tsa: any | undefined,
   talentId: string | undefined,
-  skillAssessmentResults: any[] = []
+  skillAssessmentResults: any[] = [],
+  stageAssessmentRef?: string
 ) => {
-  if (!tsa) return false;
-  const lockedStatuses = ['submitted', 'graded', 'Passed', 'Failed'];
-  if (lockedStatuses.includes(tsa.status)) return false;
-  
-  if (tsa.deadline) {
-    if (new Date(tsa.deadline).getTime() < Date.now()) return false;
+  const ref = stageAssessmentRef || tsa?.assessmentId || tsa?.assessment_id || tsa?.id;
+  const hasResult = skillAssessmentResults.some((r: any) =>
+    (r.talentId === talentId || r.talent_id === talentId) &&
+    (
+      (tsa?.id && (r.talentSkillAssessmentId === tsa.id || r.tsaId === tsa.id)) ||
+      (ref && (r.assessmentId === ref || r.assessment_id === ref))
+    )
+  );
+
+  if (hasResult) return false;
+
+  if (tsa) {
+    const lockedStatuses = ['submitted', 'graded', 'Passed', 'Failed'];
+    if (lockedStatuses.includes(tsa.status)) return false;
+    if (tsa.deadline && new Date(tsa.deadline).getTime() < Date.now()) return false;
   }
 
-  const hasResult = skillAssessmentResults.some((r: any) =>
-    r.talentSkillAssessmentId === tsa.id &&
-    (r.talentId === talentId || r.talent_id === talentId)
-  );
-  return !hasResult;
+  return Boolean(ref || tsa);
 };
 
 const getNotificationIcon = (title: string) => {
@@ -536,7 +542,8 @@ const ProfileSection = ({
   const canStartSkillAssessment = isAssessmentSubmittable(
     activeSkillAssessment,
     profile?.id,
-    skillAssessmentResults
+    skillAssessmentResults,
+    activeVettingStage?.assessmentId
   );
 
   const persistProfile = (updates: Record<string, any>) => {
@@ -6751,7 +6758,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
           const isCurrent = stat === 'in_progress' || stat === 'needs_clarification';
           const ss=getStageUI(idx,stat,meta.color,sr.slaBreached);
           const tsa=resolveTalentSkillAssessment(sr.assessmentId, profile?.id, talentSkillAssessments);
-          const canStartAssessment=isAssessmentSubmittable(tsa, profile?.id, skillAssessmentResults);
+          const canStartAssessment=isAssessmentSubmittable(tsa, profile?.id, skillAssessmentResults, sr.assessmentId);
           
           return(
             <Card key={idx} style={{padding:'20px',background:ss.bg,border:`1px solid ${isCurrent?meta.color:ss.border}`,boxShadow:isCurrent?`0 4px 20px ${meta.color}15`:'none', opacity: stat==='pending'?0.7:1}}>
@@ -7406,11 +7413,29 @@ export default function TalentDashboard({
   };
 
   const openAssessmentSession = (tsaId: string) => {
-    const tsa = resolveTalentSkillAssessment(tsaId, talentProfile?.id, talentSkillAssessments)
-      || talentSkillAssessments.find((t: any) => t.id === tsaId || t.assessmentId === tsaId);
-    if (!tsa || !isAssessmentSubmittable(tsa, talentProfile?.id, skillAssessmentResults)) return;
-    const asmnt = assessments.find((a: any) => a.id === tsa.assessmentId || a.id === tsa.assessment_id);
-    if (!asmnt) return;
+    let tsa = resolveTalentSkillAssessment(tsaId, talentProfile?.id, talentSkillAssessments)
+      || talentSkillAssessments.find((t: any) => t.id === tsaId || t.assessmentId === tsaId || t.assessment_id === tsaId);
+
+    const asmntRef = tsa?.assessmentId || tsa?.assessment_id || tsaId || activeVettingStage?.assessmentId;
+    const asmnt = assessments.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId);
+
+    if (!asmnt) {
+      console.error("Assessment definition not found for ID:", asmntRef);
+      return;
+    }
+
+    if (!tsa) {
+      tsa = {
+        id: `tsa_${talentProfile?.id || 'talent'}_${asmnt.id}`,
+        talentId: talentProfile?.id,
+        assessmentId: asmnt.id,
+        assignedAt: activeVettingStage?.started_at || new Date().toISOString(),
+        status: 'assigned'
+      };
+    }
+
+    if (!isAssessmentSubmittable(tsa, talentProfile?.id, skillAssessmentResults, asmnt.id)) return;
+
     setActiveAssessmentSession({ talentSkillAssessment: tsa, assessment: asmnt });
   };
 
