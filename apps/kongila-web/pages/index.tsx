@@ -4847,7 +4847,7 @@ export default function KongilaWeb() {
                 const pipeline = [...(profile.vettingPipeline || [])];
                 const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
                 if (stageIdx >= 0) {
-                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore, status: 'passed' };
+                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore, status: 'submitted' };
                 }
                 const updatedProfile = { ...profile, vettingPipeline: pipeline };
                 await handleUpdateProfile(updatedProfile);

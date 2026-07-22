@@ -6391,11 +6391,13 @@ const SkillAssessmentEngine = ({
 
         {/* Score card */}
         {autoScore !== null ? (
-          <div style={{ background: passed ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${passed ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: '14px', padding: '24px', marginBottom: '24px' }}>
-            <div style={{ fontSize: '12px', color: passed ? '#34D399' : '#FCA5A5', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Auto-Scored (Multiple Choice)</div>
-            <div style={{ fontSize: '52px', fontWeight: 900, color: passed ? '#10B981' : '#EF4444', lineHeight: 1 }}>{autoScore}%</div>
+          <div style={{ background: submitResult?.hasSubjective ? 'rgba(56,189,248,0.1)' : (passed ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'), border: `1px solid ${submitResult?.hasSubjective ? 'rgba(56,189,248,0.3)' : (passed ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)')}`, borderRadius: '14px', padding: '24px', marginBottom: '24px' }}>
+            <div style={{ fontSize: '12px', color: submitResult?.hasSubjective ? '#38BDF8' : (passed ? '#34D399' : '#FCA5A5'), fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Auto-Scored (Multiple Choice)</div>
+            <div style={{ fontSize: '52px', fontWeight: 900, color: submitResult?.hasSubjective ? '#38BDF8' : (passed ? '#10B981' : '#EF4444'), lineHeight: 1 }}>{autoScore}%</div>
             <div style={{ fontSize: '13px', color: '#94A3B8', marginTop: '8px' }}>
-              {passed ? '✅ Above passing threshold' : `❌ Below passing threshold of ${passing}%`}
+              {submitResult?.hasSubjective 
+                ? 'Your final score will be calculated after manual review of written answers.' 
+                : (passed ? '✅ Above passing threshold' : `❌ Below passing threshold of ${passing}%`)}
             </div>
           </div>
         ) : (

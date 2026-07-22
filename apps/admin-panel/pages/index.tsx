@@ -2021,10 +2021,23 @@ export default function AdminPanel() {
                                       </details>
                                     </div>
                                   )}
+                                  <div style={{ background: 'var(--bg-tertiary)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-glass)', marginTop: '16px' }}>
+                                    <label style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '8px', display: 'block' }}>Final Assessment Score (0-100%)</label>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>Review the auto-scored MCQ and the written answers above, then assign the final composite score for this assessment.</p>
+                                    <input 
+                                      type="number" 
+                                      min="0" max="100" 
+                                      value={stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80)} 
+                                      onChange={e => setStageScoreInput(parseInt(e.target.value) || 0)} 
+                                      className="form-input" 
+                                      style={{ width: '100%', fontSize: '16px', fontWeight: 800, padding: '12px', border: '2px solid var(--kongila-blue)' }} 
+                                      placeholder="e.g. 85" 
+                                    />
+                                  </div>
 
                                   <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Proceed', stageRecord.assessmentScore, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Confirm Score & Move to Interview</button>
-                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', stageRecord.assessmentScore, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Proceed', stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80), stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Confirm Score & Move to Interview</button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80), stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
                                   </div>
                                 </>
                               )}
