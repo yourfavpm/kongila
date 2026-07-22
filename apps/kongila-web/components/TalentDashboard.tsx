@@ -332,11 +332,11 @@ const maskClientName = (clientName?: string) => {
   return `${parts[0]} ${parts.slice(1).map(part => `${part.charAt(0)}${'*'.repeat(Math.max(0, part.length - 1))}`).join(' ')}`;
 };
 
-const getStageNextAction = (stageIdx: number, status: string) => {
+const getStageNextAction = (stageIdx: number, status: string, stage?: any) => {
   const actions = [
     'The Talent Manager is screening your application and profile documents.',
     'Complete the skill assessment once it is assigned to you.',
-    'Waiting for admin to schedule your live interview.',
+    stage?.interviewDate || stage?.interviewId ? 'Please attend your scheduled live interview at the designated time.' : 'Waiting for admin to schedule your live interview.',
     'Complete the personality test when the system sends the invite.',
     'Keep your remote readiness details current for ops review.',
     'Submit the work simulation task before the deadline.',
@@ -382,16 +382,16 @@ const getActiveVettingStage = (profile: any) => {
 
   const inProgress = pipeline.find(stage => stage?.status === 'in_progress');
   if (inProgress) {
-    return { ...inProgress, nextAction: getStageNextAction(inProgress.stageIndex, inProgress.status), stageIndex: inProgress.stageIndex ?? 0 };
+    return { ...inProgress, nextAction: getStageNextAction(inProgress.stageIndex, inProgress.status, inProgress), stageIndex: inProgress.stageIndex ?? 0 };
   }
 
   const firstOpen = pipeline.find(stage => stage?.status !== 'passed' && stage?.status !== 'skipped');
   if (firstOpen) {
-    return { ...firstOpen, nextAction: getStageNextAction(firstOpen.stageIndex, firstOpen.status), stageIndex: firstOpen.stageIndex ?? 0 };
+    return { ...firstOpen, nextAction: getStageNextAction(firstOpen.stageIndex, firstOpen.status, firstOpen), stageIndex: firstOpen.stageIndex ?? 0 };
   }
 
   const finalStage = pipeline[pipeline.length - 1];
-  return { ...finalStage, nextAction: getStageNextAction(finalStage.stageIndex, finalStage.status), stageIndex: finalStage.stageIndex ?? pipeline.length - 1 };
+  return { ...finalStage, nextAction: getStageNextAction(finalStage.stageIndex, finalStage.status, finalStage), stageIndex: finalStage.stageIndex ?? pipeline.length - 1 };
 };
 
 const resolveTalentSkillAssessment = (
@@ -671,7 +671,7 @@ const ProfileSection = ({
             <div style={{ fontSize: '16px', fontWeight: 900, color: '#1A2340', margin: '6px 0 2px 0' }}>{(activeVettingStage?.stageName === 'Behavioural Interview' ? 'Live Interview' : activeVettingStage?.stageName) || 'Application Screening'}</div>
             <div style={{ fontSize: '12px', color: '#6B7A99', marginBottom: '12px' }}>{getStageAgeLabel(activeVettingStage, profile?.createdAt || profile?.user?.createdAt)}</div>
             <p style={{ fontSize: '13px', color: '#475569', margin: 0, maxWidth: '720px' }}>
-              {hasCompletedVetting ? 'Your vetting cycle has been completed. Any future review updates will appear here.' : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending')}
+              {hasCompletedVetting ? 'Your vetting cycle has been completed. Any future review updates will appear here.' : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending', activeVettingStage)}
             </p>
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '160px' }}>
@@ -726,6 +726,33 @@ const ProfileSection = ({
                 )}
               </p>
             )}
+        )}
+
+        {(activeVettingStage?.interviewDate || activeVettingStage?.interviewId) && (
+          <div style={{ marginTop: '16px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '16px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 800, color: '#0047CC', marginBottom: '8px', textTransform: 'uppercase' }}>Interview Scheduled</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340', marginBottom: '4px' }}>
+                  Live Behavioural Interview
+                </div>
+                <div style={{ fontSize: '13px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
+                  <span>📅 {new Date(activeVettingStage.interviewDate).toLocaleDateString()}</span>
+                  <span>🕒 {activeVettingStage.interviewTime} (Your Local Time)</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {activeVettingStage.meetingLink ? (
+                  <a href={activeVettingStage.meetingLink} target="_blank" rel="noopener noreferrer" style={{
+                    padding: '10px 16px', background: '#0047CC', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, display: 'inline-block', fontSize: '12px'
+                  }}>
+                    Join Video Call
+                  </a>
+                ) : (
+                  <span style={{ color: '#6B7A99', fontSize: '12px' }}>Link will be provided soon</span>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </Card>
