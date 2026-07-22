@@ -127,6 +127,7 @@ export default function KongilaWeb() {
   const [messages, setMessages] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
+  const [interviews, setInterviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Assessment state for talent-side
@@ -440,6 +441,7 @@ export default function KongilaWeb() {
         }
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
+        setInterviews(dbData.interviews || []);
         setDocuments(dbData.documents || []);
         setRequestActivityLogs(dbData.requestActivityLogs || []);
         // Assessment data for talent side
@@ -4755,6 +4757,7 @@ export default function KongilaWeb() {
             matches={matches}
             clientRequests={requests}
             allDocuments={documents}
+            interviews={interviews}
             dashboardNotifications={notifications}
             setDashboardNotifications={setNotifications}
             assessments={assessments}

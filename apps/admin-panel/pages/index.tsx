@@ -710,6 +710,110 @@ export default function AdminPanel() {
     setSaving(false);
   };
 
+  const handleGlobalApproveReschedule = async (iv: any) => {
+    setSaving(true);
+    try {
+      const updatedInterviews = interviews.map((i: any) =>
+        i.id === iv.id
+          ? {
+              ...i,
+              status: 'Rescheduled',
+              date: i.proposedNewDate || i.date,
+              time: i.proposedNewTime || i.time,
+              rescheduleRequested: false,
+              rescheduleReason: null,
+              proposedNewDate: null,
+              proposedNewTime: null,
+            }
+          : i
+      );
+
+      let updatedTalents = talents;
+      if (iv.talentId) {
+        const talent = talents.find((t: any) => t.id === iv.talentId);
+        if (talent && talent.vettingPipeline) {
+          const newPipeline = talent.vettingPipeline.map((stage: any) => {
+            if (stage.interviewId === iv.id) {
+              return {
+                ...stage,
+                interviewDate: iv.proposedNewDate || stage.interviewDate,
+                interviewTime: iv.proposedNewTime || stage.interviewTime,
+                rescheduleRequested: false,
+                rescheduleReason: undefined,
+              };
+            }
+            return stage;
+          });
+          const updatedTalent = { ...talent, vettingPipeline: newPipeline };
+          updatedTalents = talents.map((t: any) => (t.id === talent.id ? updatedTalent : t));
+          if (selectedTalent?.id === talent.id) {
+            setSelectedTalent(updatedTalent as TalentProfile);
+          }
+        }
+      }
+
+      setInterviews(updatedInterviews);
+      setTalents(updatedTalents);
+      
+      await saveToDb({
+        interviews: updatedInterviews,
+        talents: updatedTalents,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGlobalRejectReschedule = async (iv: any) => {
+    setSaving(true);
+    try {
+      const updatedInterviews = interviews.map((i: any) =>
+        i.id === iv.id
+          ? {
+              ...i,
+              status: 'Scheduled',
+              rescheduleRequested: false,
+              rescheduleReason: null,
+              proposedNewDate: null,
+              proposedNewTime: null,
+            }
+          : i
+      );
+
+      let updatedTalents = talents;
+      if (iv.talentId) {
+        const talent = talents.find((t: any) => t.id === iv.talentId);
+        if (talent && talent.vettingPipeline) {
+          const newPipeline = talent.vettingPipeline.map((stage: any) => {
+            if (stage.interviewId === iv.id) {
+              return {
+                ...stage,
+                rescheduleRequested: false,
+                rescheduleReason: undefined,
+              };
+            }
+            return stage;
+          });
+          const updatedTalent = { ...talent, vettingPipeline: newPipeline };
+          updatedTalents = talents.map((t: any) => (t.id === talent.id ? updatedTalent : t));
+          if (selectedTalent?.id === talent.id) {
+            setSelectedTalent(updatedTalent as TalentProfile);
+          }
+        }
+      }
+
+      setInterviews(updatedInterviews);
+      setTalents(updatedTalents);
+      
+      await saveToDb({
+        interviews: updatedInterviews,
+        talents: updatedTalents,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleRejectReschedule = async () => {
     if (!selectedTalent) return;
     setSaving(true);
@@ -1568,6 +1672,13 @@ export default function AdminPanel() {
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {iv.meetingLink && <a href={iv.meetingLink} target="_blank" rel="noreferrer" style={{ padding: '3px 8px', borderRadius: '6px', background: '#2563EB', color: '#fff', fontWeight: 600, fontSize: '10px', textDecoration: 'none' }}>Join</a>}
                             {iv.googleCalendarLink && <a href={iv.googleCalendarLink} target="_blank" rel="noreferrer" style={{ padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', fontSize: '10px', textDecoration: 'none' }}>📅 Cal</a>}
+                            {iv.rescheduleRequested && (
+                              <div style={{ display: 'flex', gap: '4px', marginTop: '4px', width: '100%' }}>
+                                <button onClick={() => handleGlobalApproveReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#10B981', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Approve</button>
+                                <button onClick={() => handleGlobalRejectReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Reject</button>
+                                <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{iv.proposedNewDate} {iv.proposedNewTime} - {iv.rescheduleReason}</div>
+                              </div>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -3508,7 +3619,10 @@ export default function AdminPanel() {
         <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 8px 6px', marginTop: '4px' }}>KONGILA</div>
         {KONGILA_NAV.map(({ key, label }) => {
           let badge = 0;
-          if (key === 'interviews') badge = interviews.filter((iv: any) => iv.status === 'Scheduled' || iv.status === 'Rescheduled').length;
+          if (key === 'interviews') {
+            const rescheduleCount = interviews.filter((iv: any) => iv.rescheduleRequested).length;
+            badge = rescheduleCount > 0 ? rescheduleCount : 0;
+          }
           else if (key === 'support') badge = supportTickets.filter((t: any) => t.status === 'Open').length;
           else if (key === 'hiring-requests') badge = requests.filter((r: any) => r.status === 'New Request').length;
           else if (key === 'contracts') badge = contracts.filter((c: any) => c.status === 'pending_signatures').length;
@@ -3523,7 +3637,7 @@ export default function AdminPanel() {
             <div key={key} className={`menu-item ${activeTab === key ? 'active' : ''}`} onClick={() => { setActiveTab(key as AdminTab); setMobileSidebarOpen(false); }}>
               <span style={{ fontSize: '15px', display: 'flex', alignItems: 'center' }}>{renderSidebarIcon(key)}</span>
               <span style={{ flex: 1 }}>{label}</span>
-              {badge > 0 && <span style={{ background: 'var(--kongila-blue)', color: '#fff', borderRadius: '10px', padding: '1px 6px', fontSize: '10px', fontWeight: 700 }}>{badge}</span>}
+              {badge > 0 && <span style={{ background: key === 'interviews' && interviews.some((iv: any) => iv.rescheduleRequested) ? '#EF4444' : 'var(--kongila-blue)', color: '#fff', borderRadius: '10px', padding: '1px 6px', fontSize: '10px', fontWeight: 700 }}>{badge}</span>}
             </div>
           );
         })}

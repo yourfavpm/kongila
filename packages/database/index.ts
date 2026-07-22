@@ -684,7 +684,12 @@ export async function readDbAsync(): Promise<Schema> {
       meetingLink: iv.meeting_link, notes: iv.notes, talentNotes: iv.talent_notes,
       clientRating: iv.client_rating, clientFeedback: iv.client_feedback, outcome: iv.outcome,
       googleCalendarEventId: iv.google_calendar_event_id,
-      googleCalendarLink: iv.google_calendar_link, createdAt: iv.created_at
+      googleCalendarLink: iv.google_calendar_link,
+      rescheduleRequested: iv.reschedule_requested,
+      rescheduleReason: iv.reschedule_reason,
+      proposedNewDate: iv.proposed_new_date,
+      proposedNewTime: iv.proposed_new_time,
+      createdAt: iv.created_at
     }));
 
     const requestActivityLogs: RequestActivityLog[] = (rRequestActivityLogs.data || []).map((al: any) => ({
@@ -1051,6 +1056,10 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         outcome: iv.outcome || null,
         google_calendar_event_id: iv.googleCalendarEventId || null,
         google_calendar_link: iv.googleCalendarLink || null,
+        reschedule_requested: iv.rescheduleRequested || false,
+        reschedule_reason: iv.rescheduleReason || null,
+        proposed_new_date: iv.proposedNewDate || null,
+        proposed_new_time: iv.proposedNewTime || null,
         created_at: iv.createdAt || new Date().toISOString()
       }));
       const { error } = await supabase.from('interviews').upsert(rows).catch(() => ({ error: null }));

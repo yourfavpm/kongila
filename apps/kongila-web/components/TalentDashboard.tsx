@@ -30,6 +30,7 @@ interface TalentDashboardProps {
   matches: any[];
   clientRequests?: any[];
   allDocuments?: any[];
+  interviews?: any[];
   dashboardNotifications?: any[];
   setDashboardNotifications?: (notifications: any[]) => void;
   // Assessment engine props
@@ -455,6 +456,7 @@ const ProfileSection = ({
   setActiveSection,
   onOpenAssessment,
   onUpdateProfile,
+  onRequestReschedule
 }: {
   user: any;
   profile: any;
@@ -467,6 +469,7 @@ const ProfileSection = ({
   setActiveSection: (sec: Section) => void;
   onOpenAssessment?: (tsaId: string) => void;
   onUpdateProfile?: (updatedProfile: any) => void;
+  onRequestReschedule?: (interview: any) => void;
 }) => {
   const vettingStatus = profile?.vettingStatus || 'Applied';
   const { percentage: profileCompletion, incompleteFields } = countProfileCompletion(profile);
@@ -751,6 +754,15 @@ const ProfileSection = ({
                   </a>
                 ) : (
                   <span style={{ color: '#6B7A99', fontSize: '12px' }}>Link will be provided soon</span>
+                )}
+                {!activeVettingStage.rescheduleRequested ? (
+                  <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: activeStageIndex, ...activeVettingStage })} style={{ padding: '10px 16px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                    Request Reschedule
+                  </button>
+                ) : (
+                  <span style={{ padding: '8px 12px', background: '#FEF3C7', color: '#D97706', borderRadius: '8px', fontSize: '11px', fontWeight: 800 }}>
+                    Reschedule Requested
+                  </span>
                 )}
               </div>
             </div>
@@ -7327,6 +7339,7 @@ export default function TalentDashboard({
   matches,
   clientRequests,
   allDocuments = [],
+  interviews = [],
   dashboardNotifications,
   setDashboardNotifications,
   assessments = [],
@@ -7382,7 +7395,34 @@ export default function TalentDashboard({
     setRescheduleModalOpen(true);
   };
 
-  const submitRescheduleRequest = () => {
+  const submitRescheduleRequest = async () => {
+    let updatedInterviews = [...interviews];
+    if (rescheduleData?.interviewId || rescheduleData?.id) {
+      const targetId = rescheduleData.interviewId || rescheduleData.id;
+      updatedInterviews = updatedInterviews.map((iv: any) => 
+        iv.id === targetId 
+          ? { 
+              ...iv, 
+              rescheduleRequested: true, 
+              rescheduleReason: `${rescheduleReason}`, 
+              proposedNewDate: rescheduleDate, 
+              proposedNewTime: rescheduleTime,
+              status: 'Reschedule Requested' 
+            } 
+          : iv
+      );
+      
+      try {
+        await fetch('/api/db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ interviews: updatedInterviews })
+        });
+      } catch (err) {
+        console.error('Failed to sync interview reschedule request:', err);
+      }
+    }
+
     if (onUpdateProfile && rescheduleData?.isVetting) {
       const pipeline = [...(talentProfile?.vettingPipeline || [])];
       pipeline[rescheduleData.stageIndex] = {
@@ -7505,6 +7545,7 @@ export default function TalentDashboard({
         dashboardNotifications={effectiveNotifications}
         setActiveSection={setActiveSection}
         onOpenAssessment={openAssessmentSession}
+        onRequestReschedule={handleRequestReschedule}
       />;
       case 'profile':          return <ProfileDetailSection user={currentUser} profile={talentProfile} contracts={talentContracts} onUpdateProfile={onUpdateProfile} />;
       case 'compliance':       return <ComplianceSection profile={talentProfile} allDocuments={allDocuments} onUpdateProfile={onUpdateProfile} onUpdateDocument={onUpdateDocument} />;
@@ -7512,7 +7553,7 @@ export default function TalentDashboard({
         return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} onUpdateMatch={onUpdateMatch} />;
-      case 'interviews':       return <InterviewsSection />;
+      case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} />;
       case 'contracts':        return <ContractSection profile={talentProfile} />;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
       case 'tasks':            return <TasksSection profile={talentProfile} />;

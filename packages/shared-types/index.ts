@@ -884,6 +884,10 @@ export interface Interview {
   outcome?: 'Proceed to Hire' | 'No Fit' | 'Hold' | 'Pending Decision' | 'Proceeded' | 'Not Selected';
   googleCalendarEventId?: string;
   googleCalendarLink?: string;
+  rescheduleRequested?: boolean;
+  rescheduleReason?: string;
+  proposedNewDate?: string;
+  proposedNewTime?: string;
   createdAt: string;
   updatedAt?: string;
 }
