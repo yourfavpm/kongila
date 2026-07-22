@@ -4802,12 +4802,44 @@ export default function KongilaWeb() {
               }
             }}
             onSubmitAssessment={async (result: any) => {
-              const updatedTSAs = talentSkillAssessments.map((tsa: any) =>
-                tsa.id === result.talentSkillAssessmentId
-                  ? { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt }
-                  : tsa
-              );
+              let exists = false;
+              const updatedTSAs = talentSkillAssessments.map((tsa: any) => {
+                if (tsa.id === result.talentSkillAssessmentId) {
+                  exists = true;
+                  return { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt };
+                }
+                return tsa;
+              });
+              
+              if (!exists) {
+                updatedTSAs.push({
+                  id: result.talentSkillAssessmentId,
+                  talentId: profile?.id || result.talentId,
+                  talent_id: profile?.id || result.talentId,
+                  assessmentId: result.assessmentId,
+                  assessment_id: result.assessmentId,
+                  status: 'submitted',
+                  score: result.autoScore,
+                  submittedAt: result.submittedAt
+                });
+              }
+              
               setTalentSkillAssessments(updatedTSAs);
+
+              // Update skillAssessmentResults to instantly trigger locks relying on results
+              const updatedResults = [...skillAssessmentResults];
+              updatedResults.push({
+                id: `sar_${Date.now()}`,
+                talentId: profile?.id || result.talentId,
+                talent_id: profile?.id || result.talentId,
+                talentSkillAssessmentId: result.talentSkillAssessmentId,
+                assessmentId: result.assessmentId,
+                assessment_id: result.assessmentId,
+                score: result.autoScore,
+                answers: result.answers || {},
+                created_at: new Date().toISOString()
+              });
+              setSkillAssessmentResults(updatedResults);
 
               // Update the talent's vettingPipeline stage record with assessmentScore
               const profile = getCurrentTalentProfile();
@@ -4815,7 +4847,7 @@ export default function KongilaWeb() {
                 const pipeline = [...(profile.vettingPipeline || [])];
                 const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
                 if (stageIdx >= 0) {
-                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore };
+                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore, status: 'passed' };
                 }
                 const updatedProfile = { ...profile, vettingPipeline: pipeline };
                 await handleUpdateProfile(updatedProfile);
