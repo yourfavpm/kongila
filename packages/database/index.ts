@@ -239,20 +239,10 @@ export async function readDbAsync(): Promise<Schema> {
 
     if (rUsers.error) {
       console.error('[DB] Supabase users query failed:', rUsers.error.message);
-      if (_lastSuccessfulRead) {
-        console.warn('[DB] Returning cached data due to Supabase failure.');
-        return _lastSuccessfulRead;
-      }
-      return EMPTY_DB;
     }
 
     if (rTalents.error) {
       console.error('[DB] Supabase talent_profiles query failed:', rTalents.error.message);
-      if (_lastSuccessfulRead) {
-        console.warn('[DB] Returning cached data due to Supabase failure.');
-        return _lastSuccessfulRead;
-      }
-      return EMPTY_DB;
     }
 
     if (rAssessments.error) {
