@@ -7316,6 +7316,7 @@ export default function TalentDashboard({
 
   const pipeline = Array.isArray(talentProfile?.vettingPipeline) ? talentProfile.vettingPipeline : [];
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
+  const activeVettingStage = getActiveVettingStage(talentProfile);
 
 
   // ── Assessment engine session state
