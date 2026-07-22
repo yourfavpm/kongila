@@ -44,7 +44,7 @@ export type VettingStatus = 'Applied' | 'Review' | 'Vetted' | 'Matched' | 'Deplo
 
 export type CandidateGrade = 'A+' | 'A' | 'B' | 'Reject';
 
-export type VettingStageStatus = 'pending' | 'in_progress' | 'passed' | 'failed' | 'skipped' | 'rejected' | 'needs_clarification';
+export type VettingStageStatus = 'pending' | 'in_progress' | 'submitted' | 'passed' | 'failed' | 'skipped' | 'rejected' | 'needs_clarification';
 
 export type VettingDecision = 'Proceed' | 'Reject' | 'Needs Clarification' | 'Assign';
 
