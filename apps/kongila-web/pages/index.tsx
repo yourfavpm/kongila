@@ -4802,6 +4802,7 @@ export default function KongilaWeb() {
               }
             }}
             onSubmitAssessment={async (result: any) => {
+              const profile = getCurrentTalentProfile();
               let exists = false;
               const updatedTSAs = talentSkillAssessments.map((tsa: any) => {
                 if (tsa.id === result.talentSkillAssessmentId) {
@@ -4841,7 +4842,6 @@ export default function KongilaWeb() {
               });
               setSkillAssessmentResults(updatedResults);
 
-              // Update the talent's vettingPipeline stage record with assessmentScore
               const profile = getCurrentTalentProfile();
               if (profile) {
                 const pipeline = [...(profile.vettingPipeline || [])];
