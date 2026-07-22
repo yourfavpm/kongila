@@ -2385,6 +2385,71 @@ export default function AdminPanel() {
                                     "{stageRecord.notes}"
                                   </div>
                                 )}
+                                {idx === 1 && stageRecord?.assessmentId && (
+                                  (() => {
+                                    const sResult = assessmentResults.find((r: any) =>
+                                      r.assessmentId === stageRecord.assessmentId &&
+                                      (r.talentId === selectedTalent.id || r.talentSkillAssessmentId)
+                                    );
+                                    if (!sResult) return null;
+                                    return (
+                                      <div style={{ marginTop: '12px', background: 'var(--bg-tertiary)', borderRadius: '10px', padding: '12px', border: '1px solid var(--border-glass)' }}>
+                                        <details>
+                                          <summary style={{ fontSize: '12px', fontWeight: 700, color: '#10B981', cursor: 'pointer', outline: 'none', padding: '8px', background: 'var(--bg-primary)', borderRadius: '6px', border: '1px solid var(--border-glass)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                            🔍 View Full Assessment Results
+                                          </summary>
+                                          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                            {/* Subjective Answers */}
+                                            {sResult.subjectiveAnswers && Object.keys(sResult.subjectiveAnswers).length > 0 && (
+                                              <div>
+                                                <div style={{ fontSize: '11px', fontWeight: 800, color: '#8B5CF6', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Written Answers</div>
+                                                {Object.entries(sResult.subjectiveAnswers).map(([qId, answer]: [string, any]) => {
+                                                  const question = assessmentQuestions.find(q => q.id === qId);
+                                                  return (
+                                                    <div key={qId} style={{ marginBottom: '8px' }}>
+                                                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>Q: {question?.question_text || qId}</div>
+                                                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', background: 'var(--bg-primary)', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-glass)' }}>{answer || <em style={{color: 'var(--text-muted)'}}>No answer provided</em>}</div>
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            )}
+                                            
+                                            {/* MCQ Answers */}
+                                            {sResult.answers && Object.keys(sResult.answers).length > 0 && (
+                                              <div>
+                                                <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Multiple Choice Answers</div>
+                                                {Object.entries(sResult.answers).map(([qId, answer]: [string, any]) => {
+                                                  const question = assessmentQuestions.find(q => q.id === qId);
+                                                  if (!question || question.type !== 'multiple_choice') return null;
+                                                  const correctAnswer: string[] = Array.isArray(question.correct_answer) ? question.correct_answer : (question.correct_answer ? [question.correct_answer] : []);
+                                                  const givenAnswer: string[] = Array.isArray(answer) ? answer : (answer ? [answer] : []);
+                                                  const isCorrect = correctAnswer.length === givenAnswer.length && correctAnswer.every((c: string) => givenAnswer.includes(c));
+                                                  
+                                                  return (
+                                                    <div key={qId} style={{ padding: '8px', background: 'var(--bg-primary)', borderRadius: '6px', border: `1px solid ${isCorrect ? '#10B98140' : '#EF444440'}`, marginBottom: '6px' }}>
+                                                      <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>Q: {question.question_text || qId}</div>
+                                                      <div style={{ fontSize: '11px', display: 'flex', gap: '8px' }}>
+                                                        <span style={{ color: 'var(--text-muted)' }}>Talent:</span>
+                                                        <span style={{ color: isCorrect ? '#10B981' : '#EF4444', fontWeight: 700 }}>{givenAnswer.join(', ') || <em style={{color: 'var(--text-muted)'}}>No answer</em>}</span>
+                                                        {!isCorrect && (
+                                                          <>
+                                                            <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>Correct:</span>
+                                                            <span style={{ color: '#10B981', fontWeight: 700 }}>{correctAnswer.join(', ')}</span>
+                                                          </>
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </details>
+                                      </div>
+                                    );
+                                  })()
+                                )}
                                 <div style={{ marginTop: '12px' }}>
                                   <button onClick={() => handleReAssess(idx)} disabled={saving} style={{ background: 'transparent', border: '1px solid #DDE2EC', color: '#6B7A99', fontSize: '11px', fontWeight: 700, padding: '4px 8px', borderRadius: '4px', cursor: 'pointer' }}>
                                     🔄 Ops Lead Override: Re-Assess
