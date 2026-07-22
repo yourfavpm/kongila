@@ -104,8 +104,8 @@ const defaultSupabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJ
 export function getSupabaseClient() {
   if (!supabaseClient) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultSupabaseUrl;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
+    supabaseClient = createClient(supabaseUrl, supabaseKey);
   }
   return supabaseClient;
 }
@@ -253,6 +253,16 @@ export async function readDbAsync(): Promise<Schema> {
         return _lastSuccessfulRead;
       }
       return EMPTY_DB;
+    }
+
+    if (rAssessments.error) {
+      console.error('[DB] Supabase assessments query failed:', rAssessments.error.message);
+    }
+    if (rAssessmentCategories.error) {
+      console.error('[DB] Supabase assessment_categories query failed:', rAssessmentCategories.error.message);
+    }
+    if (rAssessmentQuestions.error) {
+      console.error('[DB] Supabase assessment_questions query failed:', rAssessmentQuestions.error.message);
     }
 
     // ── Map users ──────────────────────────────────────────────────────────────
