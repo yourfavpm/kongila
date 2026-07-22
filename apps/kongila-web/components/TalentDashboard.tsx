@@ -7365,6 +7365,12 @@ export default function TalentDashboard({
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const activeVettingStage = getActiveVettingStage(talentProfile);
 
+  const [globalToast, setGlobalToast] = useState<{msg: string, type: string} | null>(null);
+  const showGlobalToast = (msg: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setGlobalToast({ msg, type });
+    setTimeout(() => setGlobalToast(null), 4000);
+  };
+
 
   // ── Assessment engine session state
   const [activeAssessmentSession, setActiveAssessmentSession] = useState<{
@@ -7445,7 +7451,7 @@ export default function TalentDashboard({
       });
     }
     setRescheduleModalOpen(false);
-    showToast('Reschedule request sent to admin.');
+    showGlobalToast('Reschedule request sent to admin.');
   };
 
   const effectiveNotifications = dashboardNotifications ?? notifications;
@@ -8062,6 +8068,18 @@ export default function TalentDashboard({
               <button onClick={submitRescheduleRequest} disabled={!rescheduleDate || !rescheduleTime || !rescheduleReason} style={{ flex: 2, padding: '12px', background: (!rescheduleDate || !rescheduleTime || !rescheduleReason) ? '#94A3B8' : '#0047CC', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: (!rescheduleDate || !rescheduleTime || !rescheduleReason) ? 'not-allowed' : 'pointer' }}>Submit Request</button>
             </div>
           </div>
+        </div>
+      {globalToast && (
+        <div style={{
+          position: 'fixed', bottom: '24px', right: '24px', zIndex: 10000,
+          background: globalToast.type === 'error' ? '#FEE2E2' : '#DCFCE7',
+          color: globalToast.type === 'error' ? '#991B1B' : '#166534',
+          padding: '16px 24px', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
+          display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px', fontWeight: 600,
+          animation: 'slideUp 0.3s ease-out'
+        }}>
+          {globalToast.type === 'success' && <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+          {globalToast.msg}
         </div>
       )}
     </div>
