@@ -726,6 +726,7 @@ const ProfileSection = ({
                 )}
               </p>
             )}
+          </div>
         )}
 
         {(activeVettingStage?.interviewDate || activeVettingStage?.interviewId) && (
