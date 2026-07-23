@@ -181,61 +181,115 @@ export async function readDbAsync(): Promise<Schema> {
   const supabase = getSupabaseClient();
 
   try {
-    const batch1 = await Promise.all([
-      supabase.from('users').select('*'),
-      supabase.from('organizations').select('*'),
-      supabase.from('client_profiles').select('*'),
-      supabase.from('talent_profiles').select('*'),
-      supabase.from('skills').select('*'),
-      supabase.from('talent_skills').select('*'),
-      supabase.from('documents').select('*'),
-      supabase.from('service_requests').select('*'),
-    ]);
+    let rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs, rRequests;
+    let rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts;
+    let rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations;
+    let rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments;
 
-    const batch2 = await Promise.all([
-      supabase.from('matches').select('*'),
-      supabase.from('projects').select('*'),
-      supabase.from('tasks').select('*'),
-      supabase.from('contracts').select('*'),
-      supabase.from('assignments').select('*'),
-      supabase.from('invoices').select('*'),
-      supabase.from('payments').select('*'),
-      supabase.from('talent_payouts').select('*'),
-    ]);
+    // 1. Attempt to fetch everything using the unified RPC stored procedure
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_full_db_state');
 
-    const batch3 = await Promise.all([
-      supabase.from('messages').select('*'),
-      supabase.from('notifications').select('*'),
-      supabase.from('audit_logs').select('*'),
-      supabase.from('agent_logs').select('*'),
-      supabase.from('support_tickets').select('*'),
-      supabase.from('support_messages').select('*'),
-      supabase.from('interviews').select('*'),
-      supabase.from('request_activity_logs').select('*'),
-      supabase.from('conversations').select('*'),
-    ]);
+    if (rpcData && !rpcError) {
+      // Successfully fetched via RPC! Map the JSON directly to the expected result objects.
+      rUsers = { data: rpcData.users, error: null };
+      rOrgs = { data: rpcData.organizations, error: null };
+      rClientProfiles = { data: rpcData.client_profiles, error: null };
+      rTalents = { data: rpcData.talent_profiles, error: null };
+      rSkills = { data: rpcData.skills, error: null };
+      rTalentSkills = { data: rpcData.talent_skills, error: null };
+      rDocs = { data: rpcData.documents, error: null };
+      rRequests = { data: rpcData.service_requests, error: null };
 
-    const batch4 = await Promise.all([
-      supabase.from('assessments').select('*'),
-      supabase.from('assessment_categories').select('*'),
-      supabase.from('assessment_questions').select('*'),
-      supabase.from('assessment_assignments').select('*'),
-      supabase.from('skill_assessment_results').select('*'),
-      supabase.from('talent_skill_assessments').select('*')
-    ]);
+      rMatches = { data: rpcData.matches, error: null };
+      rProjects = { data: rpcData.projects, error: null };
+      rTasks = { data: rpcData.tasks, error: null };
+      rContracts = { data: rpcData.contracts, error: null };
+      rAssignments = { data: rpcData.assignments, error: null };
+      rInvoices = { data: rpcData.invoices, error: null };
+      rPayments = { data: rpcData.payments, error: null };
+      rPayouts = { data: rpcData.talent_payouts, error: null };
 
-    const [
-      rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs, rRequests
-    ] = batch1;
-    const [
-      rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts
-    ] = batch2;
-    const [
-      rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations
-    ] = batch3;
-    const [
-      rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments
-    ] = batch4;
+      rMessages = { data: rpcData.messages, error: null };
+      rNotifs = { data: rpcData.notifications, error: null };
+      rAudit = { data: rpcData.audit_logs, error: null };
+      rAgent = { data: rpcData.agent_logs, error: null };
+      rTickets = { data: rpcData.support_tickets, error: null };
+      rSupportMessages = { data: rpcData.support_messages, error: null };
+      rInterviews = { data: rpcData.interviews, error: null };
+      rRequestActivityLogs = { data: rpcData.request_activity_logs, error: null };
+      rConversations = { data: rpcData.conversations, error: null };
+
+      rAssessments = { data: rpcData.assessments, error: null };
+      rAssessmentCategories = { data: rpcData.assessment_categories, error: null };
+      rAssessmentQuestions = { data: rpcData.assessment_questions, error: null };
+      rAssessmentAssignments = { data: rpcData.assessment_assignments, error: null };
+      rSkillAssessmentResults = { data: rpcData.skill_assessment_results, error: null };
+      rTalentSkillAssessments = { data: rpcData.talent_skill_assessments, error: null };
+    } else {
+      // 2. Fallback: If RPC doesn't exist or fails, fall back to individual table queries
+      if (rpcError) {
+        console.warn('[DB] RPC get_full_db_state failed/missing, falling back to batch Promise.all:', rpcError.message);
+      }
+
+      const batch1 = await Promise.all([
+        supabase.from('users').select('*'),
+        supabase.from('organizations').select('*'),
+        supabase.from('client_profiles').select('*'),
+        supabase.from('talent_profiles').select('*'),
+        supabase.from('skills').select('*'),
+        supabase.from('talent_skills').select('*'),
+        supabase.from('documents').select('*'),
+        supabase.from('service_requests').select('*'),
+      ]);
+
+      const batch2 = await Promise.all([
+        supabase.from('matches').select('*'),
+        supabase.from('projects').select('*'),
+        supabase.from('tasks').select('*'),
+        supabase.from('contracts').select('*'),
+        supabase.from('assignments').select('*'),
+        supabase.from('invoices').select('*'),
+        supabase.from('payments').select('*'),
+        supabase.from('talent_payouts').select('*'),
+      ]);
+
+      const batch3 = await Promise.all([
+        supabase.from('messages').select('*'),
+        supabase.from('notifications').select('*'),
+        supabase.from('audit_logs').select('*'),
+        supabase.from('agent_logs').select('*'),
+        supabase.from('support_tickets').select('*'),
+        supabase.from('support_messages').select('*'),
+        supabase.from('interviews').select('*'),
+        supabase.from('request_activity_logs').select('*'),
+        supabase.from('conversations').select('*'),
+      ]);
+
+      const batch4 = await Promise.all([
+        supabase.from('assessments').select('*'),
+        supabase.from('assessment_categories').select('*'),
+        supabase.from('assessment_questions').select('*'),
+        supabase.from('assessment_assignments').select('*'),
+        supabase.from('skill_assessment_results').select('*'),
+        supabase.from('talent_skill_assessments').select('*')
+      ]);
+
+      [
+        rUsers, rOrgs, rClientProfiles, rTalents, rSkills, rTalentSkills, rDocs, rRequests
+      ] = batch1;
+      
+      [
+        rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts
+      ] = batch2;
+      
+      [
+        rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations
+      ] = batch3;
+      
+      [
+        rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments
+      ] = batch4;
+    }
 
     if (rUsers.error) {
       console.error('[DB] Supabase users query failed:', rUsers.error.message);
