@@ -955,8 +955,8 @@ const ProfileSection = ({
                     {match.meetingLink && match.status !== 'Reschedule Requested' && (
                       <a href={match.meetingLink} target="_blank" rel="noreferrer" style={{ padding: '6px 12px', background: '#0047CC', color: '#fff', borderRadius: '6px', fontSize: '11px', fontWeight: 700, textDecoration: 'none' }}>Join Call</a>
                     )}
-                    {match.status !== 'Reschedule Requested' && (
-                      <button onClick={() => handleRequestReschedule(match)} style={{ padding: '6px 12px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Request Reschedule</button>
+                    {match.status !== 'Reschedule Requested' && onRequestReschedule && (
+                      <button onClick={() => onRequestReschedule(match)} style={{ padding: '6px 12px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Request Reschedule</button>
                     )}
                   </div>
                 </div>
