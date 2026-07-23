@@ -666,6 +666,7 @@ const ProfileSection = ({
         </div>
       </div>
 
+      {!hasCompletedVetting && (
       <Card style={{
         padding: '22px',
         background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.08), rgba(16, 185, 129, 0.08))',
@@ -791,6 +792,7 @@ const ProfileSection = ({
           </div>
         )}
       </Card>
+      )}
 
       {profileCompletion < 100 && (
         <Card style={{ padding: '20px', borderLeft: '4px solid #0047CC' }}>
@@ -7443,11 +7445,7 @@ export default function TalentDashboard({
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const activeVettingStage = getActiveVettingStage(talentProfile);
 
-  useEffect(() => {
-    if (activeSection === 'vetting_progress' && passedCount === 7) {
-      setActiveSection('scores_grades');
-    }
-  }, [activeSection, passedCount]);
+  // Removed redirect since vetting_progress should always be accessible.
 
   const [globalToast, setGlobalToast] = useState<{msg: string, type: string} | null>(null);
   const showGlobalToast = (msg: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -7742,7 +7740,7 @@ export default function TalentDashboard({
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
               {NAV_ITEMS.map(item => {
                 if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
-                if (item.id === 'vetting_progress' && passedCount === 7) return null;
+                // if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
                 const isLocked = item.id === 'scores_grades' && passedCount < 7;
                 const isActive = activeSection === item.id;
@@ -7833,7 +7831,7 @@ export default function TalentDashboard({
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
           {NAV_ITEMS.map(item => {
             if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
-            if (item.id === 'vetting_progress' && passedCount === 7) return null;
+            // if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
             const isLocked = item.id === 'scores_grades' && passedCount < 7;
             const isActive = activeSection === item.id;
