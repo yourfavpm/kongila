@@ -632,6 +632,18 @@ export default function AdminPanel() {
       updatedVettingScores = { ...updatedVettingScores, [stageConfig.scoreKey]: score };
     }
 
+    // Update interview status to Completed if the stage had an interview
+    let updatedInterviews = payload.interviews || interviews;
+    if ((decision === 'Proceed' || decision === 'Reject') && currentPipeline[stageIdx]?.interviewId) {
+      updatedInterviews = updatedInterviews.map((iv: any) => 
+        iv.id === currentPipeline[stageIdx].interviewId
+          ? { ...iv, status: 'Completed', outcome: decision }
+          : iv
+      );
+      payload.interviews = updatedInterviews;
+      setInterviews(updatedInterviews);
+    }
+
     // Determine new vettingStage name
     const nextInProgressIdx = updatedPipeline.findIndex(s => s.status === 'in_progress');
     const newVettingStage = nextInProgressIdx >= 0
