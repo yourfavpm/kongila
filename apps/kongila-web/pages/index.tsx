@@ -541,7 +541,7 @@ export default function KongilaWeb() {
       }
 
       // Use the name stored in Supabase auth metadata for THIS user specifically
-      const authName = authUser.user_metadata?.full_name || dbUser?.email || 'User';
+      const authName = authUser.user_metadata?.name || authUser.user_metadata?.full_name || dbUser?.email || 'User';
 
       const restoredUser = {
         id: dbUser?.id || authUser.id,
