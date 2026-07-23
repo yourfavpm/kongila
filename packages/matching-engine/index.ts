@@ -218,16 +218,16 @@ export interface VettingScoresInput {
   experience: number;
 }
 
-export function calculateCompositeVettingGrade(scores: VettingScoresInput): {
+export function calculateCompositeVettingGrade(scores: Partial<VettingScoresInput>): {
   score: number;
   grade: 'A+' | 'A' | 'B' | 'Reject';
 } {
   const compositeScore = Math.round(
-    (scores.technical * 0.30) +
-    (scores.behavioral * 0.30) +
-    (scores.workSimulation * 0.20) +
-    (scores.personality * 0.10) +
-    (scores.remoteReadiness * 0.10)
+    ((scores?.technical || 0) * 0.30) +
+    ((scores?.behavioral || 0) * 0.30) +
+    ((scores?.workSimulation || 0) * 0.20) +
+    ((scores?.personality || 0) * 0.10) +
+    ((scores?.remoteReadiness || 0) * 0.10)
   );
 
   let grade: 'A+' | 'A' | 'B' | 'Reject' = 'Reject';
