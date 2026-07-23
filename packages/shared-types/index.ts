@@ -74,6 +74,7 @@ export interface VettingStageRecord {
   personalityScore?: number; // Score received from personality test provider
   assessorId?: string | null;
   reapplicationDate?: string | null;
+  submissionData?: any;
 }
 
 export interface TalentScores {

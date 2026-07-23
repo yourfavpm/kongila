@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabaseClient';
 import { formatCurrency } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
 import type { Interview, Contract } from '@kongila/shared-types';
@@ -772,7 +773,7 @@ const ProfileSection = ({
         {!activeVettingStage?.assessmentId && !activeVettingStage?.interviewDate && !activeVettingStage?.interviewId && !hasCompletedVetting && (
           <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-start' }}>
             <button
-              onClick={() => setActiveSection('Vetting')}
+              onClick={() => setActiveSection('vetting_progress')}
               style={{
                 background: '#0047CC',
                 color: '#fff',
@@ -6653,7 +6654,7 @@ const QuestionCard = ({
 };
 
 // ─── Section: Vetting Progress (Dedicated Full View) ─────────────────────────
-const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
+const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], workSimulationTasks = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; workSimulationTasks?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
   const STAGE_META = [
     { name: 'Application Screening', color: '#EF4444', icon: '📋', responsible: 'Talent Manager', desc: 'Initial review of your application and submitted documents.' },
     { name: 'Skill Assessment',       color: '#3B82F6', icon: '🧪', responsible: 'Skill Assessor', desc: 'Role-specific technical evaluation assigned by the vetting team.' },
@@ -6729,7 +6730,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   };
   const submitWorkSimulation = async () => {
     if (submittingWS) return;
-    const task = workSimulationTasks.find((t: any) => t.id === activeVettingStage?.taskId);
+    const task = workSimulationTasks.find((t: any) => t.id === getActiveVettingStage(profile)?.taskId);
     if (!task) return;
 
     setSubmittingWS(true);
@@ -6915,7 +6916,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                     <div style={{marginTop:'12px',padding:'14px',background:'#FFF1F2',borderRadius:'10px',border:'1px solid #FECDD3'}}>
                       <div style={{fontSize:'12px',fontWeight:700,color:'#BE123C',marginBottom:'8px'}}>🔬 Work Simulation Assigned</div>
                       {(() => {
-                        const task = workSimulationTasks.find((t: any) => t.id === s.taskId);
+                        const task = workSimulationTasks.find((t: any) => t.id === sr.taskId);
                         if (!task) return <div style={{fontSize:'12px',color:'#BE123C'}}>Task details not found. Contact support.</div>;
                         return (
                           <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
@@ -7638,7 +7639,7 @@ export default function TalentDashboard({
       case 'profile':          return <ProfileDetailSection user={currentUser} profile={talentProfile} contracts={talentContracts} onUpdateProfile={onUpdateProfile} />;
       case 'compliance':       return <ComplianceSection profile={talentProfile} allDocuments={allDocuments} onUpdateProfile={onUpdateProfile} onUpdateDocument={onUpdateDocument} />;
       case 'vetting_progress':
-        return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
+        return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} onUpdateMatch={onUpdateMatch} />;
       case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} />;
