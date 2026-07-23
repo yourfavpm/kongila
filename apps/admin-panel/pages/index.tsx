@@ -858,7 +858,6 @@ export default function AdminPanel() {
     // Reset the target stage to in_progress, and all subsequent stages to pending.
     const updatedPipeline = (selectedTalent.vettingPipeline || []).map((s, idx) => {
       if (idx === stageIdx) return { ...s, status: 'in_progress', completedAt: undefined, decision: undefined };
-      if (idx > stageIdx) return { ...s, status: 'pending', completedAt: undefined, decision: undefined };
       return s;
     });
 

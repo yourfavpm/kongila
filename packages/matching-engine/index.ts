@@ -109,9 +109,12 @@ export function advanceTalentStage(
     };
   });
 
-  // If proceeding, mark next stage as in_progress
+  // If proceeding, mark next stage as in_progress ONLY if it's currently pending.
+  // This preserves later stages if we are just re-assessing an earlier stage.
   if (decision === 'Proceed' && stageIdx < VETTING_STAGES.length - 1) {
-    updated[stageIdx + 1] = { ...updated[stageIdx + 1], status: 'in_progress' };
+    if (updated[stageIdx + 1].status === 'pending') {
+      updated[stageIdx + 1] = { ...updated[stageIdx + 1], status: 'in_progress' };
+    }
   }
 
   return updated;
