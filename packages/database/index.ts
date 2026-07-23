@@ -1048,7 +1048,7 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         title: iv.title,
         date: iv.date,
         time: iv.time,
-        status: iv.status === 'Reschedule Requested' ? 'scheduled' : (iv.status === 'Scheduled' ? 'scheduled' : iv.status),
+        status: (iv.status === 'Reschedule Requested' || iv.status === 'Rescheduled' || iv.status === 'Scheduled') ? 'scheduled' : iv.status,
         meeting_link: iv.meetingLink || null,
         notes: iv.notes || null,
         talent_notes: iv.talentNotes || null,

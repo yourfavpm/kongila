@@ -727,7 +727,7 @@ export default function AdminPanel() {
         i.id === iv.id
           ? {
               ...i,
-              status: 'Rescheduled',
+              status: 'Scheduled',
               date: i.proposedNewDate || i.date,
               time: i.proposedNewTime || i.time,
               rescheduleRequested: false,
@@ -762,12 +762,21 @@ export default function AdminPanel() {
         }
       }
 
+      let updatedMatches = matches;
+      if (iv.matchId) {
+        updatedMatches = matches.map((m: any) =>
+          m.id === iv.matchId ? { ...m, status: 'Interview Scheduled' as const } : m
+        );
+      }
+
       setInterviews(updatedInterviews);
       setTalents(updatedTalents);
+      setMatches(updatedMatches);
       
       await saveToDb({
         interviews: updatedInterviews,
         talents: updatedTalents,
+        matches: updatedMatches,
       });
     } finally {
       setSaving(false);
