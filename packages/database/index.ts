@@ -190,41 +190,49 @@ export async function readDbAsync(): Promise<Schema> {
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_full_db_state');
 
     if (rpcData && !rpcError) {
+      // Safely ensure arrays. Postgres json_build_object might return the string "[]" if COALESCE returned '[]' instead of '[]'::json.
+      const ensureArray = (val: any) => {
+        if (typeof val === 'string') {
+          try { return JSON.parse(val) || []; } catch { return []; }
+        }
+        return Array.isArray(val) ? val : (val || []);
+      };
+
       // Successfully fetched via RPC! Map the JSON directly to the expected result objects.
-      rUsers = { data: rpcData.users, error: null };
-      rOrgs = { data: rpcData.organizations, error: null };
-      rClientProfiles = { data: rpcData.client_profiles, error: null };
-      rTalents = { data: rpcData.talent_profiles, error: null };
-      rSkills = { data: rpcData.skills, error: null };
-      rTalentSkills = { data: rpcData.talent_skills, error: null };
-      rDocs = { data: rpcData.documents, error: null };
-      rRequests = { data: rpcData.service_requests, error: null };
+      rUsers = { data: ensureArray(rpcData.users), error: null };
+      rOrgs = { data: ensureArray(rpcData.organizations), error: null };
+      rClientProfiles = { data: ensureArray(rpcData.client_profiles), error: null };
+      rTalents = { data: ensureArray(rpcData.talent_profiles), error: null };
+      rSkills = { data: ensureArray(rpcData.skills), error: null };
+      rTalentSkills = { data: ensureArray(rpcData.talent_skills), error: null };
+      rDocs = { data: ensureArray(rpcData.documents), error: null };
+      rRequests = { data: ensureArray(rpcData.service_requests), error: null };
 
-      rMatches = { data: rpcData.matches, error: null };
-      rProjects = { data: rpcData.projects, error: null };
-      rTasks = { data: rpcData.tasks, error: null };
-      rContracts = { data: rpcData.contracts, error: null };
-      rAssignments = { data: rpcData.assignments, error: null };
-      rInvoices = { data: rpcData.invoices, error: null };
-      rPayments = { data: rpcData.payments, error: null };
-      rPayouts = { data: rpcData.talent_payouts, error: null };
+      rMatches = { data: ensureArray(rpcData.matches), error: null };
+      rProjects = { data: ensureArray(rpcData.projects), error: null };
+      rTasks = { data: ensureArray(rpcData.tasks), error: null };
+      rContracts = { data: ensureArray(rpcData.contracts), error: null };
+      rAssignments = { data: ensureArray(rpcData.assignments), error: null };
+      rInvoices = { data: ensureArray(rpcData.invoices), error: null };
+      rPayments = { data: ensureArray(rpcData.payments), error: null };
+      rPayouts = { data: ensureArray(rpcData.talent_payouts), error: null };
 
-      rMessages = { data: rpcData.messages, error: null };
-      rNotifs = { data: rpcData.notifications, error: null };
-      rAudit = { data: rpcData.audit_logs, error: null };
-      rAgent = { data: rpcData.agent_logs, error: null };
-      rTickets = { data: rpcData.support_tickets, error: null };
-      rSupportMessages = { data: rpcData.support_messages, error: null };
-      rInterviews = { data: rpcData.interviews, error: null };
-      rRequestActivityLogs = { data: rpcData.request_activity_logs, error: null };
-      rConversations = { data: rpcData.conversations, error: null };
+      rMessages = { data: ensureArray(rpcData.messages), error: null };
+      rNotifs = { data: ensureArray(rpcData.notifications), error: null };
+      rAudit = { data: ensureArray(rpcData.audit_logs), error: null };
+      rAgent = { data: ensureArray(rpcData.agent_logs), error: null };
+      rTickets = { data: ensureArray(rpcData.support_tickets), error: null };
+      rSupportMessages = { data: ensureArray(rpcData.support_messages), error: null };
+      rInterviews = { data: ensureArray(rpcData.interviews), error: null };
+      rRequestActivityLogs = { data: ensureArray(rpcData.request_activity_logs), error: null };
+      rConversations = { data: ensureArray(rpcData.conversations), error: null };
 
-      rAssessments = { data: rpcData.assessments, error: null };
-      rAssessmentCategories = { data: rpcData.assessment_categories, error: null };
-      rAssessmentQuestions = { data: rpcData.assessment_questions, error: null };
-      rAssessmentAssignments = { data: rpcData.assessment_assignments, error: null };
-      rSkillAssessmentResults = { data: rpcData.skill_assessment_results, error: null };
-      rTalentSkillAssessments = { data: rpcData.talent_skill_assessments, error: null };
+      rAssessments = { data: ensureArray(rpcData.assessments), error: null };
+      rAssessmentCategories = { data: ensureArray(rpcData.assessment_categories), error: null };
+      rAssessmentQuestions = { data: ensureArray(rpcData.assessment_questions), error: null };
+      rAssessmentAssignments = { data: ensureArray(rpcData.assessment_assignments), error: null };
+      rSkillAssessmentResults = { data: ensureArray(rpcData.skill_assessment_results), error: null };
+      rTalentSkillAssessments = { data: ensureArray(rpcData.talent_skill_assessments), error: null };
     } else {
       // 2. Fallback: If RPC doesn't exist or fails, fall back to individual table queries
       if (rpcError) {
