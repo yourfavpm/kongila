@@ -1294,7 +1294,7 @@ export default function ClientDashboard({
                 margin: 0,
               }}
             >
-              Welcome back, {currentUser?.name?.split(" ")[0] || "Client"} 👋
+              Welcome back, {organizations.find(o => o.id === (currentUser?.organizationId || currentUser?.organization_id))?.name || currentUser?.companyName || currentUser?.name?.split(" ")[0] || "Client"} 👋
             </h1>
             <p
               style={{

@@ -1458,8 +1458,8 @@ export default function AdminPanel() {
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ID: {org.id.split('-')[0]}...</div>
                         </td>
                         <td style={{ padding: '16px' }}>
-                          <div>{org.contactEmail || 'N/A'}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{org.contactPhone || ''}</div>
+                          <div>{org.contact_email || org.contactEmail || 'N/A'}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{org.contact_phone || org.contactPhone || ''}</div>
                         </td>
                         <td style={{ padding: '16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

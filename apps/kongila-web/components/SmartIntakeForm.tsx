@@ -151,7 +151,11 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           // Create org
           const orgId = crypto.randomUUID();
           const { error: orgErr } = await supabase.from('organizations').upsert({
-            id: orgId, name: authData.companyName, created_by: finalUserId
+            id: orgId, 
+            name: authData.companyName, 
+            created_by: finalUserId,
+            contact_email: authData.businessEmail,
+            contact_phone: authData.phone
           });
           if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
 

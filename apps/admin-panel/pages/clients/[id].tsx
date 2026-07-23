@@ -179,11 +179,11 @@ export default function ClientProfileView() {
                   </div>
                   <div>
                     <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Primary Contact Email</div>
-                    <div style={{ fontWeight: 600 }}>{client.contactEmail || 'N/A'}</div>
+                    <div style={{ fontWeight: 600 }}>{client.contact_email || client.contactEmail || 'N/A'}</div>
                   </div>
                   <div>
                     <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Primary Contact Phone</div>
-                    <div style={{ fontWeight: 600 }}>{client.contactPhone || 'N/A'}</div>
+                    <div style={{ fontWeight: 600 }}>{client.contact_phone || client.contactPhone || 'N/A'}</div>
                   </div>
                   <div>
                     <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Subscription Tier</div>
