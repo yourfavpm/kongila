@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { formatCurrency } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
 import type { Interview, Contract } from '@kongila/shared-types';
+import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import TalentMessagesPanel from './TalentMessagesPanel';
 import TalentNotificationsPanel from './TalentNotificationsPanel';
@@ -6762,8 +6763,8 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const overallProgress = Math.round((passedCount / 7) * 100);
   const scores = profile?.vettingScores || {};
-  const compositeScore = Math.round(((scores.technical||0)*0.25)+((scores.workSimulation||0)*0.20)+((scores.behavioral||0)*0.15)+((scores.communication||0)*0.15)+((scores.personality||0)*0.10)+((scores.remoteReadiness||0)*0.10)+((scores.experience||0)*0.05));
-  const grade = compositeScore>=85?'A+':compositeScore>=75?'A':compositeScore>=65?'B':passedCount===0?'—':'C';
+  const { score: compositeScore, grade: rawGrade } = calculateCompositeVettingGrade(scores);
+  const grade = passedCount===0?'—':(rawGrade==='Reject'?'C':rawGrade);
   const gradeColor = grade==='A+'?'#10B981':grade==='A'?'#3B82F6':grade==='B'?'#F59E0B':grade==='—'?'#94A3B8':'#EF4444';
 
   const getStageUI = (sIdx: number, stat: string, color: string, slaBreached: boolean) => {
@@ -7035,8 +7036,8 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
   if (visibility === 'hidden') return null;
 
   const scores = profile?.vettingScores || {};
-  const compositeScore = Math.round(((scores.technical||0)*0.25)+((scores.workSimulation||0)*0.20)+((scores.behavioral||0)*0.15)+((scores.communication||0)*0.15)+((scores.personality||0)*0.10)+((scores.remoteReadiness||0)*0.10)+((scores.experience||0)*0.05));
-  const grade = compositeScore>=85?'A+':compositeScore>=75?'A':compositeScore>=65?'B':compositeScore>=50?'C':'—';
+  const { score: compositeScore, grade: rawGrade } = calculateCompositeVettingGrade(scores);
+  const grade = rawGrade==='Reject'?'C':rawGrade;
   const gradeColor = grade==='A+'?'#10B981':grade==='A'?'#3B82F6':grade==='B'?'#F59E0B':grade==='C'?'#EF4444':'#94A3B8';
 
   const isGradeOnly = visibility === 'grade-only';
@@ -7059,13 +7060,11 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
   ];
 
   const scoreCategories = [
-    {label:'Technical Skill',key:'technical',weight:'25%',icon:'💻',color:'#3B82F6'},
+    {label:'Technical Skill',key:'technical',weight:'30%',icon:'💻',color:'#3B82F6'},
     {label:'Work Simulation',key:'workSimulation',weight:'20%',icon:'🔬',color:'#F97316'},
-    {label:'Behavioural',key:'behavioral',weight:'15%',icon:'🎙️',color:'#8B5CF6'},
-    {label:'Communication',key:'communication',weight:'15%',icon:'💬',color:'#06B6D4'},
+    {label:'Behavioural',key:'behavioral',weight:'30%',icon:'🎙️',color:'#8B5CF6'},
     {label:'Personality',key:'personality',weight:'10%',icon:'🧠',color:'#10B981'},
     {label:'Remote Readiness',key:'remoteReadiness',weight:'10%',icon:'🌐',color:'#F59E0B'},
-    {label:'Experience',key:'experience',weight:'5%',icon:'📁',color:'#6B7A99'},
   ];
 
   const assignedTags = profile?.tags || ['Top 1%', 'React Expert', 'Self-Starter'];
@@ -7095,12 +7094,12 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
                   <div style={{marginTop:'14px',height:'8px',background:'rgba(255,255,255,0.15)',borderRadius:'4px',overflow:'hidden'}}>
                     <div style={{height:'100%',width:`${compositeScore}%`,background:'linear-gradient(90deg,#3B82F6,#10B981)',borderRadius:'4px',transition:'width 0.8s ease'}}/>
                   </div>
-                  <div style={{fontSize:'12px',color:'rgba(255,255,255,0.5)',marginTop:'8px'}}>Weighted across 7 vetting dimensions</div>
+                  <div style={{fontSize:'12px',color:'rgba(255,255,255,0.5)',marginTop:'8px'}}>Weighted across 5 vetting dimensions</div>
                 </>
               )}
               {isGradeOnly && (
                 <div style={{fontSize:'14px',color:'rgba(255,255,255,0.8)',lineHeight:1.6}}>
-                  Your classification is based on the comprehensive 7-stage evaluation pipeline. Numerical score breakdowns are hidden per platform policy.
+                  Your classification is based on the comprehensive 5-stage evaluation pipeline. Numerical score breakdowns are hidden per platform policy.
                 </div>
               )}
             </div>
@@ -7444,6 +7443,12 @@ export default function TalentDashboard({
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const activeVettingStage = getActiveVettingStage(talentProfile);
 
+  useEffect(() => {
+    if (activeSection === 'vetting_progress' && passedCount === 7) {
+      setActiveSection('scores_grades');
+    }
+  }, [activeSection, passedCount]);
+
   const [globalToast, setGlobalToast] = useState<{msg: string, type: string} | null>(null);
   const showGlobalToast = (msg: string, type: 'success' | 'error' | 'info' = 'success') => {
     setGlobalToast({ msg, type });
@@ -7737,6 +7742,7 @@ export default function TalentDashboard({
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
               {NAV_ITEMS.map(item => {
                 if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
+                if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
                 const isLocked = item.id === 'scores_grades' && passedCount < 7;
                 const isActive = activeSection === item.id;
@@ -7827,6 +7833,7 @@ export default function TalentDashboard({
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
           {NAV_ITEMS.map(item => {
             if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
+            if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
             const isLocked = item.id === 'scores_grades' && passedCount < 7;
             const isActive = activeSection === item.id;
