@@ -690,53 +690,46 @@ export default function ClientDashboard({
     };
 
     try {
-      const res = await fetch("/api/db");
-      if (res.ok) {
-        const dbData = await res.json();
-        dbData.matches = updatedMatches;
-        dbData.interviews = [...(dbData.interviews || []), newInterview];
-        dbData.notifications = [
-          {
-            id: `notif_${Date.now()}`,
-            userId: requestInterviewTarget.talentId,
-            title: "Interview Scheduled",
-            message: `Interview "${newInterview.title}" has been booked for ${newInterview.date} at ${newInterview.time}.`,
-            read: false,
-            createdAt: new Date().toISOString(),
-          },
-          ...(dbData.notifications || []),
-        ];
-        dbData.auditLogs = [
-          {
-            id: `audit_${Date.now()}`,
-            actor:
-              currentUser?.organizationName || currentUser?.name || "Client",
-            action: "Schedule Interview",
-            details: `Booked interview with candidate ${requestInterviewTarget.talentName} for ${requestInterviewForm.date} at ${requestInterviewForm.time}.`,
-            timestamp: new Date().toISOString(),
-          },
-          ...(dbData.auditLogs || []),
-        ];
-        dbData.agentLogs = [
-          {
-            id: `alog_${Date.now()}`,
-            agentName: "Workflow Agent",
-            message: `Interview slot confirmed with ${requestInterviewTarget.talentName}. Calendar synced.`,
-            timestamp: new Date().toLocaleTimeString(),
-            type: "success",
-          },
-          ...(dbData.agentLogs || []),
-        ];
+      const { error: ivErr } = await supabase.from('interviews').insert({
+        request_id: newInterview.requestId,
+        match_id: newInterview.matchId,
+        client_id: currentUser?.id,
+        talent_id: newInterview.talentId,
+        talent_name: newInterview.talentName,
+        talent_avatar: newInterview.talentAvatar,
+        client_name: newInterview.clientName,
+        title: newInterview.title,
+        date: newInterview.date,
+        time: newInterview.time,
+        status: newInterview.status,
+        meeting_link: newInterview.meetingLink,
+        google_calendar_event_id: newInterview.googleCalendarEventId,
+        google_calendar_link: newInterview.googleCalendarLink,
+        notes: newInterview.notes
+      });
+      if (ivErr) throw ivErr;
 
-        if (saveToDb) {
-          await saveToDb(dbData);
-        }
-        if (setMatches) {
-          setMatches(updatedMatches);
-        }
-        if (setNotifications) {
-          setNotifications([...(notifications || []), dbData.notifications[0]]);
-        }
+      // Update match status to Interview Scheduled
+      if (newInterview.matchId) {
+        await supabase.from('matches').update({
+          status: 'interview_scheduled'
+        }).eq('id', newInterview.matchId);
+      }
+
+      await supabase.from("notifications").insert({
+        user_id: requestInterviewTarget.talentId,
+        title: "Interview Scheduled",
+        content: `Interview "${newInterview.title}" has been booked for ${newInterview.date} at ${newInterview.time}.`,
+        read_status: false,
+      });
+
+      if (setInterviews) {
+        // Optimistically update local interviews if possible
+        // Actually, ClientDashboard doesn't have setInterviews, it just gets it as prop.
+        // Sync via channel or refresh will pick it up.
+      }
+      if (setMatches) {
+        setMatches(updatedMatches);
       }
 
       setShowRequestInterviewModal(false);
@@ -801,33 +794,26 @@ export default function ClientDashboard({
 
     const updatedRehireRequests = [...(rehireRequests || []), newRehireRequest];
 
-    const updatedDb = {
-      talents,
-      clientRequests: requests,
-      matches,
-      tasks: [],
-      contracts,
-      notifications: [
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentUser?.id,
-          title: "Re-hire Request Submitted",
-          message: `Re-hire request for "${rehireTarget.talentName}" submitted. Operations team will confirm terms shortly.`,
-          read: false,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      auditLogs: [newAuditLog],
-      agentLogs: [newAgentLog],
-      rehireRequests: updatedRehireRequests,
-    };
-
     try {
+      const { error: reqErr } = await supabase.from('talent_requests').insert({
+        client_id: currentUser?.id,
+        service_type: 'Re-hire',
+        payload: {
+          ...newRehireRequest,
+          referenceNumber: `KNG-REHIRE-${Math.floor(1000 + Math.random() * 9000)}`
+        }
+      });
+      if (reqErr) throw reqErr;
+
+      await supabase.from("notifications").insert({
+        user_id: currentUser?.id,
+        title: "Re-hire Request Submitted",
+        content: `Re-hire request for "${rehireTarget.talentName}" submitted. Operations team will confirm terms shortly.`,
+        read_status: false,
+      });
+
       if (setRehireRequests) {
         setRehireRequests(updatedRehireRequests);
-      }
-      if (saveToDb) {
-        await saveToDb(updatedDb);
       }
 
       setShowRehireModal(false);
@@ -4746,40 +4732,29 @@ export default function ClientDashboard({
                       };
 
                       try {
-                        const res = await fetch("/api/db");
-                        if (res.ok) {
-                          const dbData = await res.json();
-                          dbData.matches = updatedMatches;
-                          dbData.contracts = [
-                            ...(dbData.contracts || []),
-                            newContract,
-                          ];
-                          dbData.notifications = [
-                            {
-                              id: `notif_${Date.now()}`,
-                              userId: hireTarget.talentId,
-                              title: "Job Offer Received!",
-                              message: `You received a job offer for the "${newContract.role}" role at $${newContract.salary}/mo.`,
-                              read: false,
-                              createdAt: new Date().toISOString(),
-                            },
-                            ...(dbData.notifications || []),
-                          ];
-                          dbData.auditLogs = [
-                            {
-                              id: `audit_${Date.now()}`,
-                              actor: currentUser?.name || "Client",
-                              action: "Extend Job Offer",
-                              details: `Offer contract initiated for ${hireTarget.name} for the ${newContract.role} role.`,
-                              timestamp: new Date().toISOString(),
-                            },
-                            ...(dbData.auditLogs || []),
-                          ];
+                        const { error: contractErr } = await supabase.from('contracts').insert({
+                          talent_id: newContract.talentId,
+                          client_id: currentUser?.id,
+                          service_type: newContract.role,
+                          rate_type: newContract.rateType,
+                          rate_amount: newContract.rateAmount,
+                          start_date: newContract.startDate,
+                          status: 'pending'
+                        });
+                        if (contractErr) throw contractErr;
 
-                          if (saveToDb) {
-                            await saveToDb(dbData);
-                          }
-                          if (setMatches) {
+                        await supabase.from('matches').update({
+                          status: 'offer_extended'
+                        }).eq('id', newContract.matchId);
+
+                        await supabase.from("notifications").insert({
+                          user_id: hireTarget.talentId,
+                          title: "Job Offer Received!",
+                          content: `You received a job offer for the "${newContract.role}" role at $${newContract.salary}/mo.`,
+                          read_status: false,
+                        });
+
+                        if (setMatches) {
                             setMatches(updatedMatches);
                           }
                           setShowHireModal(false);
@@ -4787,9 +4762,9 @@ export default function ClientDashboard({
                           alert(
                             `Job Offer Extended to ${hireTarget.name} successfully! EOR drafting initiated.`,
                           );
-                        }
-                      } catch {
+                      } catch (err: any) {
                         alert("Failed to extend offer. Please try again.");
+                        console.error(err);
                       }
                     }}
                     style={{

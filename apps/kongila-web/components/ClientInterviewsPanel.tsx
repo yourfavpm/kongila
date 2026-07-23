@@ -70,19 +70,13 @@ export default function ClientInterviewsPanel({
 
     if (hoursDifference < 4) {
       alert("Late Reschedule Request: Interviews cannot be rescheduled by the client less than 4 hours before the start time. Your Account Manager has been notified and will reach out to coordinate.");
-      // Optional: trigger saveToDb notification to AM
-      if (saveToDb) {
-        saveToDb({
-          notifications: [{
-            id: `notif_${Date.now()}`,
-            userId: "admin_team",
-            type: "alert",
-            message: `Late Reschedule Request: ${currentUser?.name} attempted to reschedule interview with ${iv.talentName} (less than 4 hours notice).`,
-            read: false,
-            createdAt: new Date().toISOString()
-          }]
-        });
-      }
+      // Optional: trigger notification to AM
+      supabase.from("notifications").insert({
+        user_id: "admin_team", // assuming admin handles this or user_id null + admin read
+        title: "Late Reschedule Request",
+        content: `Late Reschedule Request: ${currentUser?.name} attempted to reschedule interview with ${iv.talentName} (less than 4 hours notice).`,
+        read_status: false,
+      });
       return;
     }
     
@@ -120,18 +114,12 @@ export default function ClientInterviewsPanel({
         setInterviews(interviews.map(i => i.id === selectedInterview.id ? { ...i, ...updates } : i));
       }
       
-      if (saveToDb) {
-        await saveToDb({
-          notifications: [{
-            id: `notif_${Date.now()}`,
-            userId: "admin_team",
-            type: "info",
-            message: `Client ${currentUser?.name} submitted a ${clientRating}-star rating for interview with ${selectedInterview.talentName}.`,
-            read: false,
-            createdAt: new Date().toISOString()
-          }]
-        });
-      }
+      await supabase.from("notifications").insert({
+        user_id: "admin_team",
+        title: "Interview Rated by Client",
+        content: `Client ${currentUser?.name} submitted a ${clientRating}-star rating for interview with ${selectedInterview.talentName}.`,
+        read_status: false,
+      });
 
     } catch (err) {
       console.error(err);

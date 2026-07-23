@@ -122,19 +122,13 @@ export default function MatchedTalentPanel({
 
       // Check if ALL candidates for this request are now rejected
       const remainingForReq = matches.filter(m => m.requestId === request.id && m.id !== match.id && m.status !== "rejected_by_client");
-      if (remainingForReq.length === 0 && saveToDb) {
+      if (remainingForReq.length === 0) {
          // Notify Account Manager
-         await saveToDb({
-           notifications: [
-             {
-               id: `notif_${Date.now()}`,
-               userId: "admin_team",
-               type: "alert",
-               message: `Client ${currentUser?.name} has rejected ALL submitted candidates for request ${request.roleDescription}. Discovery call needed.`,
-               read: false,
-               createdAt: new Date().toISOString()
-             }
-           ]
+         await supabase.from("notifications").insert({
+           user_id: "admin_team",
+           title: "All Candidates Rejected",
+           content: `Client ${currentUser?.name} has rejected ALL submitted candidates for request ${request.roleDescription}. Discovery call needed.`,
+           read_status: false,
          });
       }
 

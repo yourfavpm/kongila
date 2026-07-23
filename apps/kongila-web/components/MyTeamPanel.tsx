@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Contract, TalentProfile, ServiceRequest } from "@kongila/shared-types";
+import { supabase } from "../lib/supabaseClient";
 
 interface MyTeamPanelProps {
   currentUser: any;
@@ -83,18 +84,12 @@ export default function MyTeamPanel({
         });
       }
 
-      if (saveToDb) {
-        await saveToDb({
-          notifications: [{
-            id: `notif_${Date.now()}`,
-            userId: "admin_team", // Ops Manager + Account Manager
-            type: "alert",
-            message: `Replacement requested by ${currentUser?.name || 'Client'} for ${selectedContract.talentName} (${selectedContract.role}). Reason: ${replacementReason}.`,
-            read: false,
-            createdAt: new Date().toISOString()
-          }]
-        });
-      }
+      await supabase.from("notifications").insert({
+        user_id: "admin_team", // Ops Manager + Account Manager
+        title: "Replacement Requested",
+        content: `Replacement requested by ${currentUser?.name || 'Client'} for ${selectedContract.talentName} (${selectedContract.role}). Reason: ${replacementReason}.`,
+        read_status: false,
+      });
 
       alert("Your replacement request has been received. We'll begin sourcing immediately — typical replacement time is 10 business days.");
       setReplacementModalOpen(false);
