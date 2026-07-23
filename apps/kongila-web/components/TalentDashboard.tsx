@@ -768,6 +768,25 @@ const ProfileSection = ({
             </div>
           </div>
         )}
+        {!activeVettingStage?.assessmentId && !activeVettingStage?.interviewDate && !activeVettingStage?.interviewId && !hasCompletedVetting && (
+          <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-start' }}>
+            <button
+              onClick={() => setActiveSection('Vetting')}
+              style={{
+                background: '#0047CC',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '10px 16px',
+                fontSize: '12px',
+                fontWeight: 800,
+                cursor: 'pointer'
+              }}
+            >
+              View Stage Details & Actions →
+            </button>
+          </div>
+        )}
       </Card>
 
       {profileCompletion < 100 && (
