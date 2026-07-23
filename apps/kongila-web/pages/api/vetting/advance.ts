@@ -67,8 +67,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     else if (action === 'SUBMIT_STAGE_6') {
       if (stageIndex !== 5) return res.status(400).json({ error: 'Action mismatch' });
+      
       currentStage.status = 'passed';
       currentStage.completedAt = now;
+      currentStage.submissionData = payload; // Store the submission payload directly on the pipeline stage
       
       // Advance to Stage 7
       pipeline[6] = { ...pipeline[6], status: 'in_progress', startedAt: now };

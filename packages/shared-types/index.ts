@@ -740,7 +740,10 @@ export interface WorkSimulationTask {
   assignedAt: string;
   deadline: string;
   status: 'assigned' | 'submitted' | 'graded' | 'closed';
+  submissionType?: 'file' | 'essay' | 'link';
   submissionLink?: string;
+  submissionFileUrl?: string;
+  submissionText?: string;
   submittedAt?: string;
   score?: number;
 }

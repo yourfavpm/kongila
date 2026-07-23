@@ -136,6 +136,7 @@ export default function KongilaWeb() {
   const [assessmentQuestions, setAssessmentQuestions] = useState<any[]>([]);
   const [talentSkillAssessments, setTalentSkillAssessments] = useState<any[]>([]);
   const [skillAssessmentResults, setSkillAssessmentResults] = useState<any[]>([]);
+  const [workSimulationTasks, setWorkSimulationTasks] = useState<any[]>([]);
 
   // Identity & Unified Auth Progressive States
   const [currentUser, setCurrentUser] = useState<any>(null); // { id, name, email, role, onboardingStatus, emailVerified, organizationId }
@@ -450,6 +451,7 @@ export default function KongilaWeb() {
         setAssessmentQuestions(dbData.assessmentQuestions || []);
         setTalentSkillAssessments(dbData.talentSkillAssessments || []);
         setSkillAssessmentResults(dbData.skillAssessmentResults || []);
+        setWorkSimulationTasks(dbData.workSimulationTasks || []);
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
@@ -4765,6 +4767,7 @@ export default function KongilaWeb() {
             assessmentQuestions={assessmentQuestions}
             talentSkillAssessments={talentSkillAssessments}
             skillAssessmentResults={skillAssessmentResults}
+            workSimulationTasks={workSimulationTasks}
             onSignOut={handleSignOut}
             onUpdateProfile={handleUpdateProfile}
             onUpdateMatch={handleUpdateMatch}

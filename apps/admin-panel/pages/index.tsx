@@ -250,6 +250,7 @@ export default function AdminPanel() {
   const [stageInterviewLink, setStageInterviewLink] = useState<string>('');
   const [stagePersonalityLink, setStagePersonalityLink] = useState<string>('');
   const [stageTaskTitle, setStageTaskTitle] = useState<string>('');
+  const [stageSubmissionType, setStageSubmissionType] = useState<'file' | 'essay' | 'link'>('link');
   const [stageTaskDescription, setStageTaskDescription] = useState<string>('');
   const [editScoresMode, setEditScoresMode] = useState(false);
   const [pendingRejection, setPendingRejection] = useState<{ stageIdx: number; score?: number } | null>(null);
@@ -612,6 +613,7 @@ export default function AdminPanel() {
           talentId: selectedTalent.id,
           title: stageTaskTitle,
           description: stageTaskDescription,
+          submissionType: stageSubmissionType,
           assignedAt: timestamp,
           deadline: stageDeadlineInput || timestamp,
           status: 'assigned'
@@ -699,6 +701,7 @@ export default function AdminPanel() {
     setStageInterviewLink('');
     setStagePersonalityLink('');
     setStageTaskTitle('');
+    setStageSubmissionType('link');
     setStageTaskDescription('');
     setStageDeadlineInput('');
     setPendingRejection(null);
@@ -2378,6 +2381,14 @@ export default function AdminPanel() {
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Task Requirements</label>
                                     <textarea value={stageTaskDescription} onChange={e => setStageTaskDescription(e.target.value)} placeholder="Describe what the candidate must build, deliver, or demonstrate..." rows={4} className="form-input" style={{ width: '100%', resize: 'none', fontSize: '14px', padding: '12px' }} />
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Submission Type required</label>
+                                    <select value={stageSubmissionType} onChange={e => setStageSubmissionType(e.target.value as any)} className="form-input" style={{ width: '100%', fontSize: '14px', padding: '12px', marginBottom: '16px' }}>
+                                      <option value="link">Submission Link (e.g., GitHub, Figma, Google Drive)</option>
+                                      <option value="essay">Essay / Text Response</option>
+                                      <option value="file">File Upload (PDF, Zip, Image, etc.)</option>
+                                    </select>
                                   </div>
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Submission Deadline</label>

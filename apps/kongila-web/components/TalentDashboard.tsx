@@ -39,6 +39,7 @@ interface TalentDashboardProps {
   assessmentQuestions?: any[];
   talentSkillAssessments?: any[];
   skillAssessmentResults?: any[];
+  workSimulationTasks?: any[];
   onSubmitAssessment?: (result: any) => Promise<void>;
   onSignOut?: () => void;
   onUpdateProfile?: (updatedProfile: any) => void;
@@ -6667,8 +6668,10 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   const [loading, setLoading] = useState(false);
   const [stage5ModalOpen, setStage5ModalOpen] = useState(false);
   const [form5, setForm5] = useState({ speed: '', hardware: false, quiet: false });
-  const [stage6Active, setStage6Active] = useState(false);
-  const [stage6TimeLeft, setStage6TimeLeft] = useState(0);
+  const [submissionText, setSubmissionText] = useState('');
+  const [submissionFile, setSubmissionFile] = useState<File | null>(null);
+  const [submissionLink, setSubmissionLink] = useState('');
+  const [submittingWS, setSubmittingWS] = useState(false);
 
   // Initialize and run SLA check on mount
   useEffect(() => {
@@ -6707,17 +6710,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
     }
   }, [profile?.vettingPipeline, loading]);
 
-  // Stage 6 Timer
-  useEffect(() => {
-    let timer: any;
-    if (stage6Active && stage6TimeLeft > 0) {
-      timer = setInterval(() => setStage6TimeLeft(prev => prev - 1), 1000);
-    } else if (stage6Active && stage6TimeLeft <= 0) {
-      setStage6Active(false);
-      handleAction('SUBMIT_STAGE_6', 5);
-    }
-    return () => clearInterval(timer);
-  }, [stage6Active, stage6TimeLeft]);
+  // Stage 6 Timer Removed
 
   const handleAction = async (action: string, stageIndex: number, payload?: any) => {
     try {
@@ -6734,12 +6727,36 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
       console.error('Action failed', e);
     }
   };
+  const submitWorkSimulation = async () => {
+    if (submittingWS) return;
+    const task = workSimulationTasks.find((t: any) => t.id === activeVettingStage?.taskId);
+    if (!task) return;
 
-  const startStage6 = () => {
-    setStage6TimeLeft(3 * 60 * 60); // 3 hours
-    setStage6Active(true);
-    handleAction('START_STAGE_6', 5);
+    setSubmittingWS(true);
+    let payload: any = { submissionType: task.submissionType };
+
+    if (task.submissionType === 'link') {
+      payload.submissionLink = submissionLink;
+    } else if (task.submissionType === 'essay') {
+      payload.submissionText = submissionText;
+    } else if (task.submissionType === 'file' && submissionFile) {
+      try {
+        const filePath = `work_simulations/${profile?.id}/${Date.now()}_${submissionFile.name}`;
+        const { data, error } = await supabase.storage.from('documents').upload(filePath, submissionFile, { upsert: true });
+        if (!error && data) {
+           const { data: urlData } = supabase.storage.from('documents').getPublicUrl(data.path);
+           payload.submissionFileUrl = urlData.publicUrl;
+        }
+      } catch (err) {
+        console.error("Upload error", err);
+      }
+    }
+
+    await handleAction('SUBMIT_STAGE_6', 5, payload);
+    setSubmittingWS(false);
   };
+
+
 
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const overallProgress = Math.round((passedCount / 7) * 100);
@@ -6897,18 +6914,59 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                   {idx===5&&stat==='in_progress'&&(
                     <div style={{marginTop:'12px',padding:'14px',background:'#FFF1F2',borderRadius:'10px',border:'1px solid #FECDD3'}}>
                       <div style={{fontSize:'12px',fontWeight:700,color:'#BE123C',marginBottom:'8px'}}>🔬 Work Simulation Assigned</div>
-                      {stage6Active ? (
-                        <div>
-                          <div style={{fontSize:'24px',fontWeight:900,color:'#E11D48',fontVariantNumeric:'tabular-nums'}}>{formatTime(stage6TimeLeft)}</div>
-                          <p style={{fontSize:'11px',color:'#BE123C',margin:'4px 0 12px'}}>Do not close this window. Timer continues server-side.</p>
-                          <button onClick={()=>setStage6Active(false)} style={{background:'#E11D48',color:'#fff',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Submit Work</button>
-                        </div>
-                      ) : (
-                        <div>
-                          <p style={{fontSize:'11px',color:'#9F1239',margin:'0 0 12px 0'}}>You have a 3-hour window. The timer starts immediately upon clicking.</p>
-                          <button onClick={startStage6} style={{background:'#E11D48',color:'#fff',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Start Simulation</button>
-                        </div>
-                      )}
+                      {(() => {
+                        const task = workSimulationTasks.find((t: any) => t.id === s.taskId);
+                        if (!task) return <div style={{fontSize:'12px',color:'#BE123C'}}>Task details not found. Contact support.</div>;
+                        return (
+                          <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
+                            <div>
+                              <div style={{fontSize:'14px',fontWeight:800,color:'#9F1239'}}>{task.title}</div>
+                              <p style={{fontSize:'12px',color:'#BE123C',margin:'4px 0 0 0',whiteSpace:'pre-wrap'}}>{task.description}</p>
+                            </div>
+                            <div style={{fontSize:'11px',fontWeight:700,color:'#E11D48'}}>
+                              Deadline: {new Date(task.deadline).toLocaleDateString()}
+                            </div>
+                            <div style={{background:'#fff',padding:'12px',borderRadius:'8px',border:'1px solid #FECDD3'}}>
+                              <div style={{fontSize:'11px',fontWeight:700,color:'#9F1239',marginBottom:'8px',textTransform:'uppercase'}}>Your Submission</div>
+                              {task.submissionType === 'link' && (
+                                <input 
+                                  type="url" 
+                                  value={submissionLink} 
+                                  onChange={e => setSubmissionLink(e.target.value)} 
+                                  placeholder="e.g. https://github.com/my-repo" 
+                                  className="form-input" 
+                                  style={{width:'100%',fontSize:'13px'}} 
+                                />
+                              )}
+                              {task.submissionType === 'essay' && (
+                                <textarea 
+                                  value={submissionText} 
+                                  onChange={e => setSubmissionText(e.target.value)} 
+                                  placeholder="Write your response here..." 
+                                  rows={5} 
+                                  className="form-input" 
+                                  style={{width:'100%',fontSize:'13px',resize:'vertical'}} 
+                                />
+                              )}
+                              {task.submissionType === 'file' && (
+                                <input 
+                                  type="file" 
+                                  onChange={e => e.target.files && setSubmissionFile(e.target.files[0])} 
+                                  className="form-input" 
+                                  style={{width:'100%',fontSize:'13px',padding:'8px'}} 
+                                />
+                              )}
+                              <button 
+                                onClick={submitWorkSimulation} 
+                                disabled={submittingWS}
+                                style={{marginTop:'12px',background:submittingWS?'#FDA4AF':'#E11D48',color:'#fff',border:'none',padding:'10px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:submittingWS?'not-allowed':'pointer',width:'100%'}}
+                              >
+                                {submittingWS ? 'Submitting...' : 'Submit Work Simulation'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                   
@@ -7370,6 +7428,7 @@ export default function TalentDashboard({
   assessmentQuestions = [],
   talentSkillAssessments = [],
   skillAssessmentResults = [],
+  workSimulationTasks = [],
   onSubmitAssessment,
   onSignOut,
   onUpdateProfile,
