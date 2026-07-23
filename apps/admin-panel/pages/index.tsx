@@ -305,6 +305,12 @@ export default function AdminPanel() {
         fetch('/api/interviews')
       ]);
 
+      if (!res.ok) {
+        const errText = await res.text();
+        alert(`API /api/db failed! Status: ${res.status}. Error: ${errText}`);
+        console.error('API /api/db failed', errText);
+      }
+
       if (res.ok) {
         const db = await res.json();
         const freshTalents = db.talents || [];
@@ -364,6 +370,12 @@ export default function AdminPanel() {
           return { ...freshMatch, vettingPipeline: localPipeline || dbPipeline };
         });
       }
+      if (!ivRes.ok) {
+        const errText = await ivRes.text();
+        alert(`API /api/interviews failed! Status: ${ivRes.status}. Error: ${errText}`);
+        console.error('API /api/interviews failed', errText);
+      }
+      
       if (ivRes.ok) {
         const ivData = await ivRes.json();
         setInterviews(Array.isArray(ivData) ? ivData : []);
