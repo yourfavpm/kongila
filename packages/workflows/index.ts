@@ -1,5 +1,51 @@
 import { RequestStatus, VettingStatus, TaskStatus, ServiceType } from '@kongila/shared-types';
 
+const REQUEST_STATUS_ALIASES: Record<string, RequestStatus> = {
+  'new': 'New Request',
+  'new request': 'New Request',
+  'review': 'Reviewing',
+  'reviewing': 'Reviewing',
+  'sourcing': 'Sourcing Talent',
+  'sourcing talent': 'Sourcing Talent',
+  'sourcing_required': 'Reviewing',
+  'sourcing required': 'Reviewing',
+  'candidates ready': 'Candidates Ready',
+  'candidates_ready': 'Candidates Ready',
+  'candidate ready': 'Candidates Ready',
+  'client interview': 'Client Interview',
+  'client_interview': 'Client Interview',
+  'offer accepted': 'Offer Accepted',
+  'offer_accepted': 'Offer Accepted',
+  'onboarding': 'Onboarding'
+};
+
+export function normalizeRequestStatus(status?: string | null): RequestStatus {
+  if (!status) return 'New Request';
+  const trimmed = String(status).trim();
+  if (!trimmed) return 'New Request';
+
+  const direct = REQUEST_STATUS_ALIASES[trimmed.toLowerCase()];
+  if (direct) return direct;
+
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return REQUEST_STATUS_ALIASES[normalized] || 'New Request';
+}
+
+export function isMatchingRequestStatus(status?: string | null): boolean {
+  const normalized = normalizeRequestStatus(status);
+  return normalized === 'Sourcing Talent' || normalized === 'Candidates Ready' || normalized === 'Client Interview' || normalized === 'Offer Accepted' || normalized === 'Onboarding';
+}
+
+export function isActiveRequestStatus(status?: string | null): boolean {
+  const normalized = normalizeRequestStatus(status);
+  return normalized === 'New Request' || normalized === 'Reviewing' || isMatchingRequestStatus(normalized);
+}
+
 // Client Service Request Workflows
 export const SERVICE_REQUEST_STATUSES: RequestStatus[] = [
   'New Request',
@@ -83,7 +129,7 @@ export const GET_SERVICE_STAGES = (service: ServiceType): { name: string; descri
         { name: 'Offer Accepted', description: 'Securing contract acceptances & onboarding' },
         { name: 'Onboarding', description: 'Welcome kit, NDAs signed, tools check, active management' }
       ];
-    case 'Talent Outsourcing':
+    case 'Outsource Talent':
       return [
         { name: 'Request Received', description: 'Workforce request logged' },
         { name: 'Matching', description: 'Connecting talent directly' },

@@ -9,6 +9,7 @@ import ComplianceManager from '../components/ComplianceManager';
 import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
 import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
+import { normalizeRequestStatus } from '@kongila/workflows';
 import { calculateCompositeVettingGrade, generateMatchesForRequest, VETTING_STAGES, advanceTalentStage, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
 import {
@@ -319,11 +320,22 @@ export default function AdminPanel() {
 
         setOrganizations(supabaseOrgs || []);
 
-        if (supabaseRequests && supabaseRequests.length > 0) {
-          setRequests(supabaseRequests.map(r => r.payload));
-        } else {
-          setRequests([]);
+        const localRequests = (db.clientRequests || []).map((request: any) => ({
+          ...request,
+          status: normalizeRequestStatus(request.status)
+        }));
+        const remoteRequests = (supabaseRequests || []).map((r: any) => ({
+          ...(r.payload || {}),
+          status: normalizeRequestStatus(r.payload?.status)
+        }));
+        const mergedRequests = new Map<string, any>();
+        for (const request of localRequests) {
+          if (request?.id) mergedRequests.set(request.id, request);
         }
+        for (const request of remoteRequests) {
+          if (request?.id) mergedRequests.set(request.id, { ...mergedRequests.get(request.id), ...request });
+        }
+        setRequests(Array.from(mergedRequests.values()));
 
         setMatches(db.matches || []);
         setClientProfiles(supabaseClientProfiles || []);
@@ -510,6 +522,33 @@ export default function AdminPanel() {
       console.error('Failed to save DB', e);
       alert('Failed to save to Database. Check console for details.');
     }
+  };
+
+  const updateRequestCollections = (requestId: string, nextStatus: string, patch: Record<string, any> = {}) => {
+    const normalizedStatus = normalizeRequestStatus(nextStatus);
+    const updatedRequests = requests.map(request => (
+      request.id === requestId
+        ? { ...request, ...patch, status: normalizedStatus }
+        : request
+    ));
+    const updatedSelectedRequest = selectedRequest?.id === requestId
+      ? { ...selectedRequest, ...patch, status: normalizedStatus }
+      : selectedRequest;
+    setRequests(updatedRequests);
+    if (updatedSelectedRequest) {
+      setSelectedRequest(updatedSelectedRequest as any);
+    }
+    return updatedRequests;
+  };
+
+  const persistTalentRequestStatus = async (requestId: string, status: string, patch: Record<string, any> = {}) => {
+    const request = requests.find(r => r.id === requestId);
+    if (!request) return;
+    const updatedPayload = { ...request, ...patch, status: normalizeRequestStatus(status) };
+    await supabase
+      .from('talent_requests')
+      .update({ payload: updatedPayload })
+      .eq('payload->>id', requestId);
   };
 
   // Vetting
@@ -928,9 +967,38 @@ export default function AdminPanel() {
     const talentName = talents.find(t => t.id === targetMatch.talentId)?.name || 'Contractor';
     const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Push Match Shortlist', details: `Shortlisted candidate ${talentName} pushed to client dashboard.`, timestamp: new Date().toISOString() };
     const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Matching Agent', message: `Candidate ${talentName} pushed to client shortlist deck.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
+    const linkedRequest = requests.find(r => r.id === targetMatch.requestId);
+    const updatedRequests = linkedRequest
+      ? updateRequestCollections(
+          linkedRequest.id,
+          'Candidates Ready',
+          linkedRequest
+        )
+      : requests;
+    if (linkedRequest) {
+      await persistTalentRequestStatus(linkedRequest.id, 'Candidates Ready', linkedRequest);
+    }
     setMatches(updatedMatches);
     setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({ talents, clientRequests: requests, matches: updatedMatches, contracts, notifications: [{ id: `notif_${Date.now()}`, userId: 'usr_horizon', title: 'New Matches Shortlisted', message: `${talentName} has been pushed to your shortlist!`, read: false, createdAt: new Date().toISOString() }], auditLogs: [newAuditLog, ...auditLogs], agentLogs: [newAgentLog, ...agentLogs], interviews, rehireRequests, tasks: [] });
+    await saveToDb({
+      talents,
+      clientRequests: updatedRequests,
+      matches: updatedMatches,
+      contracts,
+      notifications: [{
+        id: `notif_${Date.now()}`,
+        userId: linkedRequest?.clientId || 'usr_horizon',
+        title: 'New Matches Shortlisted',
+        message: `${talentName} has been pushed to your shortlist!`,
+        read: false,
+        createdAt: new Date().toISOString()
+      }],
+      auditLogs: [newAuditLog, ...auditLogs],
+      agentLogs: [newAgentLog, ...agentLogs],
+      interviews,
+      rehireRequests,
+      tasks: []
+    });
   };
 
   const handleShortlistCandidate = async (talentId: string) => {
@@ -951,9 +1019,33 @@ export default function AdminPanel() {
     const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Shortlist Candidate', details: `Manually shortlisted ${talent.name} for request ${selectedRequest.serviceType}.`, timestamp: new Date().toISOString() };
     const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Matching Agent', message: `Candidate ${talent.name} shortlisted. Score: ${newMatch.score}% Fit.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
     const updatedMatches = [...matches, newMatch];
+    const currentStatus = normalizeRequestStatus(selectedRequest.status);
+    const nextStatus = currentStatus === 'Candidates Ready' || currentStatus === 'Client Interview' || currentStatus === 'Offer Accepted' || currentStatus === 'Onboarding'
+      ? currentStatus
+      : 'Sourcing Talent';
+    const updatedRequests = updateRequestCollections(selectedRequest.id, nextStatus, selectedRequest);
+    await persistTalentRequestStatus(selectedRequest.id, nextStatus, selectedRequest);
     setMatches(updatedMatches);
     setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({ talents, clientRequests: requests, matches: updatedMatches, contracts, notifications: [{ id: `notif_${Date.now()}`, userId: selectedRequest.clientId || 'usr_horizon', title: 'Candidate Shortlisted', message: `"${talent.name}" shortlisted for "${selectedRequest.serviceType}"!`, read: false, createdAt: new Date().toISOString() }], auditLogs: [newAuditLog, ...auditLogs], agentLogs: [newAgentLog, ...agentLogs], interviews, rehireRequests, tasks: [] });
+    await saveToDb({
+      talents,
+      clientRequests: updatedRequests,
+      matches: updatedMatches,
+      contracts,
+      notifications: [{
+        id: `notif_${Date.now()}`,
+        userId: selectedRequest.clientId || 'usr_horizon',
+        title: 'Candidate Shortlisted',
+        message: `"${talent.name}" shortlisted for "${selectedRequest.serviceType}"!`,
+        read: false,
+        createdAt: new Date().toISOString()
+      }],
+      auditLogs: [newAuditLog, ...auditLogs],
+      agentLogs: [newAgentLog, ...agentLogs],
+      interviews,
+      rehireRequests,
+      tasks: []
+    });
     alert(`${talent.name} has been shortlisted successfully.`);
   };
 
@@ -974,10 +1066,30 @@ export default function AdminPanel() {
     const updatedInterviews = [newInterview, ...interviews];
     const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Confirm Interview', details: `Scheduled interview for ${talent.name} on ${proposedDate} at ${proposedTime}.`, timestamp: new Date().toISOString() };
     const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Workflow Agent', message: `Interview confirmed with ${talent.name}. Calendar synced.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
+    const updatedRequests = updateRequestCollections(selectedRequest.id, 'Client Interview', selectedRequest);
+    await persistTalentRequestStatus(selectedRequest.id, 'Client Interview', selectedRequest);
     setMatches(updatedMatches);
     setInterviews(updatedInterviews);
     setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({ talents, clientRequests: requests, matches: updatedMatches, contracts, notifications: [{ id: `notif_${Date.now()}`, userId: selectedRequest.clientId || 'usr_horizon', title: 'Interview Confirmed', message: `Interview with "${talent.name}" confirmed for ${proposedDate} at ${proposedTime}!`, read: false, createdAt: new Date().toISOString() }], auditLogs: [newAuditLog, ...auditLogs], agentLogs: [newAgentLog, ...agentLogs], interviews: updatedInterviews, rehireRequests, tasks: [] });
+    await saveToDb({
+      talents,
+      clientRequests: updatedRequests,
+      matches: updatedMatches,
+      contracts,
+      notifications: [{
+        id: `notif_${Date.now()}`,
+        userId: selectedRequest.clientId || 'usr_horizon',
+        title: 'Interview Confirmed',
+        message: `Interview with "${talent.name}" confirmed for ${proposedDate} at ${proposedTime}!`,
+        read: false,
+        createdAt: new Date().toISOString()
+      }],
+      auditLogs: [newAuditLog, ...auditLogs],
+      agentLogs: [newAgentLog, ...agentLogs],
+      interviews: updatedInterviews,
+      rehireRequests,
+      tasks: []
+    });
     alert(`Interview with ${talent.name} scheduled successfully.`);
   };
 
@@ -1067,7 +1179,8 @@ export default function AdminPanel() {
   const handleUpdateRequestStatus = async (requestId: string, newStatus: string) => {
     const targetRequest = requests.find(r => r.id === requestId);
     if (!targetRequest) return;
-    const updatedRequest = { ...targetRequest, status: newStatus as any };
+    const normalizedStatus = normalizeRequestStatus(newStatus);
+    const updatedRequest = { ...targetRequest, status: normalizedStatus };
     
     // Sync to Supabase
     try {
@@ -1079,9 +1192,24 @@ export default function AdminPanel() {
       console.error('Failed to sync status update to Supabase:', err);
     }
 
-    const updatedRequests = requests.map(r => r.id === requestId ? updatedRequest : r);
-    setRequests(updatedRequests);
-    await saveToDb({ talents, clientRequests: updatedRequests, matches, contracts, auditLogs: [{ id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Update Request Status', details: `Request ${requestId} updated to "${newStatus}".`, timestamp: new Date().toISOString() }, ...auditLogs], agentLogs, interviews, rehireRequests, tasks: [] });
+    const updatedRequests = updateRequestCollections(requestId, normalizedStatus, targetRequest);
+    await saveToDb({
+      talents,
+      clientRequests: updatedRequests,
+      matches,
+      contracts,
+      auditLogs: [{
+        id: `audit_${Date.now()}`,
+        actor: 'Admin Operator',
+        action: 'Update Request Status',
+        details: `Request ${requestId} updated to "${normalizedStatus}".`,
+        timestamp: new Date().toISOString()
+      }, ...auditLogs],
+      agentLogs,
+      interviews,
+      rehireRequests,
+      tasks: []
+    });
   };
 
   // ─── HELPERS ─────────────────────────────────────────────────────────────────

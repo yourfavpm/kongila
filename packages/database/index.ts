@@ -3,6 +3,7 @@ import {
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
   Invoice, Payment, TalentPayout, Message, Conversation, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
 } from '@kongila/shared-types';
+import { normalizeRequestStatus } from '@kongila/workflows';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createClient } from '@supabase/supabase-js';
@@ -581,7 +582,7 @@ export async function readDbAsync(): Promise<Schema> {
         startDate: r.start_date,
         budget,
         priority,
-        status: r.status === 'new' ? 'New Request' : (r.status || 'Reviewing'),
+        status: normalizeRequestStatus(r.status),
         createdAt: r.created_at,
         urgency: r.urgency || (Math.random() > 0.8 ? 'ASAP' : 'Standard'),
         assignedTalentManagerId: r.assigned_talent_manager_id || null,
@@ -946,7 +947,7 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         commitment_level: r.commitmentLevel,
         num_of_talents: r.numberOfHires,
         start_date: r.startDate,
-        status: r.status === 'New Request' ? 'new' : r.status,
+        status: normalizeRequestStatus(r.status) === 'New Request' ? 'new' : normalizeRequestStatus(r.status),
         urgency: r.urgency,
         assigned_talent_manager_id: r.assignedTalentManagerId,
         assigned_account_manager_id: r.assignedAccountManagerId,
@@ -1155,4 +1156,3 @@ export async function logRequestActivityAsync(
     throw error;
   }
 }
-

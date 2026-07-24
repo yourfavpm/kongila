@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
+import { normalizeRequestStatus } from '@kongila/workflows';
 import { supabase } from '../../lib/supabaseClient';
 import { useToast } from '@kongila/ui';
 
@@ -225,7 +226,7 @@ export default function MatchingEngine() {
         const [{ data: requestData }, db] = await Promise.all([requestPromise, dbPromise]);
 
         const req = requestData?.payload;
-        if (req) setRequest(req);
+        if (req) setRequest({ ...req, status: normalizeRequestStatus(req.status) });
 
         // Only load deployable talent (A or A+ graded, and Vetted)
         const allTalents = (db.talents || []).filter((t: any) =>
@@ -365,11 +366,13 @@ export default function MatchingEngine() {
     try {
       const resDb = await fetch('/api/db');
       const db = await resDb.json();
+      const existingMatches = Array.isArray(db.matches) ? db.matches : [];
 
       const newMatches = selectedCandidateIds.map(id => {
         const c = scoredCandidates.find(sc => sc.talent.id === id);
+        const existingMatch = existingMatches.find((m: any) => m.requestId === requestId && m.talentId === id);
         return {
-          id: `match_${Date.now()}_${id}`,
+          id: existingMatch?.id || `match_${Date.now()}_${id}`,
           requestId: requestId as string,
           talentId: id,
           score: c.score,
@@ -393,10 +396,25 @@ export default function MatchingEngine() {
         details: `Submitted ${selectedCandidateIds.length} candidates for request ${requestId}`
       });
 
+      const mergedMatches = existingMatches.map((m: any) => {
+        const replacement = newMatches.find(next => next.id === m.id || (next.requestId === m.requestId && next.talentId === m.talentId));
+        return replacement ? { ...m, ...replacement } : m;
+      });
+      newMatches.forEach(next => {
+        if (!mergedMatches.some((m: any) => m.id === next.id || (m.requestId === next.requestId && m.talentId === next.talentId))) {
+          mergedMatches.push(next);
+        }
+      });
+
       await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: [...(db.matches || []), ...newMatches] })
+        body: JSON.stringify({
+          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
+            reqRow.id === requestId ? { ...reqRow, ...updatedPayload } : reqRow
+          ),
+          matches: mergedMatches
+        })
       });
 
       const matchesToInsert = newMatches.map(m => ({
@@ -409,12 +427,27 @@ export default function MatchingEngine() {
       }));
       await supabase.from('matches').upsert(matchesToInsert);
 
+      const normalizedRequest = {
+        ...request,
+        status: normalizeRequestStatus('Candidates Ready')
+      };
+      setRequest(normalizedRequest);
+      await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
+            reqRow.id === requestId ? { ...reqRow, ...normalizedRequest } : reqRow
+          )
+        })
+      });
+
       if (request.clientId) {
         await supabase.from('notifications').insert({
           id: crypto.randomUUID(),
           user_id: request.clientId,
-          title: 'New Talent Matches',
-          message: `Admin has matched ${selectedCandidateIds.length} candidate(s) to your request.`,
+          title: 'New Talent Ready',
+          message: `${selectedCandidateIds.length} new candidate(s) are ready for your review on this request.`,
           module_type: 'radar',
           read: false,
           created_at: new Date().toISOString()
@@ -440,7 +473,7 @@ export default function MatchingEngine() {
       const db = await resDb.json();
       const updatedPayload = {
         ...request,
-        status: 'Sourcing Required',
+        status: 'Reviewing',
         internalNotes: (request.internalNotes || '') + '\n[System]: Flagged as Sourcing Required.'
       };
       const { error: reqError } = await supabase
@@ -460,7 +493,12 @@ export default function MatchingEngine() {
       await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tasks: [...(db.tasks || []), newTask] })
+        body: JSON.stringify({
+          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
+            reqRow.id === requestId ? { ...reqRow, ...updatedPayload } : reqRow
+          ),
+          tasks: [...(db.tasks || []), newTask]
+        })
       });
       addToast('Request flagged for Sourcing. TA team notified.', 'info');
       router.push(`/requests/${requestId}`);

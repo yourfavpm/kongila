@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatDate, formatCurrency, getGradeColor } from '@kongila/utils';
+import { normalizeRequestStatus } from '@kongila/workflows';
 import { supabase } from '../../lib/supabaseClient';
 
 export default function RequestDetailView() {
@@ -75,11 +76,12 @@ export default function RequestDetailView() {
           ...req,
           assignedAccountManagerId: resolvedAMId,
           assignedTalentManagerId: resolvedTMId,
+          status: normalizeRequestStatus(req.status),
         };
 
         setRequest(mergedReq);
         setFormData({
-          status: req.status || 'New Request',
+          status: normalizeRequestStatus(req.status),
           urgency: req.urgency || 'Standard',
           assignedAccountManagerId: resolvedAMId,
           assignedTalentManagerId: resolvedTMId,
@@ -140,7 +142,8 @@ export default function RequestDetailView() {
   };
 
   const handleSave = async () => {
-    if (formData.status === 'Sourcing Talent' && !formData.assignedTalentManagerId) {
+    const normalizedStatus = normalizeRequestStatus(formData.status);
+    if (normalizedStatus === 'Sourcing Talent' && !formData.assignedTalentManagerId) {
       alert("You must assign a Talent Manager before advancing to 'Sourcing Talent' (Matching).");
       return;
     }
@@ -149,7 +152,7 @@ export default function RequestDetailView() {
     try {
       const updatedPayload = {
         ...request,
-        status: formData.status,
+        status: normalizedStatus,
         urgency: formData.urgency,
         assignedAccountManagerId: formData.assignedAccountManagerId,
         assignedTalentManagerId: formData.assignedTalentManagerId,
@@ -181,10 +184,28 @@ export default function RequestDetailView() {
       await supabase.from('audit_logs').insert({
         actor: 'Super Admin',
         action: 'Update Service Request',
-        details: `Updated request ${id} → status: ${formData.status}, AM: ${formData.assignedAccountManagerId}, TM: ${formData.assignedTalentManagerId}`
+        details: `Updated request ${id} → status: ${normalizedStatus}, AM: ${formData.assignedAccountManagerId}, TM: ${formData.assignedTalentManagerId}`
       });
 
-      // 4. Refresh local state immediately (no re-fetch needed)
+      // 4. Keep the local snapshot in sync for legacy views and fallback readers.
+      try {
+        const dbRes = await fetch('/api/db');
+        if (dbRes.ok) {
+          const db = await dbRes.json();
+          const updatedRequests = (db.clientRequests || []).map((req: any) =>
+            req.id === id ? { ...req, ...updatedPayload } : req
+          );
+          await fetch('/api/db', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientRequests: updatedRequests })
+          });
+        }
+      } catch (syncErr) {
+        console.error('Failed to sync request snapshot:', syncErr);
+      }
+
+      // 5. Refresh local state immediately (no re-fetch needed)
       setRequest(updatedPayload);
       setIsEditing(false);
     } catch (e) {
@@ -262,7 +283,7 @@ export default function RequestDetailView() {
                 </span>
               )}
               <span style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600 }}>
-                {request.status}
+                {normalizeRequestStatus(request.status)}
               </span>
             </div>
             <p className="page-subtitle">Submitted by {client?.name || request.clientName || 'Unknown Client'} on {formatDate(request.createdAt)}</p>
@@ -278,7 +299,7 @@ export default function RequestDetailView() {
             ) : (
               <>
                 <button className="btn-secondary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px' }}>Message Client</button>
-                {(request.status === 'Sourcing Talent' || request.status === 'Sourcing') && (
+                {(normalizeRequestStatus(request.status) === 'Sourcing Talent' || normalizeRequestStatus(request.status) === 'Candidates Ready') && (
                   <button onClick={() => router.push(`/matching/${request.id}`)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', background: '#10B981', borderColor: '#10B981' }}>
                     Open Matching Engine
                   </button>

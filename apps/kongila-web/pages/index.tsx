@@ -8,6 +8,7 @@ import { generateNDATemplate, generateContractTemplate } from '@kongila/contract
 import { 
   TalentProfile, ServiceRequest, Match, Contract, ServiceType, calculateTalentProfileCompletion, hasCoreTalentProfileChanges
 } from '@kongila/shared-types';
+import { normalizeRequestStatus } from '@kongila/workflows';
 import { supabase } from '../lib/supabaseClient';
 import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES } from '../lib/onboarding-constants';
 import TalentDashboard from '../components/TalentDashboard';
@@ -404,12 +405,22 @@ export default function KongilaWeb() {
         }
         
         const { data: supabaseRequests, error: reqErr } = await query;
-        if (supabaseRequests) {
-          const mappedRequests = supabaseRequests.map(r => r.payload);
-          setRequests(mappedRequests);
-        } else {
-          setRequests(dbData.clientRequests || []);
+        const mappedRemoteRequests = (supabaseRequests || []).map((r: any) => ({
+          ...(r.payload || {}),
+          status: normalizeRequestStatus(r.payload?.status)
+        }));
+        const mappedLocalRequests = (dbData.clientRequests || []).map((request: any) => ({
+          ...request,
+          status: normalizeRequestStatus(request.status)
+        }));
+        const mergedRequests = new Map<string, any>();
+        for (const request of mappedLocalRequests) {
+          if (request?.id) mergedRequests.set(request.id, request);
         }
+        for (const request of mappedRemoteRequests) {
+          if (request?.id) mergedRequests.set(request.id, { ...mergedRequests.get(request.id), ...request });
+        }
+        setRequests(Array.from(mergedRequests.values()));
 
         // Fetch invoices from Supabase
         let invoicesQuery = supabase.from('invoices').select('*, invoice_line_items(*)').order('created_at', { ascending: false });
