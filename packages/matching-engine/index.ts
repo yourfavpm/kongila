@@ -193,9 +193,9 @@ export function generateMatchesForRequest(
   request: ServiceRequest,
   talents: TalentProfile[]
 ): Match[] {
-  // Only match candidates who are Vetted or Matched (deployable grades: A+, A, B)
+  // Only match candidates who are Vetted or Matched (deployable grades: A+, A)
   const deployableTalents = talents.filter(
-    t => t.grade !== 'Reject' && (t.vettingStatus === 'Vetted' || t.vettingStatus === 'Matched' || t.vettingStatus === 'Applied' || t.vettingStatus === 'Review')
+    t => (t.grade === 'A+' || t.grade === 'A') && (t.vettingStatus === 'Vetted' || t.vettingStatus === 'Matched' || t.vettingStatus === 'Applied' || t.vettingStatus === 'Review')
   );
 
   return deployableTalents.map(talent => {

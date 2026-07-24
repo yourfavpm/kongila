@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
 import { ServiceRequest, ServiceType } from '@kongila/shared-types';
+import { COUNTRIES_AND_CODES } from '../lib/onboarding-constants';
 
 interface SmartIntakeFormProps {
   currentUser?: any;
@@ -14,6 +15,8 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [phoneCodeSearch, setPhoneCodeSearch] = useState('');
+  const [showPhoneCodeDropdown, setShowPhoneCodeDropdown] = useState(false);
 
   const [formData, setFormData] = useState<Partial<ServiceRequest>>({
     serviceType: '' as ServiceType,
@@ -543,22 +546,48 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           </div>
           <div className="form-group">
             <label className="form-label">Phone</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <select 
-                className="form-select" 
-                style={{ width: '110px' }} 
-                value={authData.phoneCode} 
-                onChange={e => setAuthData({...authData, phoneCode: e.target.value})}
+            <div style={{ display: 'flex', gap: '8px', position: 'relative' }}>
+              {/* Phone code searchable dropdown */}
+              <div 
+                className="form-input" 
+                style={{ width: '120px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px' }}
+                onClick={() => { setShowPhoneCodeDropdown(v => !v); setPhoneCodeSearch(''); }}
               >
-                <option value="+1">+1 (US)</option>
-                <option value="+44">+44 (UK)</option>
-                <option value="+234">+234 (NG)</option>
-                <option value="+61">+61 (AU)</option>
-                <option value="+91">+91 (IN)</option>
-                <option value="+49">+49 (DE)</option>
-                <option value="+33">+33 (FR)</option>
-                <option value="+81">+81 (JP)</option>
-              </select>
+                <span style={{ fontWeight: 600 }}>{authData.phoneCode || '+?'}</span>
+                <span style={{ fontSize: '10px', color: '#64748b' }}>▼</span>
+              </div>
+              {showPhoneCodeDropdown && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 50, background: 'var(--bg-secondary, #fff)', border: '1px solid var(--border-glass, #e2e8f0)', borderRadius: '10px', marginTop: '4px', width: '260px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+                  <div style={{ padding: '8px' }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      className="form-input"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                      placeholder="Search country…"
+                      value={phoneCodeSearch}
+                      onChange={e => setPhoneCodeSearch(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                    {COUNTRIES_AND_CODES
+                      .filter(c => c.name.toLowerCase().includes(phoneCodeSearch.toLowerCase()) || c.code.includes(phoneCodeSearch))
+                      .map(c => (
+                        <div
+                          key={c.name + c.code}
+                          onMouseDown={() => { setAuthData({ ...authData, phoneCode: c.code }); setShowPhoneCodeDropdown(false); }}
+                          style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid var(--border-glass, #e2e8f0)' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary, #f1f5f9)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <span>{c.name}</span>
+                          <span style={{ fontWeight: 700, color: 'var(--accent-cyan, #0ea5e9)' }}>{c.code}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+              
               <input type="tel" style={{ flex: 1 }} className="form-input" value={authData.phone} onChange={e => setAuthData({...authData, phone: e.target.value})} />
             </div>
           </div>

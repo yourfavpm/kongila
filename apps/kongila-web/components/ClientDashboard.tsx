@@ -630,7 +630,6 @@ export default function ClientDashboard({
     commitmentLevel: "Full-Time" as "Full-Time" | "Part-Time",
     notes: "",
   });
-  });
 
   const handleRequestInterviewClick = (matchId: string, talentId: string, talentName: string) => {
     if (!activeRequest) return;

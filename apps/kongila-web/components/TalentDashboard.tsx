@@ -2631,16 +2631,36 @@ const ContractSection = ({ profile }: { profile: any }) => {
 };
 
 // ─── Section 5: Application Pipeline ─────────────────────────────────────────
-const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateMatch }: { profile: any; matches?: any[]; clientRequests?: any[]; onUpdateMatch?: (updatedMatch: any) => void }) => {
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3000);
-  };
+const PipelineSection = ({ profile, matches = [], clientRequests = [], interviews = [], contracts = [] }: { profile: any; matches?: any[]; clientRequests?: any[]; interviews?: any[]; contracts?: any[]; }) => {
 
   // Filter matches belonging to this talent
-  const talentMatches = matches.filter(m => m.talentId === profile?.id);
+  const talentMatches = matches.filter(m => m.talentId === profile?.id).map(m => {
+    let dynamicStatus = m.status;
+    
+    // Check if there is an active/signed contract for this match/request
+    const hasContract = contracts.some(c => c.talentId === profile?.id && 
+      (c.requestId === m.requestId || c.clientName === getRequestInfoLocally(m.requestId, clientRequests)?.clientName) &&
+      ['active', 'signed', 'completed', 'pending_signatures', 'talent_signed', 'client_signed'].includes(c.status?.toLowerCase())
+    );
+    
+    if (hasContract) {
+      dynamicStatus = 'Offer Accepted';
+    } else {
+      // Check if there's an interview
+      const hasInterview = interviews.some(iv => iv.talentId === profile?.id && 
+        (iv.requestId === m.requestId || iv.request_id === m.requestId || iv.matchId === m.id || iv.match_id === m.id)
+      );
+      if (hasInterview && dynamicStatus !== 'Offer Extended' && dynamicStatus !== 'Offer Accepted') {
+        dynamicStatus = 'Interview Scheduled';
+      }
+    }
+    
+    return { ...m, status: dynamicStatus };
+  });
+
+  function getRequestInfoLocally(requestId: string, reqs: any[]) {
+    return reqs.find(r => r.id === requestId);
+  }
 
   // Kanban Stage mapping
   const columns = [
@@ -2665,13 +2685,13 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
   };
 
   const getRequestInfo = (requestId: string) => {
-    const req = clientRequests.find(r => r.id === requestId);
+    const info = getRequestInfoLocally(requestId, clientRequests);
     return {
-      clientName: req?.clientName || req?.companyName || 'Horizon Fintech',
-      role: req?.roleDescription || req?.title || 'Senior Full-Stack Engineer',
-      budget: req?.budget || '$120.00 / hr',
-      timezone: req?.timezone || 'GMT+1 (Lagos)',
-      commitmentLevel: req?.commitmentLevel || 'Remote / Full-time'
+      clientName: info?.clientName || info?.companyName || 'Horizon Fintech',
+      role: info?.roleDescription || info?.title || 'Senior Full-Stack Engineer',
+      budget: info?.budget || '$120.00 / hr',
+      timezone: info?.timezone || 'GMT+1 (Lagos)',
+      commitmentLevel: info?.commitmentLevel || 'Remote / Full-time'
     };
   };
 
@@ -2684,20 +2704,6 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)', position: 'relative' }}>
       
-      {/* Toast popup */}
-      {toastMsg && (
-        <div style={{
-          position: 'fixed', top: '24px', right: '24px',
-          background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
-          color: '#FFFFFF', padding: '16px 24px', borderRadius: '12px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.2)',
-          zIndex: 9999, display: 'flex', alignItems: 'center', gap: '12px'
-        }}>
-          <span style={{ fontSize: '18px' }}>🚀</span>
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>{toastMsg}</span>
-        </div>
-      )}
-
       {/* Header */}
       <div>
         <h2 style={{ fontSize: '24px', fontWeight: 800, color: '#1A2340', marginBottom: '6px' }}>ATS Role Matching Pipeline</h2>
@@ -2763,7 +2769,7 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
                           <div>🌐 <strong>Timezone:</strong> {info.timezone}</div>
                         </div>
 
-                        {/* Status-specific action panels */}
+                        {/* Status-specific read-only panels */}
                         {m.status === 'Interview Scheduled' && (
                           <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '6px', padding: '8px', marginTop: '6px' }}>
                             <div style={{ fontSize: '10px', color: '#C2410C', fontWeight: 700, marginBottom: '4px' }}>
@@ -2772,17 +2778,9 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
                             <div style={{ fontSize: '10px', color: '#7C2D12', marginBottom: '6px' }}>
                               Slot: {m.requestedDate} at {m.requestedTime}
                             </div>
-                            <button 
-                              onClick={() => window.open('https://meet.google.com/kng-vetting-meet', '_blank')}
-                              style={{
-                                width: '100%', background: '#EA580C', border: 'none', color: '#FFFFFF',
-                                borderRadius: '6px', padding: '6px', fontSize: '10px', fontWeight: 700, cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px'
-                              }}
-                            >
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
-                              Join Video Call
-                            </button>
+                            <div style={{ fontSize: '9px', color: '#9A3412', textAlign: 'center', fontWeight: 600 }}>
+                              Check the Interviews tab to join
+                            </div>
                           </div>
                         )}
 
@@ -2791,25 +2789,8 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
                             <div style={{ fontSize: '10px', color: '#6D28D9', fontWeight: 700, marginBottom: '6px', textAlign: 'center' }}>
                               🎉 Retainer Offer Received!
                             </div>
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button 
-                                onClick={() => handleAction(m, 'Declined')}
-                                style={{
-                                  flex: 1, background: 'transparent', border: '1px solid #DDD6FE', color: '#6D28D9',
-                                  borderRadius: '6px', padding: '6px', fontSize: '10px', fontWeight: 600, cursor: 'pointer'
-                                }}
-                              >
-                                Decline
-                              </button>
-                              <button 
-                                onClick={() => handleAction(m, 'Offer Accepted')}
-                                style={{
-                                  flex: 2, background: '#7C3AED', border: 'none', color: '#FFFFFF',
-                                  borderRadius: '6px', padding: '6px', fontSize: '10px', fontWeight: 700, cursor: 'pointer'
-                                }}
-                              >
-                                Accept Offer
-                              </button>
+                            <div style={{ fontSize: '9px', color: '#5B21B6', textAlign: 'center', fontWeight: 600 }}>
+                              Check the Contracts tab to accept
                             </div>
                           </div>
                         )}
@@ -2819,8 +2800,8 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], onUpdateM
                             <div style={{ fontSize: '10px', color: '#065F46', fontWeight: 700 }}>
                               🎉 Offer Accepted & Deployed
                             </div>
-                            <div style={{ fontSize: '9px', color: '#047857', marginTop: '2px' }}>
-                              EOR contract is fully active. Visually verified in the Contract System ledger!
+                            <div style={{ fontSize: '9px', color: '#047857', marginTop: '4px', fontWeight: 600 }}>
+                              View details in Contracts tab
                             </div>
                           </div>
                         )}
