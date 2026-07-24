@@ -372,10 +372,29 @@ export default function KongilaWeb() {
 
       if (res && res.ok) {
         const dbData = await res.json();
+        // Fetch Organizations, Profiles, and Users from Supabase
+        const { data: supabaseOrgs } = await supabase.from('organizations').select('*');
+        if (supabaseOrgs) {
+          setOrganizations(supabaseOrgs);
+        } else {
+          setOrganizations(dbData.organizations || []);
+        }
+
+        const { data: supabaseClientProfiles } = await supabase.from('client_profiles').select('*');
+        if (supabaseClientProfiles) {
+          setClientProfiles(supabaseClientProfiles);
+        } else {
+          setClientProfiles(dbData.clientProfiles || []);
+        }
+
+        const { data: supabaseUsers } = await supabase.from('users').select('*');
+        if (supabaseUsers) {
+          setUsers(supabaseUsers);
+        } else {
+          setUsers(dbData.users || []);
+        }
+
         setTalents(dbData.talents || []);
-        setOrganizations(dbData.organizations || []);
-        setClientProfiles(dbData.clientProfiles || []);
-        setUsers(dbData.users || []);
         
         // Fetch service requests from Supabase
         let query = supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
@@ -434,7 +453,7 @@ export default function KongilaWeb() {
         }
 
         // Fetch messages
-        const { data: supabaseMsgs } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+        const { data: supabaseMsgs } = await supabase.from('messages').select('*').order('timestamp', { ascending: true });
         if (supabaseMsgs) {
           setMessages(supabaseMsgs);
         } else {

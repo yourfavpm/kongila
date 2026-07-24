@@ -1065,7 +1065,21 @@ export default function AdminPanel() {
   };
 
   const handleUpdateRequestStatus = async (requestId: string, newStatus: string) => {
-    const updatedRequests = requests.map(r => r.id === requestId ? { ...r, status: newStatus as any } : r);
+    const targetRequest = requests.find(r => r.id === requestId);
+    if (!targetRequest) return;
+    const updatedRequest = { ...targetRequest, status: newStatus as any };
+    
+    // Sync to Supabase
+    try {
+      await supabase
+        .from('talent_requests')
+        .update({ payload: updatedRequest })
+        .eq('payload->>id', requestId);
+    } catch (err) {
+      console.error('Failed to sync status update to Supabase:', err);
+    }
+
+    const updatedRequests = requests.map(r => r.id === requestId ? updatedRequest : r);
     setRequests(updatedRequests);
     await saveToDb({ talents, clientRequests: updatedRequests, matches, contracts, auditLogs: [{ id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Update Request Status', details: `Request ${requestId} updated to "${newStatus}".`, timestamp: new Date().toISOString() }, ...auditLogs], agentLogs, interviews, rehireRequests, tasks: [] });
   };

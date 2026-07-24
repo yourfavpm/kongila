@@ -630,6 +630,36 @@ export default function ClientDashboard({
     commitmentLevel: "Full-Time" as "Full-Time" | "Part-Time",
     notes: "",
   });
+  });
+
+  const handleRequestInterviewClick = (matchId: string, talentId: string, talentName: string) => {
+    if (!activeRequest) return;
+    const maxInterviews = (activeRequest.numberOfHires || 1) * 3;
+    const requestedInterviewsCount = matches.filter(
+      (m) =>
+        m.requestId === activeRequest.id &&
+        (m.status === "Interview Requested" ||
+          m.status === "Interview Scheduled" ||
+          m.status === "Interviewed")
+    ).length;
+
+    if (requestedInterviewsCount >= maxInterviews) {
+      alert(`You can only request up to ${maxInterviews} interviews for this role (${activeRequest.numberOfHires || 1} hire(s)).`);
+      return;
+    }
+
+    setRequestInterviewTarget({
+      matchId,
+      talentId,
+      talentName,
+      requestId: activeRequest.id,
+    });
+    setRequestInterviewForm((f) => ({
+      ...f,
+      date: new Date(Date.now() + 86400000 * 2).toISOString().split("T")[0],
+    }));
+    setShowRequestInterviewModal(true);
+  };
 
   const submitInterviewRequest = async () => {
     if (
@@ -3488,7 +3518,9 @@ export default function ClientDashboard({
                         color: "#0F172A",
                       }}
                     >
-                      ${request.budget?.toLocaleString() || "0"} / mo
+                      {request.budgetMinUsd && request.budgetMaxUsd 
+                        ? `$${request.budgetMinUsd.toLocaleString()} - $${request.budgetMaxUsd.toLocaleString()} / mo` 
+                        : `$${request.budget?.toLocaleString() || "0"} / mo`}
                     </div>
                   </div>
                 </div>
@@ -4491,19 +4523,7 @@ export default function ClientDashboard({
                         m.requestId === activeRequest.id,
                     );
                     if (match) {
-                      setRequestInterviewTarget({
-                        matchId: match.id,
-                        talentId: viewingTalentProfile.id,
-                        talentName: viewingTalentProfile.name,
-                        requestId: activeRequest.id,
-                      });
-                      setRequestInterviewForm((f) => ({
-                        ...f,
-                        date: new Date(Date.now() + 86400000 * 2)
-                          .toISOString()
-                          .split("T")[0],
-                      }));
-                      setShowRequestInterviewModal(true);
+                      handleRequestInterviewClick(match.id, viewingTalentProfile.id, viewingTalentProfile.name);
                     }
                     setViewingTalentProfile(null);
                   }}
@@ -5459,19 +5479,7 @@ export default function ClientDashboard({
                         >
                           <button
                             onClick={() => {
-                              setRequestInterviewTarget({
-                                matchId: cand.matchId,
-                                talentId: cand.talentId,
-                                talentName: cand.name,
-                                requestId: activeRequest.id,
-                              });
-                              setRequestInterviewForm((f) => ({
-                                ...f,
-                                date: new Date(Date.now() + 86400000 * 2)
-                                  .toISOString()
-                                  .split("T")[0],
-                              })); // Defaults to 2 days out
-                              setShowRequestInterviewModal(true);
+                              handleRequestInterviewClick(cand.matchId, cand.talentId, cand.name);
                             }}
                             disabled={cand.status !== "Shortlisted"}
                             style={{

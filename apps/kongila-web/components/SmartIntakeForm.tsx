@@ -31,6 +31,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     companyName: '',
     jobTitle: '',
     businessEmail: '',
+    phoneCode: '+1',
     phone: '',
     password: '',
     tosAccepted: false,
@@ -155,13 +156,13 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
             name: authData.companyName, 
             created_by: finalUserId,
             contact_email: authData.businessEmail,
-            contact_phone: authData.phone
+            contact_phone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null
           });
           if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
 
           // Create client profile
           const { error: cpErr } = await supabase.from('client_profiles').upsert({
-            id: crypto.randomUUID(), user_id: finalUserId, organization_id: orgId, position: authData.jobTitle, phone: authData.phone
+            id: crypto.randomUUID(), user_id: finalUserId, organization_id: orgId, position: authData.jobTitle, phone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null
           });
           if (cpErr) throw new Error(`Client Profile DB Error: ${cpErr.message}`);
         } else {
@@ -277,10 +278,11 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
                 <label className="form-label">Seniority Level <span style={{color:'red'}}>*</span></label>
                 <select className="form-select" value={formData.seniorityLevel || ''} onChange={e => updateForm('seniorityLevel', e.target.value)}>
                   <option value="">Select...</option>
-                  <option value="Associate">Associate</option>
-                  <option value="Specialist">Specialist</option>
-                  <option value="Consultant">Consultant</option>
-                  <option value="Manager">Manager</option>
+                  <option value="Junior (1-3 years)">Junior (1-3 years)</option>
+                  <option value="Mid-level (3-6 years)">Mid-level (3-6 years)</option>
+                  <option value="Senior (6-10 years)">Senior (6-10 years)</option>
+                  <option value="Lead (8-15 years)">Lead (8-15 years)</option>
+                  <option value="Executive (12+ years)">Executive (12+ years)</option>
                 </select>
               </div>
               <div className="form-group" style={{ flex: 1 }}>
@@ -307,13 +309,16 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
                 <input type="number" min={1} max={100} className="form-input" value={formData.teamSize || ''} onChange={e => updateForm('teamSize', Number(e.target.value))} />
               </div>
               <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Coverage Type <span style={{color:'red'}}>*</span></label>
+                <label className="form-label">
+                  Coverage Type <span style={{color:'red'}}>*</span>
+                  <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>The specific working hours and days you need the talent to be available</div>
+                </label>
                 <select className="form-select" value={formData.coverageType || ''} onChange={e => updateForm('coverageType', e.target.value)}>
                   <option value="">Select...</option>
-                  <option value="Standard">Standard</option>
-                  <option value="Extended">Extended</option>
-                  <option value="24-7">24-7</option>
-                  <option value="Custom">Custom</option>
+                  <option value="Standard (8 hours/day, 5 days/week)">Standard (8 hours/day, 5 days/week)</option>
+                  <option value="Extended (12 hours/day or weekends)">Extended (12 hours/day or weekends)</option>
+                  <option value="24-7 (Round the clock coverage)">24-7 (Round the clock coverage)</option>
+                  <option value="Custom (Specify your own hours)">Custom (Specify your own hours)</option>
                 </select>
               </div>
             </div>
@@ -324,7 +329,10 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               </div>
             )}
             <div className="form-group">
-              <label className="form-label">{isManaged ? 'Service Description & Outcomes' : 'Team Description'} <span style={{color:'red'}}>*</span></label>
+              <label className="form-label">
+                {isManaged ? 'Service Description & Outcomes' : 'Team Description'} <span style={{color:'red'}}>*</span>
+                <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>Describe the team's goals, existing structure, and what this specific role will contribute.</div>
+              </label>
               <textarea className="form-input" style={{ minHeight: '80px' }} value={formData.teamDescription || ''} onChange={e => updateForm('teamDescription', e.target.value)} />
             </div>
             
@@ -340,12 +348,15 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               </div>
             ) : (
               <div className="form-group">
-                <label className="form-label">Reporting Structure</label>
+                <label className="form-label">
+                  Reporting Structure
+                  <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>How will the talent be supervised and managed?</div>
+                </label>
                 <select className="form-select" value={formData.reportingStructure || ''} onChange={e => updateForm('reportingStructure', e.target.value)}>
                   <option value="">Select...</option>
-                  <option value="Client direct">Client direct</option>
-                  <option value="Kongila supervisor">Kongila supervisor</option>
-                  <option value="Hybrid">Hybrid</option>
+                  <option value="Client direct (Talent reports directly to you)">Client direct (Talent reports directly to you)</option>
+                  <option value="Kongila supervisor (Kongila manages the talent's day-to-day)">Kongila supervisor (Kongila manages the talent's day-to-day)</option>
+                  <option value="Hybrid (Shared supervision)">Hybrid (Shared supervision)</option>
                 </select>
               </div>
             )}
@@ -478,12 +489,15 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         </select>
       </div>
       <div className="form-group">
-        <label className="form-label">Role Criticality</label>
+        <label className="form-label">
+          Role Criticality
+          <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>How urgently does this role impact your core business operations?</div>
+        </label>
         <select className="form-select" value={formData.roleCriticality || ''} onChange={e => updateForm('roleCriticality', e.target.value)}>
           <option value="">Select...</option>
-          <option value="Nice to have">Nice to have</option>
-          <option value="Important">Important</option>
-          <option value="Business-critical">Business-critical</option>
+          <option value="Nice to have (Not urgent)">Nice to have (Not urgent)</option>
+          <option value="Important (Needed for upcoming goals)">Important (Needed for upcoming goals)</option>
+          <option value="Business-critical (Operations are affected without this hire)">Business-critical (Operations are affected without this hire)</option>
         </select>
       </div>
       <div className="form-group">
@@ -528,7 +542,24 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           </div>
           <div className="form-group">
             <label className="form-label">Phone</label>
-            <input type="tel" className="form-input" value={authData.phone} onChange={e => setAuthData({...authData, phone: e.target.value})} />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <select 
+                className="form-select" 
+                style={{ width: '110px' }} 
+                value={authData.phoneCode} 
+                onChange={e => setAuthData({...authData, phoneCode: e.target.value})}
+              >
+                <option value="+1">+1 (US)</option>
+                <option value="+44">+44 (UK)</option>
+                <option value="+234">+234 (NG)</option>
+                <option value="+61">+61 (AU)</option>
+                <option value="+91">+91 (IN)</option>
+                <option value="+49">+49 (DE)</option>
+                <option value="+33">+33 (FR)</option>
+                <option value="+81">+81 (JP)</option>
+              </select>
+              <input type="tel" style={{ flex: 1 }} className="form-input" value={authData.phone} onChange={e => setAuthData({...authData, phone: e.target.value})} />
+            </div>
           </div>
         </>
       )}

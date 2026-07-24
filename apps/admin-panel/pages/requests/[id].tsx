@@ -232,7 +232,11 @@ export default function RequestDetailView() {
                 </div>
                 <div>
                   <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Budget</div>
-                  <div style={{ fontWeight: 600 }}>{request.budget ? formatCurrency(request.budget) : 'Not specified'}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {request.budgetMinUsd && request.budgetMaxUsd 
+                      ? `${formatCurrency(request.budgetMinUsd)} - ${formatCurrency(request.budgetMaxUsd)}` 
+                      : request.budget ? formatCurrency(request.budget) : 'Not specified'}
+                  </div>
                 </div>
                 <div>
                   <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}>Duration & Commitment</div>

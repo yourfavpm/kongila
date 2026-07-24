@@ -50,8 +50,11 @@ export default function MatchingEngine() {
           setRequest(req);
         }
         
-        // Only load deployable talent
-        const allTalents = (db.talents || []).filter((t: any) => t.vettingStage === 'Vetted & Available');
+        // Only load deployable talent (A or A+ graded, and Vetted)
+        const allTalents = (db.talents || []).filter((t: any) => 
+          (t.vettingStage === 'Vetted & Available') || 
+          (t.vettingStatus === 'Vetted' && (t.grade === 'A' || t.grade === 'A+'))
+        );
         setTalents(allTalents);
         
         setMatches(db.matches || []);
