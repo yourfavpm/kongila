@@ -200,6 +200,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         priority: 'Medium', // default mapping
         
         ...formData,
+        id: crypto.randomUUID(),
         status: 'New Request',
         createdAt: new Date().toISOString(),
       };

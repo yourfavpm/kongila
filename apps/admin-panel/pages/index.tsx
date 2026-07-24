@@ -1478,9 +1478,9 @@ export default function AdminPanel() {
                         <td style={{ padding: '16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>
-                              {(org.accountManagerName || 'AM')[0]}
+                              {((adminUsers.find(u => u.id === org.account_manager_id)?.name || adminUsers.find(u => u.id === org.account_manager_id)?.email) || 'A')[0]}
                             </div>
-                            <span>{org.accountManagerName || 'Unassigned'}</span>
+                            <span>{adminUsers.find(u => u.id === org.account_manager_id)?.name || adminUsers.find(u => u.id === org.account_manager_id)?.email || 'Unassigned'}</span>
                           </div>
                         </td>
                         <td style={{ padding: '16px', fontWeight: 600, color: activeContracts.length > 0 ? 'var(--accent-green)' : 'var(--text-secondary)' }}>

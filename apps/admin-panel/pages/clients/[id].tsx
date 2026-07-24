@@ -230,11 +230,11 @@ export default function ClientProfileView() {
                 <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px' }}>Account Manager</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                    {(client.accountManagerName || 'A')[0]}
+                    {((adminUsers.find(u => u.id === client.account_manager_id)?.name || adminUsers.find(u => u.id === client.account_manager_id)?.email) || 'A')[0]}
                   </div>
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: '14px' }}>{client.accountManagerName || 'Unassigned'}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ID: {client.accountManagerId || 'N/A'}</div>
+                    <div style={{ fontWeight: 600, fontSize: '14px' }}>{adminUsers.find(u => u.id === client.account_manager_id)?.name || adminUsers.find(u => u.id === client.account_manager_id)?.email || 'Unassigned'}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ID: {client.account_manager_id || 'N/A'}</div>
                   </div>
                 </div>
                 <button onClick={() => setShowReassignModal(true)} className="btn-primary" style={{ width: '100%', fontSize: '13px', padding: '8px', borderRadius: '6px' }}>

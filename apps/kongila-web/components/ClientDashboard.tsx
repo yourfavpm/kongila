@@ -1083,6 +1083,12 @@ export default function ClientDashboard({
   const renderDashboard = () => {
     // ─── KC-HOME: Derived data ───────────────────────────────────────────────
     const now = new Date();
+    
+    // Account Manager Lookup
+    const clientProfile = clientProfiles?.find(cp => cp.user_id === currentUser?.id || cp.userId === currentUser?.id);
+    const myOrg = organizations?.find(o => o.id === clientProfile?.organization_id || o.id === clientProfile?.organizationId);
+    const amUser = users?.find(u => u.id === myOrg?.account_manager_id);
+    const accountManagerName = amUser ? (amUser.name || amUser.email) : 'Unassigned';
 
     // Active Service Requests widget
     const openRequests = clientRequests.filter(
@@ -1391,7 +1397,7 @@ export default function ClientDashboard({
                 (e.currentTarget.style.background = "#FFFFFF")
               }
             >
-              💬 Message Account Manager
+              💬 Message {accountManagerName !== 'Unassigned' ? accountManagerName : 'Account Manager'}
             </button>
             <button
               onClick={() => setActiveSection("billing")}

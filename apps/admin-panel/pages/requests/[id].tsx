@@ -121,6 +121,15 @@ export default function RequestDetailView() {
 
       if (updateErr) throw updateErr;
       
+      // Update the organization's account manager if one was assigned
+      if (formData.assignedAccountManagerId && client?.id) {
+        const { error: orgErr } = await supabase
+          .from('organizations')
+          .update({ account_manager_id: formData.assignedAccountManagerId })
+          .eq('id', client.id);
+        if (orgErr) console.error("Failed to update org AM:", orgErr);
+      }
+      
       // Add a real audit log via Supabase
       const { error: auditErr } = await supabase.from('audit_logs').insert({
         actor: 'Super Admin',

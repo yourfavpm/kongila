@@ -199,7 +199,7 @@ export default function MatchingEngine() {
         details: `Submitted ${selectedCandidateIds.length} candidates for request ${requestId}`
       });
 
-      // Update local db matches
+      // Update local db matches (fallback)
       await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -207,6 +207,30 @@ export default function MatchingEngine() {
           matches: [...(db.matches || []), ...newMatches]
         })
       });
+
+      // Insert real matches into Supabase
+      const matchesToInsert = newMatches.map(m => ({
+        id: m.id,
+        request_id: m.requestId,
+        talent_id: m.talentId,
+        status: m.status.toLowerCase(),
+        score: m.score,
+        breakdown: m.breakdown
+      }));
+      await supabase.from('matches').upsert(matchesToInsert);
+
+      // Create a notification for the client
+      if (request.clientId) {
+        await supabase.from('notifications').insert({
+          id: crypto.randomUUID(),
+          user_id: request.clientId,
+          title: 'New Talent Matches',
+          message: `Admin has matched ${selectedCandidateIds.length} candidate(s) to your request.`,
+          module_type: 'radar',
+          read: false,
+          created_at: new Date().toISOString()
+        });
+      }
 
       addToast('Candidates successfully submitted to the client!', 'success');
       router.push(`/requests/${requestId}`);
