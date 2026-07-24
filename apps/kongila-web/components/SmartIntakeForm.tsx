@@ -200,13 +200,14 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         timezone: (formData.preferredTimezones || []).join(', ') || 'EST',
         startDate: formData.startDate || new Date().toISOString(),
         budget: formData.budgetMinUsd || 0,
-        priority: 'Medium', // default mapping
-        
+        priority: 'Medium',
         ...formData,
-        id: crypto.randomUUID(),
-        status: 'New Request',
-        createdAt: new Date().toISOString(),
+        // These must override any same-named keys from the spread above
+        id: undefined as any, // id is set below; avoids TS duplicate key error
       };
+      (payload as any).id = crypto.randomUUID();
+      (payload as any).status = 'New Request';
+      (payload as any).createdAt = new Date().toISOString();
 
       const { error: dbErr } = await supabase.from('talent_requests').insert([{
         client_id: finalUserId,
