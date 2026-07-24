@@ -58,16 +58,22 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
         if (!role || !ADMIN_PORTAL_ROLES.has(role)) {
           // If user doesn't exist yet in public.users, auto-provision admin row
           if (!userData && data.user.email?.endsWith('@kongila.co')) {
-            const provisionedRole = data.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
             const { error: upsertErr } = await supabase.from('users').upsert({
               id: data.user.id,
               email: data.user.email,
               password_hash: 'auth_managed',
-              role: provisionedRole,
+              role: 'admin',
               status: 'active',
               email_verified: true
             }, { onConflict: 'id' });
             if (!upsertErr) {
+              if (data.user.email.toLowerCase() === 'admin@kongila.co') {
+                await supabase.from('user_roles').upsert({
+                  id: `ur_${data.user.id}_super_admin`,
+                  user_id: data.user.id,
+                  role_id: 'super_admin',
+                }, { onConflict: 'id' });
+              }
               onLoginSuccess();
               return;
             }

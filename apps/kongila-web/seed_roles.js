@@ -55,16 +55,26 @@ async function run() {
     const { error: adminUpdateErr } = await supabase
       .from('users')
       .update({
-        role: 'super_admin',
+        role: 'admin',
         status: 'active',
         email_verified: true
       })
       .eq('id', bootstrapAdmin.id);
 
     if (adminUpdateErr) {
-      console.error('Failed to promote admin@kongila.co to super_admin:', adminUpdateErr.message);
+      console.error('Failed to verify admin@kongila.co user row:', adminUpdateErr.message);
     } else {
-      console.log('Verified admin@kongila.co as super_admin');
+      const { error: adminRoleErr } = await supabase.from('user_roles').upsert({
+        id: `ur_${bootstrapAdmin.id}_super_admin`,
+        user_id: bootstrapAdmin.id,
+        role_id: 'super_admin'
+      }, { onConflict: 'id' });
+
+      if (adminRoleErr) {
+        console.error('Failed to assign super_admin role to admin@kongila.co:', adminRoleErr.message);
+      } else {
+        console.log('Verified admin@kongila.co as super_admin');
+      }
     }
   }
 

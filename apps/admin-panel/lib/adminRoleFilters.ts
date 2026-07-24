@@ -56,7 +56,12 @@ export const mergeAuthenticatedUserIntoAssignableUsers = (
   const authName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || null;
   const authEmail = authUser.email || null;
 
-  const existingIndex = users.findIndex((user) => user.id === authUser.id);
+  const normalizedAuthEmail = String(authEmail || '').trim().toLowerCase();
+  const existingIndex = users.findIndex((user) =>
+    user.id === authUser.id ||
+    (normalizedAuthEmail && String(user.email || '').trim().toLowerCase() === normalizedAuthEmail)
+  );
+
   if (existingIndex >= 0) {
     return users.map((user, index) => index === existingIndex ? {
       ...user,
@@ -135,4 +140,21 @@ export const formatAssignableUserLabel = (user: AssignableUser) => {
   const label = user.name || user.email || user.id;
   const roleLabels = Array.from(getUserRoleKeys(user)).slice(0, 3).join(', ');
   return roleLabels ? `${label} (${roleLabels})` : label;
+};
+
+export const getDatabaseSafeAdminRole = (user: AssignableUser) => {
+  const keys = getUserRoleKeys(user);
+  if (keys.has('operations_manager') || keys.has('ops_manager')) return 'ops_manager';
+  return 'admin';
+};
+
+export const getPrimaryAssignableRoleId = (user: AssignableUser, fallbackRole = 'admin') => {
+  const keys = getUserRoleKeys(user);
+  if (keys.has('super_admin')) return 'super_admin';
+  if (keys.has('superadmin')) return 'super_admin';
+  if (keys.has('account_manager')) return 'account_manager';
+  if (keys.has('operations_manager')) return 'operations_manager';
+  if (keys.has('ops_manager')) return 'ops_manager';
+  if (keys.has('talent_manager')) return 'talent_manager';
+  return fallbackRole;
 };

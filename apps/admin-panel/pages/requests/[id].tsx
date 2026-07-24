@@ -8,6 +8,8 @@ import { supabase } from '../../lib/supabaseClient';
 import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
+  getDatabaseSafeAdminRole,
+  getPrimaryAssignableRoleId,
   isAccountManagerAssignable,
   isTalentManagerAssignable,
   mergeAuthenticatedUserIntoAssignableUsers,
@@ -198,6 +200,7 @@ export default function RequestDetailView() {
   };
 
   const handleSave = async () => {
+    const requestId = Array.isArray(id) ? id[0] : id;
     const normalizedStatus = normalizeRequestStatus(formData.status);
     if (normalizedStatus === 'Sourcing Talent' && !formData.assignedTalentManagerId) {
       alert("You must assign a Talent Manager before advancing to 'Sourcing Talent' (Matching).");
@@ -206,6 +209,53 @@ export default function RequestDetailView() {
 
     setIsSubmitting(true);
     try {
+      const ensureAssignableUserExists = async (userId: string, label: string) => {
+        const user = adminUsers.find(u => u.id === userId);
+        if (!user) throw new Error(`Selected ${label} could not be found. Please refresh and try again.`);
+        if (!user.email) throw new Error(`Selected ${label} is missing an email address and cannot be saved.`);
+
+        const safeUserRole = getDatabaseSafeAdminRole(user);
+        const assignableRoleId = getPrimaryAssignableRoleId(user, safeUserRole);
+
+        const { error: userUpsertError } = await supabase.from('users').upsert({
+          id: user.id,
+          email: user.email,
+          password_hash: 'auth_managed',
+          role: safeUserRole,
+          status: 'active',
+          email_verified: true,
+        }, { onConflict: 'id' });
+
+        if (userUpsertError) {
+          throw new Error(`Could not prepare ${label} user record: ${userUpsertError.message}`);
+        }
+
+        const { error: roleUpsertError } = await supabase.from('roles').upsert({
+          id: assignableRoleId,
+          name: assignableRoleId,
+        }, { onConflict: 'id' });
+
+        if (roleUpsertError) {
+          console.error(`Failed to verify ${label} role:`, roleUpsertError);
+          return;
+        }
+
+        const { error: userRoleError } = await supabase.from('user_roles').upsert({
+          id: `ur_${user.id}_${assignableRoleId}`,
+          user_id: user.id,
+          role_id: assignableRoleId,
+        }, { onConflict: 'id' });
+
+        if (userRoleError) console.error(`Failed to verify ${label} user role:`, userRoleError);
+      };
+
+      if (formData.assignedAccountManagerId) {
+        await ensureAssignableUserExists(formData.assignedAccountManagerId, 'Account Manager');
+      }
+      if (formData.assignedTalentManagerId) {
+        await ensureAssignableUserExists(formData.assignedTalentManagerId, 'Talent Manager');
+      }
+
       const updatedPayload = {
         ...request,
         status: normalizedStatus,
@@ -223,7 +273,7 @@ export default function RequestDetailView() {
           talent_manager_id: formData.assignedTalentManagerId || null,
           account_manager_id: formData.assignedAccountManagerId || null,
         })
-        .eq('payload->>id', id as string);
+        .eq('payload->>id', requestId as string);
 
       if (updateErr) throw updateErr;
 
@@ -233,14 +283,14 @@ export default function RequestDetailView() {
           .from('organizations')
           .update({ account_manager_id: formData.assignedAccountManagerId })
           .eq('id', client.id);
-        if (orgErr) console.error('Failed to update org AM:', orgErr);
+        if (orgErr) throw new Error(`Failed to update client Account Manager: ${orgErr.message}`);
       }
 
       // 3. Audit log
       await supabase.from('audit_logs').insert({
         actor: 'Super Admin',
         action: 'Update Service Request',
-        details: `Updated request ${id} → status: ${normalizedStatus}, AM: ${formData.assignedAccountManagerId}, TM: ${formData.assignedTalentManagerId}`
+        details: `Updated request ${requestId} → status: ${normalizedStatus}, AM: ${formData.assignedAccountManagerId}, TM: ${formData.assignedTalentManagerId}`
       });
 
       // 4. Keep the local snapshot in sync for legacy views and fallback readers.
@@ -249,7 +299,7 @@ export default function RequestDetailView() {
         if (dbRes.ok) {
           const db = await dbRes.json();
           const updatedRequests = (db.clientRequests || []).map((req: any) =>
-            req.id === id ? { ...req, ...updatedPayload } : req
+            req.id === requestId ? { ...req, ...updatedPayload } : req
           );
           await fetch('/api/db', {
             method: 'POST',
@@ -266,7 +316,7 @@ export default function RequestDetailView() {
       setIsEditing(false);
     } catch (e) {
       console.error(e);
-      alert('Failed to save request.');
+      alert(`Failed to save request: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
     }

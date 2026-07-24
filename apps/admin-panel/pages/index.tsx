@@ -436,15 +436,21 @@ export default function AdminPanel() {
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
             // Auto-provision admin row for @kongila.co email if missing from public.users
-            const provisionedRole = session.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
             await supabase.from('users').upsert({
               id: session.user.id,
               email: session.user.email,
               password_hash: 'auth_managed',
-              role: provisionedRole,
+              role: 'admin',
               status: 'active',
               email_verified: true
             }, { onConflict: 'id' });
+            if (session.user.email.toLowerCase() === 'admin@kongila.co') {
+              await supabase.from('user_roles').upsert({
+                id: `ur_${session.user.id}_super_admin`,
+                user_id: session.user.id,
+                role_id: 'super_admin',
+              }, { onConflict: 'id' });
+            }
             setIsAuthenticated(true);
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else {
@@ -468,15 +474,21 @@ export default function AdminPanel() {
         if (ADMIN_PORTAL_ROLES.has(role)) {
           setIsAuthenticated(true);
         } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
-          const provisionedRole = session.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
           await supabase.from('users').upsert({
             id: session.user.id,
             email: session.user.email,
             password_hash: 'auth_managed',
-            role: provisionedRole,
+            role: 'admin',
             status: 'active',
             email_verified: true
           }, { onConflict: 'id' });
+          if (session.user.email.toLowerCase() === 'admin@kongila.co') {
+            await supabase.from('user_roles').upsert({
+              id: `ur_${session.user.id}_super_admin`,
+              user_id: session.user.id,
+              role_id: 'super_admin',
+            }, { onConflict: 'id' });
+          }
           setIsAuthenticated(true);
         } else {
           await supabase.auth.signOut();

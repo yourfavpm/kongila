@@ -7,6 +7,8 @@ import { supabase } from '../../lib/supabaseClient';
 import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
+  getDatabaseSafeAdminRole,
+  getPrimaryAssignableRoleId,
   isAccountManagerAssignable,
   mergeAuthenticatedUserIntoAssignableUsers,
 } from '../../lib/adminRoleFilters';
@@ -148,8 +150,51 @@ export default function ClientProfileView() {
     
     setIsSubmitting(true);
     const newAm = adminUsers.find(u => u.id === reassignForm.newAmId);
+    if (!newAm) {
+      alert('Selected Account Manager could not be found. Please refresh and try again.');
+      setIsSubmitting(false);
+      return;
+    }
     
     try {
+      const adminEmail = newAm.email;
+      if (!adminEmail) {
+        throw new Error('Selected Account Manager is missing an email address and cannot be saved.');
+      }
+
+      const safeUserRole = getDatabaseSafeAdminRole(newAm);
+      const assignableRoleId = getPrimaryAssignableRoleId(newAm, safeUserRole);
+
+      const { error: userUpsertError } = await supabase.from('users').upsert({
+        id: newAm.id,
+        email: adminEmail,
+        password_hash: 'auth_managed',
+        role: safeUserRole,
+        status: 'active',
+        email_verified: true,
+      }, { onConflict: 'id' });
+
+      if (userUpsertError) {
+        throw new Error(`Could not prepare Account Manager user record: ${userUpsertError.message}`);
+      }
+
+      const { error: roleUpsertError } = await supabase.from('roles').upsert({
+        id: assignableRoleId,
+        name: assignableRoleId,
+      }, { onConflict: 'id' });
+
+      if (roleUpsertError) {
+        console.error('Failed to verify Account Manager role:', roleUpsertError);
+      } else {
+        const { error: userRoleError } = await supabase.from('user_roles').upsert({
+          id: `ur_${newAm.id}_${assignableRoleId}`,
+          user_id: newAm.id,
+          role_id: assignableRoleId,
+        }, { onConflict: 'id' });
+
+        if (userRoleError) console.error('Failed to verify Account Manager user role:', userRoleError);
+      }
+
       // Update the organization in Supabase
       const { error: orgError } = await supabase
         .from('organizations')
@@ -186,7 +231,7 @@ export default function ClientProfileView() {
       alert(`Account Manager successfully assigned to ${newAm.name || newAm.email}.`);
     } catch (e) {
       console.error(e);
-      alert('Failed to save Account Manager.');
+      alert(`Failed to save Account Manager: ${e instanceof Error ? e.message : 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
     }
