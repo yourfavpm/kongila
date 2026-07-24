@@ -190,24 +190,28 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         clientId: finalUserId,
         clientName: finalClientName,
         serviceType: formData.serviceType as ServiceType,
-        
-        // Legacy required fields mapping
-        roleDescription: formData.roleDescription || formData.description || formData.projectDescription || '',
+        status: 'New Request' as any,
+        createdAt: new Date().toISOString(),
+
+        // Field mappings
+        roleDescription: formData.roleDescription || formData.description || (formData as any).projectDescription || '',
         requiredSkills: formData.requiredSkills || [],
-        duration: formData.duration || formData.durationType || 'Flexible',
-        commitmentLevel: formData.commitmentLevel || formData.engagementType || 'Full-Time',
-        numberOfHires: formData.numberOfHires || formData.numOfTalents || formData.teamSize || 1,
+        duration: formData.duration || (formData as any).durationType || 'Flexible',
+        commitmentLevel: formData.commitmentLevel || (formData as any).engagementType || 'Full-Time',
+        numberOfHires: formData.numberOfHires || (formData as any).numOfTalents || (formData as any).teamSize || 1,
         timezone: (formData.preferredTimezones || []).join(', ') || 'EST',
         startDate: formData.startDate || new Date().toISOString(),
         budget: formData.budgetMinUsd || 0,
-        priority: 'Medium',
-        ...formData,
-        // These must override any same-named keys from the spread above
-        id: undefined as any, // id is set below; avoids TS duplicate key error
+        priority: (formData.priority || 'Medium') as any,
+
+        // Pass through remaining optional fields from formData
+        currency: formData.currency,
+        budgetMinUsd: formData.budgetMinUsd,
+        budgetMaxUsd: formData.budgetMaxUsd,
+        budgetUnknown: formData.budgetUnknown,
+        preferredTimezones: formData.preferredTimezones,
+        description: (formData as any).description,
       };
-      (payload as any).id = crypto.randomUUID();
-      (payload as any).status = 'New Request';
-      (payload as any).createdAt = new Date().toISOString();
 
       const { error: dbErr } = await supabase.from('talent_requests').insert([{
         client_id: finalUserId,
