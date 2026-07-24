@@ -7611,7 +7611,7 @@ export default function TalentDashboard({
       case 'vetting_progress':
         return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
-      case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} onUpdateMatch={onUpdateMatch} />;
+      case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} interviews={interviews} contracts={contracts} />;
       case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} />;
       case 'contracts':        return <ContractSection profile={talentProfile} />;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
