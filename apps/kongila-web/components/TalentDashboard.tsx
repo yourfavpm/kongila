@@ -2670,20 +2670,6 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], interview
     { id: 'accepted', title: 'Placements', statusList: ['Offer Accepted'], color: '#16A34A' }
   ];
 
-  const handleAction = (match: any, newStatus: 'Offer Accepted' | 'Declined') => {
-    if (onUpdateMatch) {
-      onUpdateMatch({
-        ...match,
-        status: newStatus
-      });
-      if (newStatus === 'Offer Accepted') {
-        showToast('🎉 Offer Accepted! EOR Retainer contract spawned instantly.');
-      } else {
-        showToast('Offer declined. Matching system notified.');
-      }
-    }
-  };
-
   const getRequestInfo = (requestId: string) => {
     const info = getRequestInfoLocally(requestId, clientRequests);
     return {
