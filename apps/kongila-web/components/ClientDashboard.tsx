@@ -632,6 +632,7 @@ export default function ClientDashboard({
   });
 
   const handleRequestInterviewClick = (matchId: string, talentId: string, talentName: string) => {
+    const activeRequest = selectedRequest;
     if (!activeRequest) return;
     const maxInterviews = (activeRequest.numberOfHires || 1) * 3;
     const requestedInterviewsCount = matches.filter(
