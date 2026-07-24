@@ -107,6 +107,23 @@ export default function RequestDetailView() {
             }
           }
         }
+      } else {
+        const fallbackRequest = (localDb?.clientRequests || []).find((req: any) => req.id === id);
+        if (fallbackRequest) {
+          const mergedFallback = {
+            ...fallbackRequest,
+            status: normalizeRequestStatus(fallbackRequest.status),
+          };
+          setRequestRow(null);
+          setRequest(mergedFallback);
+          setFormData({
+            status: normalizeRequestStatus(fallbackRequest.status),
+            urgency: fallbackRequest.urgency || 'Standard',
+            assignedAccountManagerId: fallbackRequest.assignedAccountManagerId || '',
+            assignedTalentManagerId: fallbackRequest.assignedTalentManagerId || '',
+            internalNotes: fallbackRequest.internalNotes || ''
+          });
+        }
       }
 
       setAdminUsers(adminData || []);
