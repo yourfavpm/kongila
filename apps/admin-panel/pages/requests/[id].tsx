@@ -36,12 +36,15 @@ export default function RequestDetailView() {
   const fetchAll = async () => {
     try {
       setLoading(true);
+      const requestId = Array.isArray(id) ? id[0] : id;
+      if (!requestId) return;
 
-      // Fetch the full row including the new dedicated columns
+      // Keep this query deliberately simple; detail pages must still open if
+      // optional relationship metadata is not present in the Supabase schema.
       const requestPromise = supabase
         .from('talent_requests')
-        .select('*, talent_manager:talent_manager_id(id, name, email), account_manager:account_manager_id(id, name, email)')
-        .eq('payload->>id', id as string)
+        .select('*')
+        .eq('payload->>id', requestId)
         .maybeSingle();
 
       // Fetch all admin/ops users for the dropdowns
@@ -57,9 +60,11 @@ export default function RequestDetailView() {
         dbPromise
       ]);
 
-      if (reqError) { console.error(reqError); return; }
+      if (reqError) {
+        console.error('Failed to load request from talent_requests:', reqError);
+      }
 
-      if (requestData && requestData.payload) {
+      if (!reqError && requestData && requestData.payload) {
         const row = requestData;
         const req = row.payload;
 
@@ -108,7 +113,7 @@ export default function RequestDetailView() {
           }
         }
       } else {
-        const fallbackRequest = (localDb?.clientRequests || []).find((req: any) => req.id === id);
+        const fallbackRequest = (localDb?.clientRequests || []).find((req: any) => req.id === requestId);
         if (fallbackRequest) {
           const mergedFallback = {
             ...fallbackRequest,
@@ -132,13 +137,13 @@ export default function RequestDetailView() {
       const supaMatches = await supabase
         .from('matches')
         .select('*')
-        .eq('request_id', id as string);
+        .eq('request_id', requestId);
 
       const combinedMatches: any[] = supaMatches.data || [];
 
       // Merge local db matches as fallback
       if (localDb?.matches) {
-        const localMatches = (localDb.matches as any[]).filter((m: any) => m.requestId === id);
+        const localMatches = (localDb.matches as any[]).filter((m: any) => m.requestId === requestId);
         localMatches.forEach(lm => {
           if (!combinedMatches.find(sm => sm.id === lm.id)) combinedMatches.push(lm);
         });
