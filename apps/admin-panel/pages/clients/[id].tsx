@@ -8,6 +8,7 @@ import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
   isAccountManagerAssignable,
+  mergeAuthenticatedUserIntoAssignableUsers,
 } from '../../lib/adminRoleFilters';
 
 type Tab = 'overview' | 'requests' | 'active-talent' | 'contracts' | 'billing' | 'communication';
@@ -75,12 +76,14 @@ export default function ClientProfileView() {
       setLoading(false);
 
       // 2. Fetch heavy relational data asynchronously in the background
-      const adminsPromise = supabase.from('users').select('id, name, email, role');
+      const sessionPromise = supabase.auth.getSession();
+      const adminsPromise = supabase.from('users').select('id, name, email, role, platform_access');
       const rolesPromise = supabase.from('roles').select('id, name');
       const userRolesPromise = supabase.from('user_roles').select('user_id, role_id');
       const dbPromise = fetch('/api/db').then(res => res.json());
 
-      const [{ data: admins }, { data: roles }, { data: userRoles }, db] = await Promise.all([
+      const [{ data: { session } }, { data: admins }, { data: roles }, { data: userRoles }, db] = await Promise.all([
+        sessionPromise,
         adminsPromise,
         rolesPromise,
         userRolesPromise,
@@ -88,7 +91,10 @@ export default function ClientProfileView() {
       ]);
 
       setAdminUsers(
-        enrichUsersWithRoleAssignments(admins || [], roles || [], userRoles || []).filter(isAccountManagerAssignable)
+        mergeAuthenticatedUserIntoAssignableUsers(
+          enrichUsersWithRoleAssignments(admins || [], roles || [], userRoles || []),
+          session?.user,
+        ).filter(isAccountManagerAssignable)
       );
         
       // Fetch client profiles

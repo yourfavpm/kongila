@@ -6,6 +6,8 @@ export type AssignableUser = {
   platform_access?: string[] | string | null;
   assignedRoleIds?: string[];
   assignedRoleNames?: string[];
+  authRole?: string | null;
+  authRoles?: string[] | string | null;
 };
 
 const normalizeRoleKey = (role: any) =>
@@ -25,14 +27,57 @@ export const getUserRoleKeys = (user: AssignableUser) => {
   const keys = new Set<string>();
   [
     user.role,
+    user.authRole,
     ...(user.assignedRoleIds || []),
     ...(user.assignedRoleNames || []),
+    ...(Array.isArray(user.authRoles) ? user.authRoles : typeof user.authRoles === 'string' ? user.authRoles.split(',') : []),
     ...getPlatformAccessRoles(user),
   ].forEach((role) => {
     const key = normalizeRoleKey(role);
     if (key) keys.add(key);
   });
+
+  // Production bootstrap account: keep it assignable even when public.users is stale.
+  if (String(user.email || '').trim().toLowerCase() === 'admin@kongila.co') {
+    keys.add('super_admin');
+  }
+
   return keys;
+};
+
+export const mergeAuthenticatedUserIntoAssignableUsers = (
+  users: AssignableUser[] = [],
+  authUser?: any,
+): AssignableUser[] => {
+  if (!authUser?.id) return users;
+
+  const authRole = authUser.user_metadata?.role || authUser.app_metadata?.role || null;
+  const authRoles = authUser.user_metadata?.roles || authUser.app_metadata?.roles || null;
+  const authName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || null;
+  const authEmail = authUser.email || null;
+
+  const existingIndex = users.findIndex((user) => user.id === authUser.id);
+  if (existingIndex >= 0) {
+    return users.map((user, index) => index === existingIndex ? {
+      ...user,
+      name: user.name || authName,
+      email: user.email || authEmail,
+      authRole,
+      authRoles,
+    } : user);
+  }
+
+  return [
+    ...users,
+    {
+      id: authUser.id,
+      name: authName,
+      email: authEmail,
+      role: authRole,
+      authRole,
+      authRoles,
+    },
+  ];
 };
 
 export const enrichUsersWithRoleAssignments = (

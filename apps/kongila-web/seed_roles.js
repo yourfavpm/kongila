@@ -43,6 +43,31 @@ async function run() {
     }
   }
 
+  const { data: bootstrapAdmin, error: bootstrapErr } = await supabase
+    .from('users')
+    .select('id, email')
+    .eq('email', 'admin@kongila.co')
+    .maybeSingle();
+
+  if (bootstrapErr) {
+    console.error('Failed to check bootstrap super admin:', bootstrapErr.message);
+  } else if (bootstrapAdmin) {
+    const { error: adminUpdateErr } = await supabase
+      .from('users')
+      .update({
+        role: 'super_admin',
+        status: 'active',
+        email_verified: true
+      })
+      .eq('id', bootstrapAdmin.id);
+
+    if (adminUpdateErr) {
+      console.error('Failed to promote admin@kongila.co to super_admin:', adminUpdateErr.message);
+    } else {
+      console.log('Verified admin@kongila.co as super_admin');
+    }
+  }
+
   // Also seed user_roles for any existing users in the public.users table!
   const { data: users } = await supabase.from('users').select('*');
   if (users) {

@@ -10,6 +10,7 @@ import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
   isTalentManagerAssignable,
+  mergeAuthenticatedUserIntoAssignableUsers,
 } from '../../lib/adminRoleFilters';
 
 const Chip = ({ label, color = 'var(--text-primary)', bg = 'var(--bg-tertiary)' }: any) => (
@@ -81,19 +82,24 @@ export default function TalentProfileView() {
       setDocuments(db.documents || []);
 
       const [
+        { data: { session } },
         { data: users },
         { data: roles },
         { data: userRoles },
       ] = await Promise.all([
-        supabase.from('users').select('id, name, email, role'),
+        supabase.auth.getSession(),
+        supabase.from('users').select('id, name, email, role, platform_access'),
         supabase.from('roles').select('id, name'),
         supabase.from('user_roles').select('user_id, role_id'),
       ]);
 
-      const assignableTalentManagers = enrichUsersWithRoleAssignments(
-        users || db.users || [],
-        roles || [],
-        userRoles || [],
+      const assignableTalentManagers = mergeAuthenticatedUserIntoAssignableUsers(
+        enrichUsersWithRoleAssignments(
+          users || db.users || [],
+          roles || [],
+          userRoles || [],
+        ),
+        session?.user,
       ).filter(isTalentManagerAssignable);
       setAdminUsers(assignableTalentManagers);
     } catch (err) {

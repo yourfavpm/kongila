@@ -18,6 +18,22 @@ import {
 } from '@kongila/shared-types';
 import AssessmentWizard from '../components/AssessmentWizard';
 
+const ADMIN_PORTAL_ROLES = new Set([
+  'super_admin',
+  'superadmin',
+  'admin',
+  'account_manager',
+  'operations_manager',
+  'ops_manager',
+  'talent_manager',
+]);
+
+const normalizeAdminRole = (role: any) =>
+  String(role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
 // ─── TYPE DEFINITIONS ───────────────────────────────────────────────────────
 
 type AdminTab =
@@ -414,17 +430,18 @@ export default function AdminPanel() {
       try {
         if (session?.user) {
           const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
-          const role = userData?.role || session.user.user_metadata?.role || '';
-          if (role === 'admin' || role === 'ops_manager') {
+          const role = normalizeAdminRole(userData?.role || session.user.user_metadata?.role || session.user.app_metadata?.role || '');
+          if (ADMIN_PORTAL_ROLES.has(role)) {
             setIsAuthenticated(true);
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
             // Auto-provision admin row for @kongila.co email if missing from public.users
+            const provisionedRole = session.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
             await supabase.from('users').upsert({
               id: session.user.id,
               email: session.user.email,
               password_hash: 'auth_managed',
-              role: 'admin',
+              role: provisionedRole,
               status: 'active',
               email_verified: true
             }, { onConflict: 'id' });
@@ -447,7 +464,19 @@ export default function AdminPanel() {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
-        if (userData && (userData.role === 'admin' || userData.role === 'ops_manager')) {
+        const role = normalizeAdminRole(userData?.role || session.user.user_metadata?.role || session.user.app_metadata?.role || '');
+        if (ADMIN_PORTAL_ROLES.has(role)) {
+          setIsAuthenticated(true);
+        } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
+          const provisionedRole = session.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
+          await supabase.from('users').upsert({
+            id: session.user.id,
+            email: session.user.email,
+            password_hash: 'auth_managed',
+            role: provisionedRole,
+            status: 'active',
+            email_verified: true
+          }, { onConflict: 'id' });
           setIsAuthenticated(true);
         } else {
           await supabase.auth.signOut();

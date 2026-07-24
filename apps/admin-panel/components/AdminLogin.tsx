@@ -6,6 +6,22 @@ interface AdminLoginProps {
   onLoginSuccess: () => void;
 }
 
+const ADMIN_PORTAL_ROLES = new Set([
+  'super_admin',
+  'superadmin',
+  'admin',
+  'account_manager',
+  'operations_manager',
+  'ops_manager',
+  'talent_manager',
+]);
+
+const normalizeRole = (role: any) =>
+  String(role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
 export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,16 +53,17 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           throw new Error('Failed to verify admin role.');
         }
 
-        const role = userData?.role || data.user.user_metadata?.role || '';
+        const role = normalizeRole(userData?.role || data.user.user_metadata?.role || data.user.app_metadata?.role || '');
 
-        if (!role || (role !== 'admin' && role !== 'ops_manager')) {
+        if (!role || !ADMIN_PORTAL_ROLES.has(role)) {
           // If user doesn't exist yet in public.users, auto-provision admin row
           if (!userData && data.user.email?.endsWith('@kongila.co')) {
+            const provisionedRole = data.user.email.toLowerCase() === 'admin@kongila.co' ? 'super_admin' : 'admin';
             const { error: upsertErr } = await supabase.from('users').upsert({
               id: data.user.id,
               email: data.user.email,
               password_hash: 'auth_managed',
-              role: 'admin',
+              role: provisionedRole,
               status: 'active',
               email_verified: true
             }, { onConflict: 'id' });

@@ -10,6 +10,7 @@ import {
   formatAssignableUserLabel,
   isAccountManagerAssignable,
   isTalentManagerAssignable,
+  mergeAuthenticatedUserIntoAssignableUsers,
 } from '../../lib/adminRoleFilters';
 
 export default function RequestDetailView() {
@@ -54,9 +55,10 @@ export default function RequestDetailView() {
         .maybeSingle();
 
       // Fetch users and role assignments for assignment dropdowns.
+      const sessionPromise = supabase.auth.getSession();
       const adminPromise = supabase
         .from('users')
-        .select('id, name, email, role');
+        .select('id, name, email, role, platform_access');
       const rolesPromise = supabase
         .from('roles')
         .select('id, name');
@@ -67,12 +69,14 @@ export default function RequestDetailView() {
       const dbPromise = fetch('/api/db').then(r => r.json());
 
       const [
+        { data: { session } },
         { data: requestData, error: reqError },
         { data: adminData },
         { data: rolesData, error: rolesError },
         { data: userRolesData, error: userRolesError },
         localDb
       ] = await Promise.all([
+        sessionPromise,
         requestPromise,
         adminPromise,
         rolesPromise,
@@ -153,7 +157,12 @@ export default function RequestDetailView() {
         }
       }
 
-      setAdminUsers(enrichUsersWithRoleAssignments(adminData || [], rolesData || [], userRolesData || []));
+      setAdminUsers(
+        mergeAuthenticatedUserIntoAssignableUsers(
+          enrichUsersWithRoleAssignments(adminData || [], rolesData || [], userRolesData || []),
+          session?.user,
+        )
+      );
 
       // Populate matches from local db as well as Supabase
       const supaMatches = await supabase
