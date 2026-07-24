@@ -4,6 +4,11 @@ import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
 import { supabase } from '../../lib/supabaseClient';
+import {
+  enrichUsersWithRoleAssignments,
+  formatAssignableUserLabel,
+  isAccountManagerAssignable,
+} from '../../lib/adminRoleFilters';
 
 type Tab = 'overview' | 'requests' | 'active-talent' | 'contracts' | 'billing' | 'communication';
 
@@ -70,15 +75,21 @@ export default function ClientProfileView() {
       setLoading(false);
 
       // 2. Fetch heavy relational data asynchronously in the background
-      const adminsPromise = supabase.from('users').select('*').in('role', ['admin', 'ops_manager']);
+      const adminsPromise = supabase.from('users').select('id, name, email, role');
+      const rolesPromise = supabase.from('roles').select('id, name');
+      const userRolesPromise = supabase.from('user_roles').select('user_id, role_id');
       const dbPromise = fetch('/api/db').then(res => res.json());
 
-      const [{ data: admins }, db] = await Promise.all([
+      const [{ data: admins }, { data: roles }, { data: userRoles }, db] = await Promise.all([
         adminsPromise,
+        rolesPromise,
+        userRolesPromise,
         dbPromise
       ]);
 
-      setAdminUsers(admins || []);
+      setAdminUsers(
+        enrichUsersWithRoleAssignments(admins || [], roles || [], userRoles || []).filter(isAccountManagerAssignable)
+      );
         
       // Fetch client profiles
       const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
@@ -89,7 +100,11 @@ export default function ClientProfileView() {
       if (orgUserIds.length > 0) {
         const { data: supabaseRequests } = await supabase.from('talent_requests').select('*').in('client_id', orgUserIds);
         if (supabaseRequests) {
-          requests = supabaseRequests.map((r: any) => ({ ...r.payload, dbId: r.id }));
+          requests = supabaseRequests.map((r: any) => ({
+            ...(r.payload || {}),
+            id: r.payload?.id || r.id,
+            dbId: r.id,
+          }));
         }
       }
         
@@ -112,7 +127,7 @@ export default function ClientProfileView() {
   const handleReassignAM = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reassignForm.newAmId || !reassignForm.reason.trim()) {
-      alert("Please select a new Account Manager and provide a reason.");
+      alert("Please select an Account Manager and provide a reason.");
       return;
     }
     
@@ -132,23 +147,30 @@ export default function ClientProfileView() {
       
       // Real audit log in Supabase
       const actorName = 'Super Admin';
-      const actionDesc = `Reassigned AM from ${client.accountManagerName || 'None'} to ${newAm.name || newAm.email}. Reason: ${reassignForm.reason}`;
+      const actionName = hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager';
+      const previousAmName = hasAccountManager ? accountManagerName : 'None';
+      const actionDesc = `${hasAccountManager ? 'Reassigned' : 'Assigned'} AM from ${previousAmName} to ${newAm.name || newAm.email}. Reason: ${reassignForm.reason}`;
       
       const { error: auditError } = await supabase.from('audit_logs').insert({
         actor: actorName,
-        action: 'Reassign Account Manager',
+        action: actionName,
         details: actionDesc
       });
       
       if (auditError) console.error('Failed to write audit log:', auditError);
       
-      setClient({ ...client, accountManagerId: newAm.id, accountManagerName: newAm.name || newAm.email });
+      setClient({
+        ...client,
+        account_manager_id: newAm.id,
+        accountManagerId: newAm.id,
+        accountManagerName: newAm.name || newAm.email,
+      });
       setShowReassignModal(false);
       setReassignForm({ newAmId: '', reason: '' });
-      alert(`Account Manager successfully reassigned to ${newAm.name || newAm.email}.`);
+      alert(`Account Manager successfully assigned to ${newAm.name || newAm.email}.`);
     } catch (e) {
       console.error(e);
-      alert('Failed to reassign Account Manager.');
+      alert('Failed to save Account Manager.');
     } finally {
       setIsSubmitting(false);
     }
@@ -159,6 +181,14 @@ export default function ClientProfileView() {
 
   const activeContracts = clientContracts.filter(c => c.status === 'Signed' || c.status === 'Active');
   const isAtRisk = client.status === 'At Risk' || (client.healthScore && client.healthScore < 75);
+  const currentAccountManagerId = client.account_manager_id || client.accountManagerId;
+  const currentAccountManager = adminUsers.find(u => u.id === currentAccountManagerId);
+  const hasAccountManager = Boolean(currentAccountManagerId);
+  const accountManagerName = currentAccountManager?.name || currentAccountManager?.email || client.accountManagerName || 'Assigned Account Manager';
+  const openAccountManagerModal = () => {
+    setReassignForm({ newAmId: currentAccountManagerId || '', reason: '' });
+    setShowReassignModal(true);
+  };
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -228,17 +258,26 @@ export default function ClientProfileView() {
 
               <GlassCard>
                 <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px' }}>Account Manager</h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                    {((adminUsers.find(u => u.id === client.account_manager_id)?.name || adminUsers.find(u => u.id === client.account_manager_id)?.email) || 'A')[0]}
+                {hasAccountManager ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                      {accountManagerName[0]}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '14px' }}>{accountManagerName}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ID: {currentAccountManagerId}</div>
+                      {currentAccountManager?.email && currentAccountManager?.name && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{currentAccountManager.email}</div>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '14px' }}>{adminUsers.find(u => u.id === client.account_manager_id)?.name || adminUsers.find(u => u.id === client.account_manager_id)?.email || 'Unassigned'}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ID: {client.account_manager_id || 'N/A'}</div>
+                ) : (
+                  <div style={{ marginBottom: '16px', padding: '14px', borderRadius: '10px', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No account manager has been assigned to this client yet.
                   </div>
-                </div>
-                <button onClick={() => setShowReassignModal(true)} className="btn-primary" style={{ width: '100%', fontSize: '13px', padding: '8px', borderRadius: '6px' }}>
-                  Reassign Account Manager
+                )}
+                <button onClick={openAccountManagerModal} className="btn-primary" style={{ width: '100%', fontSize: '13px', padding: '8px', borderRadius: '6px' }}>
+                  {hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager'}
                 </button>
               </GlassCard>
             </div>
@@ -271,7 +310,7 @@ export default function ClientProfileView() {
                       <td style={{ padding: '16px' }}><Chip label={req.status} /></td>
                       <td style={{ padding: '16px' }}>{formatDate(req.createdAt)}</td>
                       <td style={{ padding: '16px', textAlign: 'right' }}>
-                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', borderRadius: '6px' }}>Open Request</button>
+                        <button onClick={() => router.push(`/requests/${req.id || req.dbId}`)} className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', borderRadius: '6px' }}>Open Request</button>
                       </td>
                     </tr>
                   ))
@@ -489,14 +528,14 @@ export default function ClientProfileView() {
       {showReassignModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: 'var(--bg-primary)', width: '480px', borderRadius: '16px', border: '1px solid var(--border-glass)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)', padding: '32px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>Reassign Account Manager</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>{hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager'}</h2>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
-              Select a new Account Manager for {client.name}. A reason is required and will be recorded in the audit log.
+              Select an Account Manager for {client.name}. A reason is required and will be recorded in the audit log.
             </p>
             
             <form onSubmit={handleReassignAM}>
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>New Account Manager</label>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Account Manager</label>
                 <select 
                   className="kongila-input" 
                   value={reassignForm.newAmId}
@@ -506,13 +545,13 @@ export default function ClientProfileView() {
                 >
                   <option value="">-- Select Account Manager --</option>
                   {adminUsers.map(u => (
-                    <option key={u.id} value={u.id}>{u.name || u.email} ({u.role})</option>
+                    <option key={u.id} value={u.id}>{formatAssignableUserLabel(u)}</option>
                   ))}
                 </select>
               </div>
               
               <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Reason for Reassignment</label>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>{hasAccountManager ? 'Reason for Reassignment' : 'Reason for Assignment'}</label>
                 <textarea 
                   className="kongila-input" 
                   rows={4}
@@ -527,7 +566,7 @@ export default function ClientProfileView() {
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                 <button type="button" onClick={() => setShowReassignModal(false)} className="btn-secondary" style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '14px' }}>Cancel</button>
                 <button type="submit" disabled={isSubmitting} className="btn-primary" style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '14px' }}>
-                  {isSubmitting ? 'Reassigning...' : 'Confirm Reassignment'}
+                  {isSubmitting ? 'Saving...' : hasAccountManager ? 'Confirm Reassignment' : 'Assign Account Manager'}
                 </button>
               </div>
             </form>

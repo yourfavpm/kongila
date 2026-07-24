@@ -5,6 +5,12 @@ import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatDate, formatCurrency, getGradeColor } from '@kongila/utils';
 import { normalizeRequestStatus } from '@kongila/workflows';
 import { supabase } from '../../lib/supabaseClient';
+import {
+  enrichUsersWithRoleAssignments,
+  formatAssignableUserLabel,
+  isAccountManagerAssignable,
+  isTalentManagerAssignable,
+} from '../../lib/adminRoleFilters';
 
 export default function RequestDetailView() {
   const router = useRouter();
@@ -47,22 +53,38 @@ export default function RequestDetailView() {
         .eq('payload->>id', requestId)
         .maybeSingle();
 
-      // Fetch all admin/ops users for the dropdowns
+      // Fetch users and role assignments for assignment dropdowns.
       const adminPromise = supabase
         .from('users')
         .select('id, name, email, role');
+      const rolesPromise = supabase
+        .from('roles')
+        .select('id, name');
+      const userRolesPromise = supabase
+        .from('user_roles')
+        .select('user_id, role_id');
 
       const dbPromise = fetch('/api/db').then(r => r.json());
 
-      const [{ data: requestData, error: reqError }, { data: adminData }, localDb] = await Promise.all([
+      const [
+        { data: requestData, error: reqError },
+        { data: adminData },
+        { data: rolesData, error: rolesError },
+        { data: userRolesData, error: userRolesError },
+        localDb
+      ] = await Promise.all([
         requestPromise,
         adminPromise,
+        rolesPromise,
+        userRolesPromise,
         dbPromise
       ]);
 
       if (reqError) {
         console.error('Failed to load request from talent_requests:', reqError);
       }
+      if (rolesError) console.error('Failed to load roles:', rolesError);
+      if (userRolesError) console.error('Failed to load user roles:', userRolesError);
 
       if (!reqError && requestData && requestData.payload) {
         const row = requestData;
@@ -131,7 +153,7 @@ export default function RequestDetailView() {
         }
       }
 
-      setAdminUsers(adminData || []);
+      setAdminUsers(enrichUsersWithRoleAssignments(adminData || [], rolesData || [], userRolesData || []));
 
       // Populate matches from local db as well as Supabase
       const supaMatches = await supabase
@@ -261,6 +283,8 @@ export default function RequestDetailView() {
   const currentTMId = isEditing ? formData.assignedTalentManagerId : request.assignedTalentManagerId;
   const am = adminUsers.find(u => u.id === currentAMId);
   const tm = adminUsers.find(u => u.id === currentTMId);
+  const accountManagerOptions = adminUsers.filter(isAccountManagerAssignable);
+  const talentManagerOptions = adminUsers.filter(isTalentManagerAssignable);
 
   // Inline AM from the requestRow's joined relation as a richer fallback
   const amDisplay = am?.name || am?.email || requestRow?.account_manager?.name || requestRow?.account_manager?.email || (currentAMId ? `ID: ${currentAMId}` : 'Unassigned');
@@ -499,7 +523,7 @@ export default function RequestDetailView() {
                       style={{ width: '100%', padding: '10px', borderRadius: '8px' }}
                     >
                       <option value="">-- Assign AM --</option>
-                      {adminUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                      {accountManagerOptions.map(u => <option key={u.id} value={u.id}>{formatAssignableUserLabel(u)}</option>)}
                     </select>
                   ) : (
                     <UserChip label="Account Manager" name={amDisplay} />
@@ -517,7 +541,7 @@ export default function RequestDetailView() {
                       style={{ width: '100%', padding: '10px', borderRadius: '8px' }}
                     >
                       <option value="">-- Assign TM for Matching --</option>
-                      {adminUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                      {talentManagerOptions.map(u => <option key={u.id} value={u.id}>{formatAssignableUserLabel(u)}</option>)}
                     </select>
                   ) : (
                     <UserChip label="Talent Manager" name={tmDisplay} />

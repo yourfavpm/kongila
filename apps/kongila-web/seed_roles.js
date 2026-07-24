@@ -24,7 +24,12 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 async function run() {
   console.log("Seeding roles...");
   const roles = [
+    { id: 'super_admin', name: 'super_admin' },
     { id: 'admin', name: 'admin' },
+    { id: 'account_manager', name: 'account_manager' },
+    { id: 'operations_manager', name: 'operations_manager' },
+    { id: 'ops_manager', name: 'ops_manager' },
+    { id: 'talent_manager', name: 'talent_manager' },
     { id: 'client', name: 'client' },
     { id: 'talent', name: 'talent' }
   ];

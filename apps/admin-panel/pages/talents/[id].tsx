@@ -5,6 +5,12 @@ import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
 import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
 import { calculateTalentProfileCompletion } from '@kongila/shared-types';
+import { supabase } from '../../lib/supabaseClient';
+import {
+  enrichUsersWithRoleAssignments,
+  formatAssignableUserLabel,
+  isTalentManagerAssignable,
+} from '../../lib/adminRoleFilters';
 
 const Chip = ({ label, color = 'var(--text-primary)', bg = 'var(--bg-tertiary)' }: any) => (
   <span style={{ background: bg, color, padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>
@@ -73,9 +79,23 @@ export default function TalentProfileView() {
       const found = db.talents?.find((t: any) => t.id === id);
       setTalent(found);
       setDocuments(db.documents || []);
-      
-      const admins = db.users?.filter((u: any) => u.role === 'admin' || (u.platform_access && u.platform_access.includes('admin'))) || [];
-      setAdminUsers(admins);
+
+      const [
+        { data: users },
+        { data: roles },
+        { data: userRoles },
+      ] = await Promise.all([
+        supabase.from('users').select('id, name, email, role'),
+        supabase.from('roles').select('id, name'),
+        supabase.from('user_roles').select('user_id, role_id'),
+      ]);
+
+      const assignableTalentManagers = enrichUsersWithRoleAssignments(
+        users || db.users || [],
+        roles || [],
+        userRoles || [],
+      ).filter(isTalentManagerAssignable);
+      setAdminUsers(assignableTalentManagers);
     } catch (err) {
       console.error(err);
     } finally {
@@ -146,7 +166,7 @@ export default function TalentProfileView() {
             >
               <option value="">-- Unassigned --</option>
               {adminUsers.map(admin => (
-                <option key={admin.id} value={admin.id}>{admin.name} ({admin.email})</option>
+                <option key={admin.id} value={admin.id}>{formatAssignableUserLabel(admin)}</option>
               ))}
             </select>
             {savingManager && <span style={{ fontSize: '12px', color: 'var(--accent-cyan)' }}>Saving...</span>}
