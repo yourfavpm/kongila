@@ -77,13 +77,22 @@ export default function ClientProfileView() {
 
       // 2. Fetch heavy relational data asynchronously in the background
       const sessionPromise = supabase.auth.getSession();
-      const adminsPromise = supabase.from('users').select('id, name, email, role, platform_access');
+      const authUserPromise = supabase.auth.getUser();
+      const adminsPromise = supabase.from('users').select('*');
       const rolesPromise = supabase.from('roles').select('id, name');
       const userRolesPromise = supabase.from('user_roles').select('user_id, role_id');
       const dbPromise = fetch('/api/db').then(res => res.json());
 
-      const [{ data: { session } }, { data: admins }, { data: roles }, { data: userRoles }, db] = await Promise.all([
+      const [
+        { data: { session } },
+        { data: { user: authUser } },
+        { data: admins },
+        { data: roles },
+        { data: userRoles },
+        db
+      ] = await Promise.all([
         sessionPromise,
+        authUserPromise,
         adminsPromise,
         rolesPromise,
         userRolesPromise,
@@ -93,7 +102,7 @@ export default function ClientProfileView() {
       setAdminUsers(
         mergeAuthenticatedUserIntoAssignableUsers(
           enrichUsersWithRoleAssignments(admins || [], roles || [], userRoles || []),
-          session?.user,
+          authUser || session?.user,
         ).filter(isAccountManagerAssignable)
       );
         
@@ -132,8 +141,8 @@ export default function ClientProfileView() {
 
   const handleReassignAM = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reassignForm.newAmId || !reassignForm.reason.trim()) {
-      alert("Please select an Account Manager and provide a reason.");
+    if (!reassignForm.newAmId || (hasAccountManager && !reassignForm.reason.trim())) {
+      alert(hasAccountManager ? "Please select an Account Manager and provide a reason." : "Please select an Account Manager.");
       return;
     }
     
@@ -155,7 +164,8 @@ export default function ClientProfileView() {
       const actorName = 'Super Admin';
       const actionName = hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager';
       const previousAmName = hasAccountManager ? accountManagerName : 'None';
-      const actionDesc = `${hasAccountManager ? 'Reassigned' : 'Assigned'} AM from ${previousAmName} to ${newAm.name || newAm.email}. Reason: ${reassignForm.reason}`;
+      const reasonText = reassignForm.reason.trim() ? ` Reason: ${reassignForm.reason.trim()}` : '';
+      const actionDesc = `${hasAccountManager ? 'Reassigned' : 'Assigned'} AM from ${previousAmName} to ${newAm.name || newAm.email}.${reasonText}`;
       
       const { error: auditError } = await supabase.from('audit_logs').insert({
         actor: actorName,
@@ -536,7 +546,9 @@ export default function ClientProfileView() {
           <div style={{ background: 'var(--bg-primary)', width: '480px', borderRadius: '16px', border: '1px solid var(--border-glass)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)', padding: '32px' }}>
             <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>{hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager'}</h2>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
-              Select an Account Manager for {client.name}. A reason is required and will be recorded in the audit log.
+              {hasAccountManager
+                ? `Select a new Account Manager for ${client.name}. A reason is required and will be recorded in the audit log.`
+                : `Select an Account Manager for ${client.name}.`}
             </p>
             
             <form onSubmit={handleReassignAM}>
@@ -556,18 +568,20 @@ export default function ClientProfileView() {
                 </select>
               </div>
               
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>{hasAccountManager ? 'Reason for Reassignment' : 'Reason for Assignment'}</label>
-                <textarea 
-                  className="kongila-input" 
-                  rows={4}
-                  value={reassignForm.reason}
-                  onChange={e => setReassignForm({ ...reassignForm, reason: e.target.value })}
-                  placeholder="e.g., Workload rebalancing, AM departure, Client request..."
-                  style={{ width: '100%', padding: '12px', borderRadius: '8px', resize: 'vertical' }}
-                  required
-                />
-              </div>
+              {hasAccountManager && (
+                <div style={{ marginBottom: '24px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Reason for Reassignment</label>
+                  <textarea 
+                    className="kongila-input" 
+                    rows={4}
+                    value={reassignForm.reason}
+                    onChange={e => setReassignForm({ ...reassignForm, reason: e.target.value })}
+                    placeholder="e.g., Workload rebalancing, AM departure, Client request..."
+                    style={{ width: '100%', padding: '12px', borderRadius: '8px', resize: 'vertical' }}
+                    required
+                  />
+                </div>
+              )}
               
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                 <button type="button" onClick={() => setShowReassignModal(false)} className="btn-secondary" style={{ padding: '10px 20px', borderRadius: '8px', fontSize: '14px' }}>Cancel</button>

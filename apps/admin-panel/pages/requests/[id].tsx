@@ -56,9 +56,10 @@ export default function RequestDetailView() {
 
       // Fetch users and role assignments for assignment dropdowns.
       const sessionPromise = supabase.auth.getSession();
+      const authUserPromise = supabase.auth.getUser();
       const adminPromise = supabase
         .from('users')
-        .select('id, name, email, role, platform_access');
+        .select('*');
       const rolesPromise = supabase
         .from('roles')
         .select('id, name');
@@ -70,6 +71,7 @@ export default function RequestDetailView() {
 
       const [
         { data: { session } },
+        { data: { user: authUser } },
         { data: requestData, error: reqError },
         { data: adminData },
         { data: rolesData, error: rolesError },
@@ -77,6 +79,7 @@ export default function RequestDetailView() {
         localDb
       ] = await Promise.all([
         sessionPromise,
+        authUserPromise,
         requestPromise,
         adminPromise,
         rolesPromise,
@@ -160,7 +163,7 @@ export default function RequestDetailView() {
       setAdminUsers(
         mergeAuthenticatedUserIntoAssignableUsers(
           enrichUsersWithRoleAssignments(adminData || [], rolesData || [], userRolesData || []),
-          session?.user,
+          authUser || session?.user,
         )
       );
 

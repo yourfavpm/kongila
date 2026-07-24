@@ -83,12 +83,14 @@ export default function TalentProfileView() {
 
       const [
         { data: { session } },
+        { data: { user: authUser } },
         { data: users },
         { data: roles },
         { data: userRoles },
       ] = await Promise.all([
         supabase.auth.getSession(),
-        supabase.from('users').select('id, name, email, role, platform_access'),
+        supabase.auth.getUser(),
+        supabase.from('users').select('*'),
         supabase.from('roles').select('id, name'),
         supabase.from('user_roles').select('user_id, role_id'),
       ]);
@@ -99,7 +101,7 @@ export default function TalentProfileView() {
           roles || [],
           userRoles || [],
         ),
-        session?.user,
+        authUser || session?.user,
       ).filter(isTalentManagerAssignable);
       setAdminUsers(assignableTalentManagers);
     } catch (err) {
