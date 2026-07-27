@@ -317,7 +317,7 @@ export default function AdminPanel() {
       ] = await Promise.all([
         fetch('/api/db'),
         supabase.from('organizations').select('*'),
-        supabase.from('talent_requests').select('payload, talent_manager_id, account_manager_id').order('created_at', { ascending: false }),
+        supabase.from('talent_requests').select('*').order('created_at', { ascending: false }),
         supabase.from('client_profiles').select('*'),
         supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }),
         fetch('/api/interviews')
@@ -602,7 +602,7 @@ export default function AdminPanel() {
     // Re-read the row to get current dedicated columns so we never overwrite them with null
     const { data: currentRow } = await supabase
       .from('talent_requests')
-      .select('talent_manager_id, account_manager_id')
+      .select('*')
       .eq('payload->>id', requestId)
       .maybeSingle();
     await supabase
