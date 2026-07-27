@@ -333,7 +333,8 @@ export default function MatchingEngine() {
       matches.some(m =>
         m.talentId === id &&
         m.requestId !== requestId &&
-        ['Shortlisted', 'Interview Requested', 'Interview Scheduled', 'Interviewed'].includes(m.status)
+        ['Shortlisted', 'Interview Requested', 'Interview Scheduled', 'Interviewed',
+         'shortlisted', 'interview_requested', 'interview_scheduled', 'interviewed'].includes(m.status)
       )
     );
 
@@ -383,10 +384,31 @@ export default function MatchingEngine() {
         };
       });
 
-      const updatedPayload = { ...request, status: 'Candidates Ready' };
+      // ── Re-read the FULL row so we never overwrite AM/TM assignments that were already set ──
+      const { data: currentRow } = await supabase
+        .from('talent_requests')
+        .select('*')
+        .eq('payload->>id', requestId as string)
+        .maybeSingle();
+
+      const existingPayload = currentRow?.payload || request;
+      const resolvedAMId = currentRow?.account_manager_id || existingPayload.assignedAccountManagerId || '';
+      const resolvedTMId = currentRow?.talent_manager_id || existingPayload.assignedTalentManagerId || '';
+
+      const updatedPayload = {
+        ...existingPayload,
+        status: normalizeRequestStatus('Candidates Ready'),
+        assignedAccountManagerId: resolvedAMId,
+        assignedTalentManagerId: resolvedTMId,
+      };
+
       const { error: reqError } = await supabase
         .from('talent_requests')
-        .update({ payload: updatedPayload })
+        .update({
+          payload: updatedPayload,
+          talent_manager_id: resolvedTMId || null,
+          account_manager_id: resolvedAMId || null,
+        })
         .eq('payload->>id', requestId as string);
       if (reqError) throw reqError;
 
@@ -417,35 +439,23 @@ export default function MatchingEngine() {
         })
       });
 
+      // Upsert into Supabase matches table with DB-normalised status
       const matchesToInsert = newMatches.map(m => ({
         id: m.id,
         request_id: m.requestId,
         talent_id: m.talentId,
-        status: m.status.toLowerCase(),
+        status: 'shortlisted',
         score: m.score,
         breakdown: m.breakdown
       }));
-      await supabase.from('matches').upsert(matchesToInsert);
+      const { error: matchErr } = await supabase.from('matches').upsert(matchesToInsert, { onConflict: 'id' });
+      if (matchErr) console.error('Failed to upsert matches:', matchErr);
 
-      const normalizedRequest = {
-        ...request,
-        status: normalizeRequestStatus('Candidates Ready')
-      };
-      setRequest(normalizedRequest);
-      await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
-            reqRow.id === requestId ? { ...reqRow, ...normalizedRequest } : reqRow
-          )
-        })
-      });
-
-      if (request.clientId) {
+      // Notify the client
+      if (updatedPayload.clientId) {
         await supabase.from('notifications').insert({
           id: crypto.randomUUID(),
-          user_id: request.clientId,
+          user_id: updatedPayload.clientId,
           title: 'New Talent Ready',
           message: `${selectedCandidateIds.length} new candidate(s) are ready for your review on this request.`,
           module_type: 'radar',
@@ -454,6 +464,7 @@ export default function MatchingEngine() {
         });
       }
 
+      setRequest(updatedPayload);
       addToast('Candidates successfully submitted to the client!', 'success');
       router.push(`/requests/${requestId}`);
     } catch (e) {
@@ -464,6 +475,8 @@ export default function MatchingEngine() {
       setShowOverrideModal(false);
     }
   };
+
+
 
   const handleSourcingRequired = async () => {
     if (!confirm('Flag this request as Sourcing Required?')) return;

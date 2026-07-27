@@ -453,7 +453,22 @@ export default function KongilaWeb() {
           setInvoices(dbData.invoices || []);
         }
 
-        setMatches(dbData.matches || []);
+        // ── Fetch matches from Supabase so clients see admin-submitted candidates ──
+        const { data: supabaseMatches } = await supabase
+          .from('matches')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (supabaseMatches && supabaseMatches.length > 0) {
+          // Normalise Supabase snake_case to camelCase expected by the UI
+          const normalizedMatches = supabaseMatches.map((m: any) => ({
+            ...m,
+            requestId: m.request_id || m.requestId,
+            talentId: m.talent_id || m.talentId,
+          }));
+          setMatches(normalizedMatches);
+        } else {
+          setMatches(dbData.matches || []);
+        }
         setContracts(dbData.contracts || []);
         // Fetch conversations
         const { data: supabaseConvos } = await supabase.from('conversations').select('*').order('updated_at', { ascending: false });
@@ -472,7 +487,23 @@ export default function KongilaWeb() {
         }
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
-        setInterviews(dbData.interviews || []);
+        // ── Fetch interviews from Supabase ──
+        const { data: supabaseInterviews } = await supabase
+          .from('interviews')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (supabaseInterviews && supabaseInterviews.length > 0) {
+          setInterviews(supabaseInterviews.map((iv: any) => ({
+            ...iv,
+            requestId: iv.request_id || iv.requestId,
+            matchId: iv.match_id || iv.matchId,
+            talentId: iv.talent_id || iv.talentId,
+            talentName: iv.talent_name || iv.talentName,
+            meetingLink: iv.meeting_link || iv.meetingLink,
+          })));
+        } else {
+          setInterviews(dbData.interviews || []);
+        }
         setDocuments(dbData.documents || []);
         setRequestActivityLogs(dbData.requestActivityLogs || []);
         // Assessment data for talent side

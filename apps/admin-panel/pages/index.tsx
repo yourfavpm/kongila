@@ -317,7 +317,7 @@ export default function AdminPanel() {
       ] = await Promise.all([
         fetch('/api/db'),
         supabase.from('organizations').select('*'),
-        supabase.from('talent_requests').select('payload').order('created_at', { ascending: false }),
+        supabase.from('talent_requests').select('payload, talent_manager_id, account_manager_id').order('created_at', { ascending: false }),
         supabase.from('client_profiles').select('*'),
         supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }),
         fetch('/api/interviews')
@@ -342,7 +342,10 @@ export default function AdminPanel() {
         }));
         const remoteRequests = (supabaseRequests || []).map((r: any) => ({
           ...(r.payload || {}),
-          status: normalizeRequestStatus(r.payload?.status)
+          status: normalizeRequestStatus(r.payload?.status),
+          // Promote dedicated columns so Kanban cards can display AM/TM badge correctly
+          assignedAccountManagerId: r.account_manager_id || r.payload?.assignedAccountManagerId || '',
+          assignedTalentManagerId: r.talent_manager_id || r.payload?.assignedTalentManagerId || '',
         }));
         const mergedRequests = new Map<string, any>();
         for (const request of localRequests) {
@@ -353,7 +356,17 @@ export default function AdminPanel() {
         }
         setRequests(Array.from(mergedRequests.values()));
 
-        setMatches(db.matches || []);
+        // ── Load matches from Supabase (primary source) so admin always sees submitted candidates ──
+        const { data: supaMatches } = await supabase.from('matches').select('*').order('created_at', { ascending: false });
+        if (supaMatches && supaMatches.length > 0) {
+          setMatches(supaMatches.map((m: any) => ({
+            ...m,
+            requestId: m.request_id || m.requestId,
+            talentId: m.talent_id || m.talentId,
+          })));
+        } else {
+          setMatches(db.matches || []);
+        }
         setClientProfiles(supabaseClientProfiles || []);
         setAuditLogs(supabaseAuditLogs || []);
         
@@ -586,9 +599,20 @@ export default function AdminPanel() {
     const request = requests.find(r => r.id === requestId);
     if (!request) return;
     const updatedPayload = { ...request, ...patch, status: normalizeRequestStatus(status) };
+    // Re-read the row to get current dedicated columns so we never overwrite them with null
+    const { data: currentRow } = await supabase
+      .from('talent_requests')
+      .select('talent_manager_id, account_manager_id')
+      .eq('payload->>id', requestId)
+      .maybeSingle();
     await supabase
       .from('talent_requests')
-      .update({ payload: updatedPayload })
+      .update({
+        payload: updatedPayload,
+        // Only write columns if they already have a value (don't null them out)
+        ...(currentRow?.talent_manager_id ? {} : (updatedPayload.assignedTalentManagerId ? { talent_manager_id: updatedPayload.assignedTalentManagerId } : {})),
+        ...(currentRow?.account_manager_id ? {} : (updatedPayload.assignedAccountManagerId ? { account_manager_id: updatedPayload.assignedAccountManagerId } : {})),
+      })
       .eq('payload->>id', requestId);
   };
 

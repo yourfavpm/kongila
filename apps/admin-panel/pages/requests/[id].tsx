@@ -169,26 +169,44 @@ export default function RequestDetailView() {
         )
       );
 
-      // Populate matches from local db as well as Supabase
-      const supaMatches = await supabase
+      // ── Fetch matches for this request from Supabase (primary source) ──
+      const { data: supaMatches } = await supabase
         .from('matches')
         .select('*')
         .eq('request_id', requestId);
 
-      const combinedMatches: any[] = supaMatches.data || [];
+      // Normalise to camelCase so UI is consistent
+      const supaMatchesNorm = (supaMatches || []).map((m: any) => ({
+        ...m,
+        requestId: m.request_id || m.requestId,
+        talentId: m.talent_id || m.talentId,
+      }));
 
-      // Merge local db matches as fallback
-      if (localDb?.matches) {
-        const localMatches = (localDb.matches as any[]).filter((m: any) => m.requestId === requestId);
-        localMatches.forEach(lm => {
-          if (!combinedMatches.find(sm => sm.id === lm.id)) combinedMatches.push(lm);
-        });
+      // Merge local-db matches as fallback (catches any written only to /api/db)
+      const localMatches = (localDb?.matches || []).filter((m: any) => m.requestId === requestId);
+      const combinedMatches: any[] = [...supaMatchesNorm];
+      localMatches.forEach((lm: any) => {
+        if (!combinedMatches.find(sm => sm.id === lm.id)) combinedMatches.push(lm);
+      });
+
+      // ── Populate talent details ──
+      // Prefer Supabase talent_profiles / users for display names
+      const talentIds = [...new Set(combinedMatches.map(m => m.talentId || m.talent_id))].filter(Boolean);
+      let supabaseTalentMap: Record<string, any> = {};
+      if (talentIds.length > 0) {
+        const { data: talentUsers } = await supabase
+          .from('users')
+          .select('id, name, email')
+          .in('id', talentIds);
+        (talentUsers || []).forEach((u: any) => { supabaseTalentMap[u.id] = u; });
       }
 
-      // Populate talent details
       const populated = combinedMatches.map(m => {
-        const talent = (localDb?.talents || []).find((t: any) => t.id === (m.talent_id || m.talentId));
-        return { ...m, talent, talentId: m.talent_id || m.talentId };
+        const tid = m.talentId || m.talent_id;
+        const localTalent = (localDb?.talents || []).find((t: any) => t.id === tid);
+        const supabaseTalent = supabaseTalentMap[tid];
+        const talent = localTalent || (supabaseTalent ? { ...supabaseTalent, name: supabaseTalent.name || supabaseTalent.email } : null);
+        return { ...m, talent, talentId: tid };
       });
       setMatches(populated);
 
@@ -477,41 +495,55 @@ export default function RequestDetailView() {
               )}
             </GlassCard>
 
-            {matches.length > 0 && (
-              <GlassCard>
+            <GlassCard>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Submitted Candidates</h3>
-                  <span style={{ background: 'var(--bg-tertiary)', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600 }}>{matches.length} Candidates</span>
+                  <span style={{ background: matches.length > 0 ? '#0047CC15' : 'var(--bg-tertiary)', color: matches.length > 0 ? '#0047CC' : 'var(--text-muted)', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600 }}>
+                    {matches.length} {matches.length === 1 ? 'Candidate' : 'Candidates'}
+                  </span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {matches.map(match => (
-                    <div key={match.id} style={{ display: 'flex', gap: '16px', padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                        <img
-                          src={match.talent?.profilePhotoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(match.talent?.name || 'T')}&background=0047CC&color=fff&size=50`}
-                          alt=""
-                          style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }}
-                        />
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '15px' }}>{match.talent?.name || 'Unknown Talent'}</div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{match.talent?.title || 'No Title'}</div>
+                {matches.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '32px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
+                    No candidates have been submitted for this request yet.
+                    {(normalizeRequestStatus(request.status) === 'Sourcing Talent') && (
+                      <div style={{ marginTop: '12px' }}>
+                        <button onClick={() => router.push(`/matching/${request.id}`)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', background: '#10B981', borderColor: '#10B981' }}>
+                          Open Matching Engine →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {matches.map(match => (
+                      <div key={match.id} style={{ display: 'flex', gap: '16px', padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                          <img
+                            src={match.talent?.profilePhotoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(match.talent?.name || 'T')}&background=0047CC&color=fff&size=50`}
+                            alt=""
+                            style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }}
+                          />
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '15px' }}>{match.talent?.name || match.talent?.email || `Talent ID: ${match.talentId?.slice(0,8)}...`}</div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{match.talent?.title || 'No Title'}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Match Score</div>
+                            <div style={{ fontWeight: 700, color: getGradeColor(match.score > 80 ? 'A' : match.score > 60 ? 'B' : 'C') }}>{match.score}%</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Status</div>
+                            <div style={{ fontWeight: 600, fontSize: '13px', textTransform: 'capitalize' }}>{match.status}</div>
+                          </div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Match Score</div>
-                          <div style={{ fontWeight: 700, color: getGradeColor(match.score > 80 ? 'A' : match.score > 60 ? 'B' : 'C') }}>{match.score}%</div>
-                        </div>
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Status</div>
-                          <div style={{ fontWeight: 600, fontSize: '13px' }}>{match.status}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </GlassCard>
-            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>

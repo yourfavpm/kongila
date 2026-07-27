@@ -739,19 +739,38 @@ export default function ClientDashboard({
       });
       if (ivErr) throw ivErr;
 
-      // Update match status to Interview Scheduled
+      // Update match status to Interview Requested (consistent title-case)
       if (newInterview.matchId) {
         await supabase.from('matches').update({
           status: 'interview_scheduled'
         }).eq('id', newInterview.matchId);
       }
 
+      // Notify the talent
       await supabase.from("notifications").insert({
+        id: crypto.randomUUID(),
         user_id: requestInterviewTarget.talentId,
         title: "Interview Scheduled",
-        content: `Interview "${newInterview.title}" has been booked for ${newInterview.date} at ${newInterview.time}.`,
-        read_status: false,
+        message: `Interview "${newInterview.title}" has been requested for ${newInterview.date} at ${newInterview.time}.`,
+        module_type: 'interviews',
+        read: false,
+        created_at: new Date().toISOString(),
       });
+
+      // Notify admin — find the AM or TM from the active request
+      const requestForNotif = requests.find((r) => r.id === requestInterviewTarget.requestId) || selectedRequest;
+      const adminUserId = requestForNotif?.assignedTalentManagerId || requestForNotif?.assignedAccountManagerId;
+      if (adminUserId) {
+        await supabase.from("notifications").insert({
+          id: crypto.randomUUID(),
+          user_id: adminUserId,
+          title: "Interview Request Received",
+          message: `Client has requested an interview with ${requestInterviewTarget.talentName} on ${newInterview.date} at ${newInterview.time} for request: ${requestForNotif?.serviceType || requestInterviewTarget.requestId}.`,
+          module_type: 'interviews',
+          read: false,
+          created_at: new Date().toISOString(),
+        });
+      }
 
       if (setInterviews) {
         // Optimistically update local interviews if possible
