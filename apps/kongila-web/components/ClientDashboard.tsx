@@ -7090,7 +7090,7 @@ export default function ClientDashboard({
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
+                alignItems: "flex-start",
                 justifyContent: "space-between",
                 marginBottom: "24px",
                 paddingBottom: "16px",
@@ -7098,14 +7098,16 @@ export default function ClientDashboard({
               }}
             >
               <div
-                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+                style={{ display: "flex", flexDirection: "column", gap: "4px" }}
               >
-                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
+                <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain' }} />
                 <div
                   style={{
-                    fontSize: "14px",
-                    fontWeight: 800,
-                    color: "#1A2340",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: "#6B7A99",
+                    letterSpacing: "0.05em",
+                    textTransform: "uppercase"
                   }}
                 >
                   Client Portal
@@ -7254,30 +7256,24 @@ export default function ClientDashboard({
         <div
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: "12px",
+            flexDirection: "column",
+            gap: "4px",
             padding: "0 8px 20px",
             borderBottom: "1px solid #F5F7FA",
             marginBottom: "12px",
           }}
         >
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '36px', width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
-          <div style={{ overflow: "hidden" }}>
-            <div
-              style={{
-                fontSize: "14px",
-                fontWeight: 800,
-                color: "#1A2340",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              Client Portal
-            </div>
-            <div
-              style={{ fontSize: "11px", color: "#6B7A99", marginTop: "2px" }}
-            >
-              Enterprise Operations
-            </div>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+          <div
+            style={{
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "#6B7A99",
+              letterSpacing: "0.05em",
+              textTransform: "uppercase"
+            }}
+          >
+            Client Portal
           </div>
         </div>
 

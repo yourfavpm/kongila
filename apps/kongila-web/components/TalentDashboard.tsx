@@ -7693,10 +7693,10 @@ export default function TalentDashboard({
             display: 'flex', flexDirection: 'column', padding: '24px 16px',
             zIndex: 300, overflowY: 'auto'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
-                <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Talent Portal</div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain' }} />
+                <div style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Portal</div>
               </div>
               <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
@@ -7776,12 +7776,9 @@ export default function TalentDashboard({
         position: 'sticky', top: 0, height: '100vh', overflowY: 'auto'
       }}>
         {/* User badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '36px', width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
-          <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Talent Portal</div>
-            <div style={{ fontSize: '11px', color: '#6B7A99' }}>Enterprise Operations</div>
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+          <div style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Portal</div>
         </div>
 
         {/* Nav */}

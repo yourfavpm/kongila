@@ -3857,9 +3857,9 @@ export default function AdminPanel() {
 
   const SidebarContent = () => (
     <>
-      <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
-        <span>Admin Core</span>
+      <div className="sidebar-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+        <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Admin Portal</span>
       </div>
 
       <div className="sidebar-menu">
@@ -3949,9 +3949,9 @@ export default function AdminPanel() {
 
       {/* Mobile Top Bar */}
       <div className="mobile-nav-bar" style={{ display: 'none' }}>
-        <div className="sidebar-logo" style={{ fontSize: '17px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '24px', width: 'auto', objectFit: 'contain' }} />
-          <span>Admin Core</span>
+        <div className="sidebar-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '110px', height: 'auto', objectFit: 'contain' }} />
+          <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Admin Portal</span>
         </div>
         <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(true)}>
           <span /><span /><span />
