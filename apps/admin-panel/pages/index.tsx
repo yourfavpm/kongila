@@ -3857,9 +3857,9 @@ export default function AdminPanel() {
 
   const SidebarContent = () => (
     <>
-      <div className="sidebar-logo">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 7v10l9 5 9-5V7L12 2z" fill="var(--accent-purple)" opacity="0.9"/></svg>
-        Admin Core
+      <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
+        <span>Admin Core</span>
       </div>
 
       <div className="sidebar-menu">
@@ -3949,9 +3949,9 @@ export default function AdminPanel() {
 
       {/* Mobile Top Bar */}
       <div className="mobile-nav-bar" style={{ display: 'none' }}>
-        <div className="sidebar-logo" style={{ fontSize: '17px' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2L3 7v10l9 5 9-5V7L12 2z" fill="var(--accent-purple)" opacity="0.9"/></svg>
-          Admin Core
+        <div className="sidebar-logo" style={{ fontSize: '17px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '24px', width: 'auto', objectFit: 'contain' }} />
+          <span>Admin Core</span>
         </div>
         <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(true)}>
           <span /><span /><span />

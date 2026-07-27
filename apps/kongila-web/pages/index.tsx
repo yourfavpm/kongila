@@ -2178,7 +2178,7 @@ export default function KongilaWeb() {
       {currentUser && !authView && !clientIntakeActive && activeTab === 'home' && (
         <div className="sidebar">
           <div className="sidebar-logo">
-            <KongilaLogo size={28} textColor="#0047CC" />
+            <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
           </div>
           <div className="sidebar-menu">
             <div 
@@ -2263,7 +2263,7 @@ export default function KongilaWeb() {
               transition: 'var(--transition-smooth)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => setActiveTab('home')}>
-                <KongilaLogo size={32} textColor="#1A2340" />
+                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
               </div>
 
               {/* Navigation Links */}
@@ -3115,7 +3115,7 @@ export default function KongilaWeb() {
                   {/* Left Column: Brand */}
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                      <KongilaLogo size={28} textColor="#1A2340" />
+                      <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '28px', width: 'auto', objectFit: 'contain' }} />
                     </div>
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '24px', maxWidth: '240px' }}>
                       Global workforce infrastructure and operational execution systems for modern enterprises.
@@ -3296,7 +3296,7 @@ export default function KongilaWeb() {
 
               {/* Logo & Header content */}
               <div style={{ zIndex: 2, position: 'relative' }}>
-                <KongilaLogo size={48} textColor="#FFFFFF" />
+                <img src="/images/kongilainverted.png" alt="Kongila" style={{ height: '48px', width: 'auto', objectFit: 'contain' }} />
                 <h1 style={{ 
                   marginTop: '36px', 
                   fontSize: '34px', 

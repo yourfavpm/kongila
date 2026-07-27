@@ -7695,10 +7695,7 @@ export default function TalentDashboard({
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{
-                  width: '32px', height: '32px', borderRadius: '8px', background: '#0047CC',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 900
-                }}>K</div>
+                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
                 <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Talent Portal</div>
               </div>
               <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
@@ -7780,14 +7777,7 @@ export default function TalentDashboard({
       }}>
         {/* User badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
-          <div style={{
-            width: '36px', height: '36px', borderRadius: '8px',
-            background: '#0047CC',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontWeight: 900, fontSize: '20px', flexShrink: 0
-          }}>
-            K
-          </div>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '36px', width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '14px', fontWeight: 800, color: '#1A2340' }}>Talent Portal</div>
             <div style={{ fontSize: '11px', color: '#6B7A99' }}>Enterprise Operations</div>

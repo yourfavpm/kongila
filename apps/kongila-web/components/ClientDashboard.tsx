@@ -7100,21 +7100,7 @@ export default function ClientDashboard({
               <div
                 style={{ display: "flex", alignItems: "center", gap: "10px" }}
               >
-                <div
-                  style={{
-                    width: "32px",
-                    height: "32px",
-                    borderRadius: "8px",
-                    background: "#0047CC",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#fff",
-                    fontWeight: 900,
-                  }}
-                >
-                  K
-                </div>
+                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
                 <div
                   style={{
                     fontSize: "14px",
@@ -7275,23 +7261,7 @@ export default function ClientDashboard({
             marginBottom: "12px",
           }}
         >
-          <div
-            style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "8px",
-              background: "#0047CC",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#FFFFFF",
-              fontWeight: 900,
-              fontSize: "20px",
-              flexShrink: 0,
-            }}
-          >
-            K
-          </div>
+          <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '36px', width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
           <div style={{ overflow: "hidden" }}>
             <div
               style={{
