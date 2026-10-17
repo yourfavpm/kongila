@@ -55,29 +55,14 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
 
         const role = normalizeRole(userData?.role || data.user.user_metadata?.role || data.user.app_metadata?.role || '');
 
+        // Admin access is granted by an existing role in public.users, nothing else.
+        //
+        // This block used to auto-provision: any @kongila.co address with no users
+        // row was given role 'admin', and admin@kongila.co was given super_admin,
+        // both written from the browser. Anyone who could register an address on
+        // that domain became an administrator. Admin accounts are now created
+        // deliberately, server-side or in the SQL editor.
         if (!role || !ADMIN_PORTAL_ROLES.has(role)) {
-          // If user doesn't exist yet in public.users, auto-provision admin row
-          if (!userData && data.user.email?.endsWith('@kongila.co')) {
-            const { error: upsertErr } = await supabase.from('users').upsert({
-              id: data.user.id,
-              email: data.user.email,
-              password_hash: 'auth_managed',
-              role: 'admin',
-              status: 'active',
-              email_verified: true
-            }, { onConflict: 'id' });
-            if (!upsertErr) {
-              if (data.user.email.toLowerCase() === 'admin@kongila.co') {
-                await supabase.from('user_roles').upsert({
-                  id: `ur_${data.user.id}_super_admin`,
-                  user_id: data.user.id,
-                  role_id: 'super_admin',
-                }, { onConflict: 'id' });
-              }
-              onLoginSuccess();
-              return;
-            }
-          }
           await supabase.auth.signOut();
           throw new Error('Access denied. You do not have admin privileges.');
         }
