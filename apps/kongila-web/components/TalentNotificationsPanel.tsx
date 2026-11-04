@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard as Card, NeonButton as Button } from '@kongila/ui';
 import { Notification } from '@kongila/shared-types';
-import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 interface TalentNotificationsPanelProps {
   notifications: Notification[];
@@ -48,14 +48,21 @@ export default function TalentNotificationsPanel({
       notifications.map(n => ({ ...n, read: true }))
     );
 
-    // Backend update
-    const { error } = await supabase
-      .from('notifications')
-      .update({ read: true })
-      .in('id', unreadIds);
-
-    if (error) {
-      console.error('Failed to mark all as read:', error.message);
+    // Through the server, which scopes the update to the signed-in user.
+    // A browser update keyed only on ids would let anyone clear another
+    // person's notifications by sending their ids.
+    try {
+      const response = await apiFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationIds: unreadIds })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        console.error('Failed to mark all as read:', payload?.error);
+      }
+    } catch (err) {
+      console.error('Failed to mark all as read:', err);
     }
   };
 
@@ -67,11 +74,11 @@ export default function TalentNotificationsPanel({
         notifications.map(notif => notif.id === n.id ? { ...notif, read: true } : notif)
       );
 
-      // Backend update
-      await supabase
-        .from('notifications')
-        .update({ read: true })
-        .eq('id', n.id);
+      await apiFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationIds: [n.id] })
+      }).catch(err => console.error('Failed to mark as read:', err));
     }
 
     // 2. Click-Through Navigation (REQ-KT-1203)

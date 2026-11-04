@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Contract, TalentProfile, ServiceRequest } from "@kongila/shared-types";
-import { supabase } from "../lib/supabaseClient";
+import { apiFetch } from "../lib/apiFetch";
 
 interface MyTeamPanelProps {
   currentUser: any;
@@ -8,7 +8,6 @@ interface MyTeamPanelProps {
   talents: TalentProfile[];
   requests: ServiceRequest[];
   onAddRequest?: (req: any) => Promise<void>;
-  saveToDb?: (db: any) => Promise<void>;
 }
 
 export default function MyTeamPanel({
@@ -17,7 +16,6 @@ export default function MyTeamPanel({
   talents,
   requests,
   onAddRequest,
-  saveToDb
 }: MyTeamPanelProps) {
   const [replacementModalOpen, setReplacementModalOpen] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
@@ -67,29 +65,51 @@ export default function MyTeamPanel({
       // Find original request to clone requirements
       const originalRequest = requests.find(r => r.roleTitle === selectedContract.role || r.id === selectedContract.requestId);
       
-      if (onAddRequest) {
-        await onAddRequest({
-          id: `req_${Date.now()}`,
-          clientId: currentUser?.id,
-          roleTitle: selectedContract.role || selectedContract.role_title || "Replacement Role",
-          roleDescription: originalRequest?.roleDescription || "Replacement requested",
-          requiredSkills: originalRequest?.requiredSkills || [],
-          status: "New Request",
-          priority: "High",
-          isReplacement: true,
-          replacedContractId: selectedContract.id,
-          replacementReason,
-          internalNotes: replacementNotes,
-          createdAt: new Date().toISOString()
-        });
-      }
+      // Straight into talent_requests, the table the admin queue reads. This
+      // used to go only through onAddRequest into saveToDb, which upserted
+      // the always-failing service_requests table, so a replacement request
+      // lived in React state until the next poll and then vanished. No
+      // operator ever saw one.
+      const replacementPayload: any = {
+        id: crypto.randomUUID(),
+        referenceNumber: `KNG-REP-${Date.now().toString().slice(-8)}`,
+        clientId: currentUser?.id,
+        clientName: currentUser?.companyName || currentUser?.name || '',
+        serviceType: originalRequest?.serviceType || 'Hire Talent',
+        roleTitle: selectedContract.role || selectedContract.role_title || 'Replacement Role',
+        roleDescription: originalRequest?.roleDescription
+          || selectedContract.role
+          || 'Replacement requested',
+        requiredSkills: originalRequest?.requiredSkills || [],
+        numberOfHires: 1,
+        duration: originalRequest?.duration,
+        commitmentLevel: originalRequest?.commitmentLevel,
+        budget: originalRequest?.budget ?? 0,
+        status: 'New Request',
+        priority: 'High',
+        urgency: 'ASAP',
+        isReplacement: true,
+        replacedContractId: selectedContract.id,
+        replacementReason,
+        internalNotes: replacementNotes,
+        createdAt: new Date().toISOString()
+      };
 
-      await supabase.from("notifications").insert({
-        user_id: "admin_team", // Ops Manager + Account Manager
-        title: "Replacement Requested",
-        content: `Replacement requested by ${currentUser?.name || 'Client'} for ${selectedContract.talentName} (${selectedContract.role}). Reason: ${replacementReason}.`,
-        read_status: false,
+      const requestResponse = await apiFetch('/api/requests', {
+        method: 'POST',
+        body: JSON.stringify({ request: replacementPayload })
       });
+      const requestBody = await requestResponse.json().catch(() => ({}));
+      if (!requestResponse.ok || !requestBody.request) {
+        throw new Error(requestBody.error || 'Could not create replacement request.');
+      }
+      if (onAddRequest) await onAddRequest(requestBody.request);
+
+      // The request route tells operations when a request arrives. The
+      // insert that used to live here wrote to notifications from the
+      // browser, where RLS is on with no policy, so every write was denied
+      // and nobody was told. The original request's managers see it in the
+      // admin queue either way.
 
       alert("Your replacement request has been received. We'll begin sourcing immediately — typical replacement time is 10 business days.");
       setReplacementModalOpen(false);

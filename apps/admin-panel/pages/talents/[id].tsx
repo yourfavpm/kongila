@@ -1,3 +1,4 @@
+import { apiFetch } from '../../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
@@ -75,7 +76,7 @@ export default function TalentProfileView() {
 
   const fetchData = async () => {
     try {
-      const res = await fetch('/api/db');
+      const res = await apiFetch('/api/db');
       const db = await res.json();
       const found = db.talents?.find((t: any) => t.id === id);
       setTalent(found);
@@ -83,17 +84,18 @@ export default function TalentProfileView() {
 
       const [
         { data: { session } },
-        { data: { user: authUser } },
-        { data: users },
-        { data: roles },
-        { data: userRoles },
+        { data: { user: authUser } }
       ] = await Promise.all([
         supabase.auth.getSession(),
-        supabase.auth.getUser(),
-        supabase.from('users').select('*'),
-        supabase.from('roles').select('id, name'),
-        supabase.from('user_roles').select('user_id, role_id'),
+        supabase.auth.getUser()
       ]);
+
+      // users, roles and user_roles come from /api/db now. Read directly
+      // with the anon key, `users` handed the browser every email, role
+      // and account status on the platform.
+      const users = db.users || [];
+      const roles = db.roles || [];
+      const userRoles = db.userRoles || [];
 
       const assignableTalentManagers = mergeAuthenticatedUserIntoAssignableUsers(
         enrichUsersWithRoleAssignments(
@@ -121,19 +123,15 @@ export default function TalentProfileView() {
     if (!talent) return;
     setSavingManager(true);
     try {
-      const res = await fetch('/api/db');
-      const db = await res.json();
-      
-      const updatedTalents = db.talents.map((t: any) => 
-        t.id === talent.id ? { ...t, talentManagerId: newManagerId === '' ? undefined : newManagerId } : t
-      );
-      
-      const saveRes = await fetch('/api/db', {
+      // Through the server. This read the whole database, mapped the
+      // talents array and posted all of it back through /api/db, which
+      // upserts every talent row and repacks each one's bio envelope.
+      // Changing who manages one candidate rewrote every candidate.
+      const saveRes = await apiFetch('/api/clients/assign-manager', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ talents: updatedTalents })
+        body: JSON.stringify({ talentId: talent.id, userId: newManagerId || null })
       });
-      
+
       if (saveRes.ok) {
         setTalent({ ...talent, talentManagerId: newManagerId === '' ? undefined : newManagerId });
         alert('Talent Manager updated successfully.');

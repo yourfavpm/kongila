@@ -1,3 +1,4 @@
+import { apiFetch } from '../../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
@@ -7,8 +8,6 @@ import { supabase } from '../../lib/supabaseClient';
 import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
-  getDatabaseSafeAdminRole,
-  getPrimaryAssignableRoleId,
   isAccountManagerAssignable,
   mergeAuthenticatedUserIntoAssignableUsers,
 } from '../../lib/adminRoleFilters';
@@ -62,8 +61,13 @@ export default function ClientProfileView() {
 
   const fetchClientData = async () => {
     try {
-      const { data: orgs } = await supabase.from('organizations').select('*').eq('id', id);
-      const org = orgs && orgs.length > 0 ? orgs[0] : null;
+      // Everything on this page comes from /api/db now. The six table
+      // reads that used to be here ran with the anon key, and `users` in
+      // particular handed the browser every email, role and account
+      // status on the platform. They are also what RLS on those tables
+      // would have to permit.
+      const snapshot = await apiFetch('/api/db').then(res => res.json());
+      const org = (snapshot.organizations || []).find((o: any) => String(o.id) === String(id)) || null;
 
       if (!org) {
         setLoading(false);
@@ -77,29 +81,18 @@ export default function ClientProfileView() {
       }
       setLoading(false);
 
-      // 2. Fetch heavy relational data asynchronously in the background
-      const sessionPromise = supabase.auth.getSession();
-      const authUserPromise = supabase.auth.getUser();
-      const adminsPromise = supabase.from('users').select('*');
-      const rolesPromise = supabase.from('roles').select('id, name');
-      const userRolesPromise = supabase.from('user_roles').select('user_id, role_id');
-      const dbPromise = fetch('/api/db').then(res => res.json());
-
       const [
         { data: { session } },
-        { data: { user: authUser } },
-        { data: admins },
-        { data: roles },
-        { data: userRoles },
-        db
+        { data: { user: authUser } }
       ] = await Promise.all([
-        sessionPromise,
-        authUserPromise,
-        adminsPromise,
-        rolesPromise,
-        userRolesPromise,
-        dbPromise
+        supabase.auth.getSession(),
+        supabase.auth.getUser()
       ]);
+
+      const db = snapshot;
+      const admins = snapshot.users || [];
+      const roles = snapshot.roles || [];
+      const userRoles = snapshot.userRoles || [];
 
       setAdminUsers(
         mergeAuthenticatedUserIntoAssignableUsers(
@@ -109,19 +102,21 @@ export default function ClientProfileView() {
       );
         
       // Fetch client profiles
-      const { data: profiles } = await supabase.from('client_profiles').select('*').eq('organization_id', org.id);
-      const orgUserIds = (profiles || []).map((cp: any) => cp.user_id);
+      const profiles = (snapshot.clientProfiles || []).filter(
+        (cp: any) => String(cp.organizationId ?? cp.organization_id) === String(org.id)
+      );
+      const orgUserIds = profiles.map((cp: any) => cp.userId ?? cp.user_id);
         
       // Fetch real requests
       let requests: any[] = [];
       if (orgUserIds.length > 0) {
-        const { data: supabaseRequests } = await supabase.from('talent_requests').select('*').in('client_id', orgUserIds);
+        const supabaseRequests = (snapshot.clientRequests || []).filter(
+          (r: any) => orgUserIds.includes(r.clientId ?? r.client_id)
+        );
         if (supabaseRequests) {
-          requests = supabaseRequests.map((r: any) => ({
-            ...(r.payload || {}),
-            id: r.payload?.id || r.id,
-            dbId: r.id,
-          }));
+          // /api/db already flattens the jsonb payload and resolves the
+          // two ids, so there is nothing left to unpack here.
+          requests = supabaseRequests.map((r: any) => ({ ...r, dbId: r.rowId ?? r.id }));
         }
       }
         
@@ -162,64 +157,24 @@ export default function ClientProfileView() {
         throw new Error('Selected Account Manager is missing an email address and cannot be saved.');
       }
 
-      const safeUserRole = getDatabaseSafeAdminRole(newAm);
-      const assignableRoleId = getPrimaryAssignableRoleId(newAm, safeUserRole);
-
-      const { error: userUpsertError } = await supabase.from('users').upsert({
-        id: newAm.id,
-        email: adminEmail,
-        password_hash: 'auth_managed',
-        role: safeUserRole,
-        status: 'active',
-        email_verified: true,
-      }, { onConflict: 'id' });
-
-      if (userUpsertError) {
-        throw new Error(`Could not prepare Account Manager user record: ${userUpsertError.message}`);
-      }
-
-      const { error: roleUpsertError } = await supabase.from('roles').upsert({
-        id: assignableRoleId,
-        name: assignableRoleId,
-      }, { onConflict: 'id' });
-
-      if (roleUpsertError) {
-        console.error('Failed to verify Account Manager role:', roleUpsertError);
-      } else {
-        const { error: userRoleError } = await supabase.from('user_roles').upsert({
-          id: `ur_${newAm.id}_${assignableRoleId}`,
-          user_id: newAm.id,
-          role_id: assignableRoleId,
-        }, { onConflict: 'id' });
-
-        if (userRoleError) console.error('Failed to verify Account Manager user role:', userRoleError);
-      }
-
-      // Update the organization in Supabase
-      const { error: orgError } = await supabase
-        .from('organizations')
-        .update({
-          account_manager_id: newAm.id
+      // Through the server. The page used to upsert roles and user_roles
+      // from the browser to make sure the role row existed, update
+      // organizations directly, and insert an audit entry attributed to
+      // 'Super Admin' whoever was signed in. RLS is off on the first three
+      // tables, so those writes landed; RLS is on with no policy on
+      // audit_logs, so the entry never did.
+      const response = await apiFetch('/api/clients/assign-manager', {
+        method: 'POST',
+        body: JSON.stringify({
+          organizationId: id,
+          userId: newAm.id,
+          reason: reassignForm.reason.trim()
         })
-        .eq('id', id);
-
-      if (orgError) throw orgError;
-      
-      // Real audit log in Supabase
-      const actorName = 'Super Admin';
-      const actionName = hasAccountManager ? 'Reassign Account Manager' : 'Assign Account Manager';
-      const previousAmName = hasAccountManager ? accountManagerName : 'None';
-      const reasonText = reassignForm.reason.trim() ? ` Reason: ${reassignForm.reason.trim()}` : '';
-      const actionDesc = `${hasAccountManager ? 'Reassigned' : 'Assigned'} AM from ${previousAmName} to ${newAm.name || newAm.email}.${reasonText}`;
-      
-      const { error: auditError } = await supabase.from('audit_logs').insert({
-        actor: actorName,
-        action: actionName,
-        details: actionDesc
       });
-      
-      if (auditError) console.error('Failed to write audit log:', auditError);
-      
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'The account manager was not saved.');
+
       setClient({
         ...client,
         account_manager_id: newAm.id,

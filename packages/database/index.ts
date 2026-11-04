@@ -3,7 +3,7 @@ import {
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
   Invoice, Payment, TalentPayout, Message, Conversation, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
 } from '@kongila/shared-types';
-import { normalizeRequestStatus } from '@kongila/workflows';
+import { coerceRequestStatus, mapInterviewStatusToDb, mapInterviewStatusFromDb } from '@kongila/workflows';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createClient } from '@supabase/supabase-js';
@@ -99,16 +99,370 @@ const EMPTY_DB: Schema = {
 
 // ─── Supabase client ─────────────────────────────────────────────────────────
 let supabaseClient: any = null;
-const defaultSupabaseUrl = 'https://bsmwuofugczuhdbintgs.supabase.co';
-const defaultSupabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzbXd1b2Z1Z2N6dWhkYmludGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDAzMTQsImV4cCI6MjA5NDY3NjMxNH0.yhVLhHb0BRfZZjGagF_PwQbYzKVhIOFgAhzoTURvpJc';
 
 export function getSupabaseClient() {
   if (!supabaseClient) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultSupabaseUrl;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultSupabaseAnonKey;
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+    // No hardcoded fallback. This used to default to the staging project and
+    // its anon key, so a process with no environment configured connected to
+    // staging and every call appeared to succeed against the wrong database.
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+    // On the server, use the service role key. readDbAsync and writeDbAsync are
+    // only ever called from API routes, which carry no user session, so with the
+    // anon key auth.uid() is null and every table with row level security comes
+    // back as an empty array rather than an error. That is why the admin portal
+    // showed no users and no talents while the rows sat in the database.
+    //
+    // SUPABASE_SERVICE_ROLE_KEY has no NEXT_PUBLIC_ prefix, so Next.js will not
+    // inline it into a browser bundle. If this module is ever imported into
+    // client code the variable is undefined there and it falls back to anon.
+    //
+    // This is a stopgap. The route it serves still hands the whole database to
+    // whoever asks. Per-role authorisation arrives with the API routes on day 3.
+    const isServer = typeof window === 'undefined';
+    const serviceKey = isServer ? process.env.SUPABASE_SERVICE_ROLE_KEY : undefined;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error(
+        '[database] NEXT_PUBLIC_SUPABASE_URL is not set. Add it to .env.local in the app you are running.'
+      );
+    }
+
+    if (isServer && !serviceKey) {
+      console.warn(
+        '[database] SUPABASE_SERVICE_ROLE_KEY is not set, falling back to the anon key. ' +
+        'Every table with row level security will come back empty. ' +
+        'Add it to .env.local in the app you are running.'
+      );
+    }
+
+    // Resolve to a single value so the throw below narrows the type for the
+    // createClient call. `serviceKey || anonKey` on its own stays
+    // `string | undefined` as far as the compiler is concerned.
+    const supabaseKey = serviceKey || anonKey;
+    if (!supabaseKey) {
+      throw new Error(
+        '[database] No Supabase key available. Set SUPABASE_SERVICE_ROLE_KEY (server) ' +
+        'or NEXT_PUBLIC_SUPABASE_ANON_KEY. Add it to .env.local in the app you are running.'
+      );
+    }
+
+    supabaseClient = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false },
+    });
   }
   return supabaseClient;
+}
+
+// ─── Request authentication ──────────────────────────────────────────────────
+// Resolves the caller of an API route from the bearer token the browser sends.
+// Returns null for anything that is not a valid, active, known user, and the
+// route turns that into a 401. Never trust a user id from a request body.
+
+export type { RequestActor } from './scope';
+export { scopeDbForUser, filterWritableDb } from './scope';
+export { parseStorageUrl, clearSignedUrlCache } from './signedUrls';
+
+import { signStoredFileUrls } from './signedUrls';
+
+/**
+ * Swaps stored storage URLs in a database snapshot for short-lived signed
+ * ones. Call this on the way out of an API route, after scoping, so the
+ * private documents bucket stays readable to the people entitled to it.
+ */
+export async function signDbFileUrls(db: any): Promise<any> {
+  return signStoredFileUrls(db, getSupabaseClient());
+}
+
+import type { RequestActor as Actor } from './scope';
+
+const ADMIN_PORTAL_ROLES = new Set([
+  'super_admin',
+  'superadmin',
+  'admin',
+  'account_manager',
+  'operations_manager',
+  'ops_manager',
+  'talent_manager',
+  'finance'
+]);
+
+function normalizeRoleValue(role: any): string {
+  return String(role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+/**
+ * Verifies the bearer token and returns the auth user, without requiring a
+ * row in public.users.
+ *
+ * getRequestUser resolves a role from public.users, so it returns null during
+ * signup, before that row exists. Provisioning needs to know who the caller is
+ * at exactly that moment, so it uses this instead.
+ */
+export async function getAuthenticatedUserId(
+  req: { headers?: any }
+): Promise<{ userId: string; email: string | null } | null> {
+  const header = req?.headers?.authorization || req?.headers?.Authorization;
+  const token =
+    typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) return null;
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) return null;
+
+  return { userId: data.user.id, email: data.user.email ?? null };
+}
+
+export async function getRequestUser(req: { headers?: any }): Promise<Actor | null> {
+  const header = req?.headers?.authorization || req?.headers?.Authorization;
+  const token =
+    typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) return null;
+
+  const supabase = getSupabaseClient();
+
+  // Verifies the JWT signature against the project, so a forged token fails here.
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData?.user) return null;
+  const userId = authData.user.id;
+
+  const { data: userRow } = await supabase
+    .from('users')
+    .select('role, email, status')
+    .eq('id', userId)
+    .maybeSingle();
+
+  // A suspended account keeps a valid token until it expires. Check the row.
+  if (userRow?.status && String(userRow.status).toLowerCase() === 'suspended') return null;
+
+  const role = normalizeRoleValue(userRow?.role || authData.user.user_metadata?.role);
+  if (!role) return null;
+
+  let kind: Actor['kind'];
+  if (ADMIN_PORTAL_ROLES.has(role)) kind = 'admin';
+  else if (role === 'client') kind = 'client';
+  else if (role === 'talent') kind = 'talent';
+  else return null;
+
+  let organizationId: string | null = null;
+  let talentProfileId: string | null = null;
+
+  if (kind === 'client') {
+    const { data: cp } = await supabase
+      .from('client_profiles')
+      .select('organization_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    organizationId = cp?.organization_id ?? null;
+  }
+
+  if (kind === 'talent') {
+    const { data: tp } = await supabase
+      .from('talent_profiles')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    talentProfileId = tp?.id ?? null;
+  }
+
+  return {
+    userId,
+    email: userRow?.email ?? authData.user.email ?? null,
+    role,
+    kind,
+    organizationId,
+    talentProfileId
+  };
+}
+
+// ─── Targeted vetting access ─────────────────────────────────────────────────
+// readDbAsync/writeDbAsync read about thirty tables and rewrite sixteen. For a
+// change to one candidate's vetting pipeline that is both slow and destructive:
+// it resets every user's password_hash, forces every talent to active, and
+// overwrites anything another request changed in between.
+//
+// These two functions touch exactly one row of talent_profiles, and only its
+// bio column, which is where the pipeline actually lives.
+
+// --- Contract status mapping ------------------------------------------------
+// The database and the application disagree on vocabulary. This is the only
+// place that is reconciled, so a new status cannot be invented at a call site
+// and silently fail the whole batch.
+
+/**
+ * Application status to a value contracts_status_check actually allows.
+ *
+ * Returns null for anything it does not recognise, and the caller leaves the
+ * stored status alone rather than writing a guess. The old version returned
+ * 'pending' for everything that fell through, which was the bug: readDbAsync
+ * hands back display forms with spaces, so 'Pending Signatures', 'Client
+ * Signed' and 'Talent Signed' all missed their case and came back 'pending'.
+ * Any unrelated save of the db blob then rewrote those contracts to pending,
+ * losing a real signature state that nobody had asked to change.
+ */
+export function mapContractStatusToDb(status?: string | null): string | null {
+  // Display forms carry spaces and capitals; database forms carry
+  // underscores. Normalise both to the same shape before matching.
+  const key = String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+  switch (key) {
+    case 'signed':
+    case 'fully_signed':       return 'fully_signed';
+    case 'client_signed':      return 'client_signed';
+    case 'talent_signed':      return 'talent_signed';
+    case 'pending_signatures': return 'pending_signatures';
+    case 'pending':
+    case 'draft':              return 'pending';
+    case 'active':             return 'active';
+    case 'completed':
+    case 'ended':              return 'ended';
+    case 'terminated':         return 'terminated';
+    case 'closed':             return 'closed';
+    default:                   return null;
+  }
+}
+
+/**
+ * The status field of a contract upsert, or nothing at all.
+ *
+ * Omitting the key leaves the stored value untouched. An unrecognised status
+ * is a bug to fix, not a reason to overwrite a live contract.
+ */
+function contractStatusPatch(contract: any): { status?: string } {
+  const mapped = mapContractStatusToDb(contract?.status);
+  if (mapped) return { status: mapped };
+
+  if (contract?.status) {
+    console.warn(
+      `[DB] contract ${contract.id}: unknown status "${contract.status}", leaving the stored one alone`
+    );
+  }
+  return {};
+}
+
+/** Database status to what the portals display. */
+export function mapContractStatusFromDb(status?: string | null): string {
+  switch (String(status || '').toLowerCase()) {
+    case 'fully_signed':       return 'Signed';
+    case 'client_signed':      return 'Client Signed';
+    case 'talent_signed':      return 'Talent Signed';
+    case 'pending_signatures': return 'Pending Signatures';
+    case 'active':             return 'Active';
+    case 'ended':              return 'Completed';
+    case 'terminated':         return 'Terminated';
+    case 'closed':             return 'Closed';
+    default:                   return 'Pending';
+  }
+}
+
+export interface TalentVettingSnapshot {
+  talentId: string;
+  pipeline: any[];
+  telemetry: Record<string, any>;
+  tags: string[];
+  scores: any;
+  plainBio: string;
+}
+
+/**
+ * Unpacks the bio column. Mirrors the parsing in readDbAsync, including the
+ * legacy string format, so a row written before the JSON envelope keeps its
+ * tags and scores instead of losing them on the next write.
+ */
+function unpackTalentBio(rawBio: any): { telemetry: any; tags: string[]; scores: any; plainBio: string } {
+  let bio = typeof rawBio === 'string' ? rawBio : '';
+  let tags: string[] = [];
+  let scores: any = null;
+  let telemetry: any = {};
+
+  if (bio.startsWith('{"__kongila":')) {
+    try {
+      const envelope = JSON.parse(bio);
+      tags = envelope.tags || [];
+      scores = envelope.scores || null;
+      telemetry = envelope.telemetry || {};
+      bio = envelope.bio || '';
+    } catch (e) {
+      console.error('[database] failed to parse talent bio envelope:', e);
+    }
+  } else if (bio.startsWith('Tags:')) {
+    const parts = bio.split('\n\nTelemetry:');
+    const beforeTelemetry = parts[0];
+    const afterTelemetry = parts[1] || '';
+    const scoreParts = beforeTelemetry.split('\n\nScores:');
+    const tagsLine = scoreParts[0].replace('Tags:', '').trim();
+    tags = tagsLine ? tagsLine.split(', ').filter(Boolean) : [];
+    if (scoreParts[1]) { try { scores = JSON.parse(scoreParts[1].trim()); } catch (e) {} }
+    const bioParts = afterTelemetry.split('\n\nBio:');
+    if (bioParts[0]) { try { telemetry = JSON.parse(bioParts[0].trim()); } catch (e) {} }
+    bio = (bioParts[1] || '').trim();
+  }
+
+  return { telemetry, tags, scores, plainBio: bio };
+}
+
+/** Re-packs into the same JSON envelope writeDbAsync produces. */
+function packTalentBio(snapshot: TalentVettingSnapshot): string {
+  return JSON.stringify({
+    __kongila: true,
+    tags: snapshot.tags || [],
+    scores: snapshot.scores || {},
+    telemetry: { ...snapshot.telemetry, vettingPipeline: snapshot.pipeline },
+    bio: snapshot.plainBio || ''
+  });
+}
+
+/** Reads one candidate's vetting state. Returns null when there is no such row. */
+export async function readTalentVetting(talentId: string): Promise<TalentVettingSnapshot | null> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('talent_profiles')
+    .select('id, bio')
+    .eq('id', talentId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[database] readTalentVetting failed:', error.message);
+    throw new Error(`Failed to read candidate: ${error.message}`);
+  }
+  if (!data) return null;
+
+  const { telemetry, tags, scores, plainBio } = unpackTalentBio(data.bio);
+
+  return {
+    talentId: data.id,
+    pipeline: Array.isArray(telemetry.vettingPipeline) ? telemetry.vettingPipeline : [],
+    telemetry,
+    tags,
+    scores,
+    plainBio
+  };
+}
+
+/**
+ * Writes one candidate's vetting state back. Only the bio column of that one
+ * row is touched, and unlike writeDbAsync the error is returned rather than
+ * logged and swallowed, so the route can answer honestly.
+ */
+export async function writeTalentVetting(
+  snapshot: TalentVettingSnapshot
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase
+    .from('talent_profiles')
+    .update({ bio: packTalentBio(snapshot) })
+    .eq('id', snapshot.talentId);
+
+  if (error) {
+    console.error('[database] writeTalentVetting failed:', error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
 }
 
 // ─── In-memory cache — used as fallback when Supabase is unreachable ──────────
@@ -153,17 +507,21 @@ export function createClientRequest(req: Omit<ServiceRequest, 'id' | 'createdAt'
 export function updateRequestStatus(_id: string, _status: ServiceRequest['status']): void {}
 export function getMatches(): Match[] { return []; }
 export function createMatches(_matches: Match[]): void {}
-export function updateMatchStatus(_matchId: string, _status: Match['status']): void {}
+// updateMatchStatus used to be a no-op stub here, and it shadowed the
+// real one in matchService through the barrel export. A route that
+// imported it got a function that did nothing and returned nothing.
 export function getTasks(): Task[] { return []; }
 export function createTask(task: Omit<Task, 'id' | 'createdAt'>): Task {
   return { ...task, id: `task_${Date.now()}`, createdAt: new Date().toISOString() } as Task;
 }
 export function updateTaskStatus(_id: string, _status: Task['status'], _blockerDescription?: string): void {}
 export function getContracts(): Contract[] { return []; }
-export function createContract(contract: Omit<Contract, 'id' | 'status'>): Contract {
-  return { ...contract, id: `contract_${Date.now()}`, status: 'Pending' } as Contract;
-}
-export function signContract(_id: string): void {}
+// createContract used to be a stub here that returned an object and wrote
+// nothing, with status 'Pending', which contracts_status_check does not
+// allow. It shadowed the real one in contractStatusService through the
+// barrel export, exactly as the updateMatchStatus stub did. The rest of
+// the no-op helpers below have no callers; anything new must not reuse
+// one of their names.
 export function getNotifications(_userId: string): Notification[] { return []; }
 export function addNotification(_userId: string, _title: string, _message: string): void {}
 export function getAuditLogs(): AuditLog[] { return []; }
@@ -186,6 +544,10 @@ export async function readDbAsync(): Promise<Schema> {
     let rMatches, rProjects, rTasks, rContracts, rAssignments, rInvoices, rPayments, rPayouts;
     let rMessages, rNotifs, rAudit, rAgent, rTickets, rSupportMessages, rInterviews, rRequestActivityLogs, rConversations;
     let rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments;
+    // Roles and the links to them. These came back as hardcoded empty
+    // arrays, so four admin screens read the two tables straight from
+    // the browser to get at them.
+    let rRoles: any, rUserRoles: any;
 
     // 1. Attempt to fetch everything using the unified RPC stored procedure
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_full_db_state');
@@ -207,7 +569,14 @@ export async function readDbAsync(): Promise<Schema> {
       rSkills = { data: ensureArray(rpcData.skills), error: null };
       rTalentSkills = { data: ensureArray(rpcData.talent_skills), error: null };
       rDocs = { data: ensureArray(rpcData.documents), error: null };
-      rRequests = { data: ensureArray(rpcData.service_requests), error: null };
+      // talent_requests is the only request table the portals write. The RPC
+      // predates that and may still only carry service_requests, so the table
+      // is read directly here rather than trusted to the stored procedure.
+      if (rpcData.talent_requests !== undefined) {
+        rRequests = { data: ensureArray(rpcData.talent_requests), error: null };
+      } else {
+        rRequests = await supabase.from('talent_requests').select('*');
+      }
 
       rMatches = { data: ensureArray(rpcData.matches), error: null };
       rProjects = { data: ensureArray(rpcData.projects), error: null };
@@ -234,6 +603,10 @@ export async function readDbAsync(): Promise<Schema> {
       rAssessmentAssignments = { data: ensureArray(rpcData.assessment_assignments), error: null };
       rSkillAssessmentResults = { data: ensureArray(rpcData.skill_assessment_results), error: null };
       rTalentSkillAssessments = { data: ensureArray(rpcData.talent_skill_assessments), error: null };
+      // The RPC may predate these two. An empty array is the same as
+      // what the code did before, so an older RPC still works.
+      rRoles = { data: ensureArray(rpcData.roles), error: null };
+      rUserRoles = { data: ensureArray(rpcData.user_roles), error: null };
     } else {
       // 2. Fallback: If RPC doesn't exist or fails, fall back to individual table queries
       if (rpcError) {
@@ -248,7 +621,7 @@ export async function readDbAsync(): Promise<Schema> {
         supabase.from('skills').select('*'),
         supabase.from('talent_skills').select('*'),
         supabase.from('documents').select('*'),
-        supabase.from('service_requests').select('*'),
+        supabase.from('talent_requests').select('*'),
       ]);
 
       const batch2 = await Promise.all([
@@ -280,7 +653,9 @@ export async function readDbAsync(): Promise<Schema> {
         supabase.from('assessment_questions').select('*'),
         supabase.from('assessment_assignments').select('*'),
         supabase.from('skill_assessment_results').select('*'),
-        supabase.from('talent_skill_assessments').select('*')
+        supabase.from('talent_skill_assessments').select('*'),
+        supabase.from('roles').select('id, name'),
+        supabase.from('user_roles').select('id, user_id, role_id')
       ]);
 
       [
@@ -296,7 +671,8 @@ export async function readDbAsync(): Promise<Schema> {
       ] = batch3;
       
       [
-        rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments
+        rAssessments, rAssessmentCategories, rAssessmentQuestions, rAssessmentAssignments, rSkillAssessmentResults, rTalentSkillAssessments,
+        rRoles, rUserRoles
       ] = batch4;
     }
 
@@ -336,14 +712,19 @@ export async function readDbAsync(): Promise<Schema> {
       name: o.name,
       created_by: o.created_by,
       created_at: o.created_at,
-      accountManagerId: o.account_manager_id || 'usr_admin', // Default mock
-      accountManagerName: o.account_manager_name || 'Admin', // Default mock
+      // Nothing is invented here any more. These used to default to a random
+      // health score, random monthly revenue, a made-up contact email built
+      // from the company name, a placeholder phone number and 'usr_admin' as
+      // the account manager. Operations read those as real figures, and the
+      // numbers changed on every page load. Null means not set.
+      accountManagerId: o.account_manager_id || null,
+      accountManagerName: o.account_manager_name || null,
       status: o.status || 'Active',
-      healthScore: o.health_score || Math.floor(Math.random() * 30) + 70, // Mock 70-100 if not present
+      healthScore: o.health_score ?? null,
       internalNotes: o.internal_notes || '',
-      contactEmail: o.contact_email || 'contact@' + o.name.toLowerCase().replace(/\s/g, '') + '.com',
-      contactPhone: o.contact_phone || '+1234567890',
-      monthlyRevenue: o.monthly_revenue || Math.floor(Math.random() * 50000) + 10000,
+      contactEmail: o.contact_email || null,
+      contactPhone: o.contact_phone || null,
+      monthlyRevenue: o.monthly_revenue ?? null,
       lastActivityAt: o.last_activity_at || new Date().toISOString(),
       industry: o.industry,
       company_size: o.company_size,
@@ -371,6 +752,26 @@ export async function readDbAsync(): Promise<Schema> {
     }));
 
     // ── Map documents ──────────────────────────────────────────────────────
+    // Who has signed each template comes from document_signatures. It used
+    // to be a signedByTalentIds array that only ever existed in browser
+    // memory, so the admin's signature progress bar always read zero and the
+    // two compliance checks that used it were reading nothing.
+    const signedByDocument = new Map<string, string[]>();
+    try {
+      const { data: docSignatures } = await supabase
+        .from('document_signatures')
+        .select('document_id, talent_id');
+
+      for (const row of (docSignatures || []) as any[]) {
+        const key = String(row.document_id);
+        const list = signedByDocument.get(key) || [];
+        list.push(String(row.talent_id));
+        signedByDocument.set(key, list);
+      }
+    } catch (err: any) {
+      console.warn('[DB] could not read document signatures:', err?.message);
+    }
+
     const documents: Document[] = (rDocs.data || []).map((doc: any) => ({
       id: doc.id,
       userId: doc.user_id,
@@ -392,6 +793,8 @@ export async function readDbAsync(): Promise<Schema> {
       isHidden: doc.is_hidden || false,
       templateId: doc.template_id || null,
       signatureData: doc.signature_data || null,
+      isTemplate: doc.is_template || false,
+      signedByTalentIds: signedByDocument.get(String(doc.id)) || [],
       signedAt: doc.signed_at || null,
       requiresReReview: doc.requires_re_review || false,
       description: doc.description || null
@@ -543,51 +946,53 @@ export async function readDbAsync(): Promise<Schema> {
     });
 
     // ── Map client requests ────────────────────────────────────────────────────
-    const clientRequests: ServiceRequest[] = (rRequests.data || []).map((r: any) => {
-      let roleDescription = r.description || '';
-      let requiredSkills: string[] = [];
-      let priority = 'Medium';
-      let timezone = '';
-      let budget = 0;
-      let clientName = '';
+    //
+    // These come from talent_requests, which stores the whole request as a
+    // camelCase jsonb payload. This used to read service_requests, a second,
+    // older shape that nothing writes successfully: its title is NOT NULL and
+    // never sent, four of the columns written to it do not exist, and both of
+    // its CHECK constraints are narrower than the statuses and service types
+    // the product uses. Every write to it failed, so it held nothing.
+    //
+    // A request has two ids: the row's own primary key, and payload.id, which
+    // the client portal generates and uses everywhere. payload.id wins so the
+    // two portals agree on what a request is called; the row id is kept as
+    // rowId for the places that update by primary key.
+    const clientRequests: ServiceRequest[] = (rRequests?.data || []).map((r: any) => {
+      const payload = (r && typeof r.payload === 'object' && r.payload) || {};
 
-      // Try to resolve client name from orgs
-      const clientProfile = clientProfiles.find(cp => cp.userId === r.client_id);
-      const org = organizations.find(o => o.id === clientProfile?.organizationId);
-      clientName = org?.name || '';
-
-      try {
-        const parsed = JSON.parse(r.description);
-        if (parsed && typeof parsed === 'object') {
-          roleDescription = parsed.roleDescription || '';
-          requiredSkills = parsed.requiredSkills || [];
-          priority = parsed.priority || 'Medium';
-          timezone = parsed.timezone || '';
-          budget = parsed.budget || 0;
-          if (!clientName) clientName = parsed.clientName || '';
-        }
-      } catch (e) {}
+      // Resolve the company name if the payload did not carry one.
+      let clientName = payload.clientName || '';
+      if (!clientName) {
+        const clientProfile = clientProfiles.find(cp => cp.userId === r.client_id);
+        const org = organizations.find(o => o.id === clientProfile?.organizationId);
+        clientName = org?.name || '';
+      }
 
       return {
-        id: r.id,
-        clientId: r.client_id,
+        ...payload,
+        id: payload.id || r.id,
+        rowId: r.id,
+        clientId: r.client_id || payload.clientId,
         clientName,
-        serviceType: r.service_type,
-        roleDescription,
-        requiredSkills,
-        duration: r.duration,
-        commitmentLevel: r.commitment_level,
-        numberOfHires: r.num_of_talents,
-        timezone,
-        startDate: r.start_date,
-        budget,
-        priority,
-        status: normalizeRequestStatus(r.status),
-        createdAt: r.created_at,
-        urgency: r.urgency || (Math.random() > 0.8 ? 'ASAP' : 'Standard'),
-        assignedTalentManagerId: r.assigned_talent_manager_id || null,
-        assignedAccountManagerId: r.assigned_account_manager_id || null,
-        internalNotes: r.internal_notes || ''
+        serviceType: r.service_type || payload.serviceType,
+        roleDescription: payload.roleDescription || r.role_description || '',
+        requiredSkills: payload.requiredSkills || [],
+        duration: payload.duration,
+        commitmentLevel: payload.commitmentLevel,
+        numberOfHires: payload.numberOfHires ?? 1,
+        timezone: payload.timezone || '',
+        startDate: payload.startDate,
+        budget: payload.budget ?? 0,
+        priority: payload.priority || 'Medium',
+        status: coerceRequestStatus(payload.status ?? r.status),
+        createdAt: payload.createdAt || r.created_at,
+        // Was randomly marked ASAP for one request in five, which changed on
+        // every page load. Unset means Standard, not maybe-urgent.
+        urgency: payload.urgency || 'Standard',
+        assignedTalentManagerId: r.talent_manager_id || payload.assignedTalentManagerId || null,
+        assignedAccountManagerId: r.account_manager_id || payload.assignedAccountManagerId || null,
+        internalNotes: payload.internalNotes || ''
       } as any;
     });
 
@@ -661,7 +1066,7 @@ export async function readDbAsync(): Promise<Schema> {
         role: c.service_type || 'Contractor',
         salary: Number(c.rate_amount || 0),
         startDate: c.start_date || '',
-        status: c.status === 'signed' ? 'Signed' : 'Pending',
+        status: mapContractStatusFromDb(c.status),
         signedAt: c.signed_at,
         rateType: c.rate_type || 'Monthly',
         rateAmount: Number(c.rate_amount || 0),
@@ -743,7 +1148,8 @@ export async function readDbAsync(): Promise<Schema> {
     const interviews: Interview[] = (rInterviews.data || []).map((iv: any) => ({
       id: iv.id, requestId: iv.request_id, matchId: iv.match_id, talentId: iv.talent_id,
       talentName: iv.talent_name, talentAvatar: iv.talent_avatar, clientName: iv.client_name,
-      title: iv.title, date: iv.date, time: iv.time, status: iv.reschedule_requested ? 'Reschedule Requested' : (iv.status === 'scheduled' ? 'Scheduled' : iv.status),
+      title: iv.title, date: iv.date, time: iv.time,
+      status: mapInterviewStatusFromDb(iv),
       meetingLink: iv.meeting_link, notes: iv.notes, talentNotes: iv.talent_notes,
       clientRating: iv.client_rating, clientFeedback: iv.client_feedback, outcome: iv.outcome,
       googleCalendarEventId: iv.google_calendar_event_id,
@@ -752,6 +1158,17 @@ export async function readDbAsync(): Promise<Schema> {
       rescheduleReason: iv.reschedule_reason,
       proposedNewDate: iv.proposed_new_date,
       proposedNewTime: iv.proposed_new_time,
+      // The instant and the zones. date and time are naive wall clock and
+      // mean nothing on their own; these are what the portals render from.
+      scheduledTime: iv.scheduled_time,
+      scheduledTimezone: iv.scheduled_timezone,
+      clientTimezone: iv.client_timezone,
+      talentTimezone: iv.talent_timezone,
+      proposedTime: iv.proposed_time,
+      proposedTimezone: iv.proposed_timezone,
+      rescheduleRequestedBy: iv.reschedule_requested_by,
+      rescheduleRequestedAt: iv.reschedule_requested_at,
+      rescheduledFrom: iv.rescheduled_from,
       createdAt: iv.created_at
     }));
 
@@ -786,13 +1203,33 @@ export async function readDbAsync(): Promise<Schema> {
       talentPayouts,
       messages,
       conversations,
-      roles: [],
-      userRoles: [],
+      roles: (rRoles?.data || []) as any[],
+      userRoles: ((rUserRoles?.data || []) as any[]).map((ur: any) => ({
+        id: ur.id, userId: ur.user_id, roleId: ur.role_id
+      })),
       supportTickets,
       supportMessages,
       interviews,
       requestActivityLogs,
-      rehireRequests: [],
+      // Re-hire requests arrive as talent_requests with service_type
+      // 'Re-hire'. This was a hardcoded empty array, so the re-hire
+      // queue in the admin panel was always empty and its approve
+      // handler was unreachable.
+      rehireRequests: clientRequests
+        .filter((r: any) => String(r.serviceType || '').toLowerCase() === 're-hire')
+        .map((r: any) => ({
+          id: r.id,
+          rowId: (r as any).rowId,
+          clientId: r.clientId,
+          clientName: (r as any).clientName,
+          talentId: (r as any).talentId,
+          talentName: (r as any).talentName,
+          role: (r as any).role || (r as any).roleDescription,
+          proposedRate: (r as any).rate || (r as any).budget,
+          proposedStartDate: (r as any).startDate,
+          status: (r as any).rehireStatus || r.status,
+          createdAt: r.createdAt
+        })) as any,
       assessments: rAssessments?.data || [],
       assessmentCategories: rAssessmentCategories?.data || [],
       assessmentQuestions: rAssessmentQuestions?.data || [],
@@ -931,30 +1368,40 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     }
 
     if (db.clientRequests && db.clientRequests.length > 0) {
-      const rows = db.clientRequests.map((r: any) => ({
-        id: r.id,
-        client_id: r.clientId,
-        service_type: r.serviceType,
-        description: JSON.stringify({
-          roleDescription: r.roleDescription,
-          requiredSkills: r.requiredSkills,
-          priority: r.priority,
-          timezone: r.timezone,
-          budget: r.budget,
-          clientName: r.clientName
-        }),
-        duration: r.duration,
-        commitment_level: r.commitmentLevel,
-        num_of_talents: r.numberOfHires,
-        start_date: r.startDate,
-        status: normalizeRequestStatus(r.status) === 'New Request' ? 'new' : normalizeRequestStatus(r.status),
-        urgency: r.urgency,
-        assigned_talent_manager_id: r.assignedTalentManagerId,
-        assigned_account_manager_id: r.assignedAccountManagerId,
-        internal_notes: r.internalNotes
-      }));
-      const { error } = await supabase.from('service_requests').upsert(rows);
-      if (error) console.error('[DB] service_requests upsert error:', error.message);
+      // talent_requests keeps the whole request in a jsonb payload and carries
+      // only a few columns of its own. rowId is the primary key when the
+      // request came from the database; a request created in memory has none,
+      // so the row id is left to the column default and payload.id stays the
+      // identifier the portals use.
+      const rows = db.clientRequests.map((r: any) => {
+        const { rowId, ...payload } = r as any;
+        const row: any = {
+          client_id: r.clientId,
+          service_type: r.serviceType,
+          payload: { ...payload, status: coerceRequestStatus(r.status) },
+          status: coerceRequestStatus(r.status),
+          role_description: r.roleDescription || null,
+          title: r.title || r.roleDescription || null,
+          talent_manager_id: r.assignedTalentManagerId || null,
+          account_manager_id: r.assignedAccountManagerId || null
+        };
+        if (rowId) row.id = rowId;
+        return row;
+      });
+
+      // A row with no primary key would be inserted again on every write, so
+      // those go through insert and the rest through upsert.
+      const withId = rows.filter((row: any) => row.id);
+      const withoutId = rows.filter((row: any) => !row.id);
+
+      if (withId.length > 0) {
+        const { error } = await supabase.from('talent_requests').upsert(withId);
+        if (error) console.error('[DB] talent_requests upsert error:', error.message);
+      }
+      if (withoutId.length > 0) {
+        const { error } = await supabase.from('talent_requests').insert(withoutId);
+        if (error) console.error('[DB] talent_requests insert error:', error.message);
+      }
     }
 
     if (db.contracts && db.contracts.length > 0) {
@@ -967,14 +1414,88 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         rate_amount: c.rateAmount || c.salary || 0,
         start_date: c.startDate,
         end_date: c.endDate,
-        status: c.status === 'Signed' ? 'signed' : (c.status === 'terminated' ? 'terminated' : (c.status === 'completed' ? 'completed' : 'pending')),
+        // contracts_status_check allows: pending, active, ended, terminated,
+        // closed, pending_signatures, client_signed, talent_signed,
+        // fully_signed. 'signed' and 'completed' are not in that list, so
+        // every contract carrying either failed the whole batch upsert.
+        ...contractStatusPatch(c),
         signed_at: c.signedAt || null,
-        termination_reason: c.terminationReason || null,
-        client_monthly_fee_usd: c.clientMonthlyFeeUsd || 0,
+        // termination_reason and client_monthly_fee_usd do not exist on this
+        // table. Sending them rejected the entire batch, so no contract has
+        // ever been written through this path.
         performance_score: c.performanceScore || 0
       }));
       const { error } = await supabase.from('contracts').upsert(rows);
       if (error) console.error('[DB] contracts upsert error:', error.message);
+    }
+
+    // ── Finance ───────────────────────────────────────────────────────
+    // There were no branches for any of these three, so every finance
+    // action was lost on reload: an invoice marked paid came back unpaid,
+    // a recorded payment vanished, and a payout approval was never saved.
+
+    if (db.invoices && db.invoices.length > 0) {
+      const rows = db.invoices.map((inv: any) => ({
+        id: inv.id,
+        invoice_number: inv.invoiceNumber || null,
+        client_id: inv.clientId,
+        contract_id: inv.contractId || null,
+        period: inv.period || null,
+        service_line: inv.serviceLine || null,
+        amount: Number(inv.amount || inv.totalUsd || 0),
+        subtotal_usd: inv.subtotalUsd ?? inv.amount ?? 0,
+        tax_amount_usd: inv.taxAmountUsd ?? 0,
+        total_usd: inv.totalUsd ?? inv.amount ?? 0,
+        status: inv.status || 'draft',
+        due_date: inv.dueDate || null,
+        is_disputed: inv.isDisputed || false,
+        dispute_reason: inv.disputeReason || null,
+        currency: inv.currency || 'USD',
+        usd_rate: inv.usdRate ?? 1,
+        rate_source: inv.rateSource || null,
+        total_amount_usd: inv.totalAmountUsd ?? inv.totalUsd ?? inv.amount ?? 0,
+        created_at: inv.createdAt || new Date().toISOString()
+      }));
+      const { error } = await supabase.from('invoices').upsert(rows);
+      if (error) console.error('[DB] invoices upsert error:', error.message);
+    }
+
+    if (db.payments && db.payments.length > 0) {
+      const rows = db.payments.map((p: any) => ({
+        id: p.id,
+        invoice_id: p.invoiceId,
+        amount: Number(p.amount || 0),
+        payment_method: p.paymentMethod || null,
+        status: p.status || 'pending',
+        paid_at: p.paidAt || null
+      }));
+      const { error } = await supabase.from('payments').upsert(rows);
+      if (error) console.error('[DB] payments upsert error:', error.message);
+    }
+
+    if (db.talentPayouts && db.talentPayouts.length > 0) {
+      const rows = db.talentPayouts.map((tp: any) => ({
+        id: tp.id,
+        talent_id: tp.talentId,
+        contract_id: tp.contractId,
+        invoice_id: tp.invoiceId || null,
+        period: tp.period || null,
+        gross_amount: tp.grossAmount ?? null,
+        commission_pct: tp.commissionPct ?? null,
+        net_amount: tp.netAmount ?? tp.amount ?? 0,
+        amount: Number(tp.amount ?? tp.netAmount ?? 0),
+        status: tp.status || 'pending',
+        payment_method: tp.paymentMethod || null,
+        failure_reason: tp.failureReason || null,
+        currency: tp.currency || 'USD',
+        usd_rate: tp.usdRate ?? 1,
+        rate_source: tp.rateSource || null,
+        net_amount_usd: tp.netAmountUsd ?? tp.netAmount ?? tp.amount ?? 0,
+        paid_at: tp.paidAt || null,
+        created_at: tp.createdAt || new Date().toISOString()
+      }));
+      const { error } = await supabase.from('talent_payouts').upsert(rows);
+      if (error) console.error('[DB] talent_payouts upsert error:', error.message);
     }
 
     if (db.documents && db.documents.length > 0) {
@@ -997,6 +1518,10 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         updated_at: d.updatedAt || new Date().toISOString(),
         is_mandatory: d.isMandatory || false,
         is_hidden: d.isHidden || false,
+        // Survives the first candidate signing it. The old flow wrote the
+        // signer's user_id onto the template, which quietly took it out of
+        // the required set for everyone else.
+        is_template: d.isTemplate ?? (d.isMandatory && !d.userId) ?? false,
         template_id: d.templateId || null,
         signature_data: d.signatureData || null,
         signed_at: d.signedAt || null,
@@ -1082,6 +1607,25 @@ export async function writeDbAsync(db: Schema): Promise<void> {
       if (error) console.error('[DB] messages upsert error:', error.message);
     }
 
+    if (db.talentSkillAssessments && db.talentSkillAssessments.length > 0) {
+      // There was no branch for this table at all, so an assessment the admin
+      // assigned during vetting was held in memory and lost on reload. The
+      // columns are quoted camelCase, which is why the keys look like this.
+      const rows = db.talentSkillAssessments.map((a: any) => ({
+        id: a.id,
+        talentId: a.talentId,
+        assessmentId: a.assessmentId,
+        status: a.status || 'assigned',
+        score: a.score ?? null,
+        assignedAt: a.assignedAt || null,
+        answers: a.answers || null,
+        subjectiveAnswers: a.subjectiveAnswers || null,
+        submittedAt: a.submittedAt || null
+      }));
+      const { error } = await supabase.from('talent_skill_assessments').upsert(rows);
+      if (error) console.error('[DB] talent_skill_assessments upsert error:', error.message);
+    }
+
     if (db.agentLogs && db.agentLogs.length > 0) {
       const rows = db.agentLogs.map((ag: any) => {
         // Ensure timestamp is a valid ISO string, not a locale time string like "7:10 PM"
@@ -1099,11 +1643,23 @@ export async function writeDbAsync(db: Schema): Promise<void> {
     }
 
     if (db.interviews && db.interviews.length > 0) {
-      const rows = db.interviews.map((iv: any) => ({
+      // client_id is NOT NULL. This used to default to the string 'system',
+      // which overwrote the real client on any interview that reached this
+      // writer without one. Defaulting to null instead would reject the whole
+      // batch, taking every other interview with it, so a row with no client
+      // is skipped and named in the log rather than guessed at or silently
+      // corrupted.
+      const writable = db.interviews.filter((iv: any) => {
+        if (iv.clientId) return true;
+        console.error(`[DB] interview ${iv.id} has no clientId and was not saved.`);
+        return false;
+      });
+
+      const rows = writable.map((iv: any) => ({
         id: iv.id,
         request_id: iv.requestId || null,
         match_id: iv.matchId || null,
-        client_id: iv.clientId || 'system',
+        client_id: iv.clientId,
         talent_id: iv.talentId,
         talent_name: iv.talentName,
         talent_avatar: iv.talentAvatar || null,
@@ -1111,7 +1667,12 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         title: iv.title,
         date: iv.date,
         time: iv.time,
-        status: (iv.status === 'Reschedule Requested' || iv.status === 'Rescheduled' || iv.status === 'Scheduled') ? 'scheduled' : iv.status,
+        // 'Rescheduled' and 'Scheduled' are both legal values, so neither
+        // needs collapsing. This used to flatten all three to 'scheduled'
+        // and the reader only restored 'Scheduled', so a rescheduled
+        // interview reverted on every save and the admin's Rescheduled
+        // counter read zero after any reload.
+        status: mapInterviewStatusToDb(iv.status),
         meeting_link: iv.meetingLink || null,
         notes: iv.notes || null,
         talent_notes: iv.talentNotes || null,
@@ -1124,10 +1685,25 @@ export async function writeDbAsync(db: Schema): Promise<void> {
         reschedule_reason: iv.rescheduleReason || null,
         proposed_new_date: iv.proposedNewDate || null,
         proposed_new_time: iv.proposedNewTime || null,
+        // Never derived from date and time here. If an interview reaches this
+        // writer without an instant, the instant is missing upstream and
+        // inventing one from a zoneless wall clock is how the whole problem
+        // started. It is left null and the reader says "not scheduled".
+        scheduled_time: iv.scheduledTime || null,
+        scheduled_timezone: iv.scheduledTimezone || null,
+        client_timezone: iv.clientTimezone || null,
+        talent_timezone: iv.talentTimezone || null,
+        proposed_time: iv.proposedTime || null,
+        proposed_timezone: iv.proposedTimezone || null,
+        reschedule_requested_by: iv.rescheduleRequestedBy || null,
+        reschedule_requested_at: iv.rescheduleRequestedAt || null,
+        rescheduled_from: iv.rescheduledFrom || null,
         created_at: iv.createdAt || new Date().toISOString()
       }));
-      const { error } = await supabase.from('interviews').upsert(rows);
-      if (error) console.error('[DB] interviews upsert error:', (error as any).message);
+      if (rows.length > 0) {
+        const { error } = await supabase.from('interviews').upsert(rows);
+        if (error) console.error('[DB] interviews upsert error:', (error as any).message);
+      }
     }
 
     // Persist local assessments (not in Supabase yet)
@@ -1156,3 +1732,98 @@ export async function logRequestActivityAsync(
     throw error;
   }
 }
+
+// ─── Interviews, server side ───────────────────────────────
+// Every create or change to an interview goes through this, from both
+// portals, so the conflict check, the invitation and the audit entry cannot
+// be bypassed by writing to the table from a browser.
+export * from './interviewService';
+
+// ─── Notifications ───────────────────────────────────
+// One call writes the in-app row and sends the email, so the two cannot
+// drift apart the way they did when every call site wrote its own.
+export * from './notify';
+
+// ─── Audit and operator accounts ───────────────────────
+// Both are server side only: the audit log cannot be written from a browser
+// at all, and only a super admin can change who has access.
+export * from './audit';
+export * from './userService';
+
+// ─── Support and settings ────────────────────────────
+export * from './supportService';
+export * from './settingsService';
+
+export * from './messagingService';
+
+// -- Signatures and the compliance gate ---------------
+// Signing is append-only and hashed, and every gated path calls
+// complianceGate rather than implementing its own check.
+export * from './signatureService';
+
+// -- Billing ------------------------------------------
+// Fees, invoice generation and payouts. The decisions live in
+// @kongila/workflows/billing; this is the part that writes rows.
+export * from './financeService';
+
+// -- Payroll ------------------------------------------
+// The monthly run for managed and outsourced contracts. The Remotan
+// payroll_entries table is left alone; this uses Kongila tables.
+export * from './payrollService';
+
+// -- Invoice delivery and ageing ----------------------
+// Numbering, due dates from contract terms, the PDF, sending, and
+// the nightly pass that moves a sent invoice to overdue.
+export * from './invoiceDelivery';
+
+// -- Document versions and expiry ---------------------
+export * from './documentService';
+
+// -- Talent profiles ----------------------------------
+// Every write to talent_profiles and talent_skills. The browser used
+// to upsert the whole row, grade and vetting status included.
+export * from './profileService';
+
+// -- Skill assessments --------------------------------
+// Submission and marking. The browser used to post its own score.
+export * from './assessmentService';
+
+// -- Matches ------------------------------------------
+// A client shortlisting, rejecting or accepting a candidate, and the
+// notifications that go with it.
+export * from './matchService';
+
+// -- Company ------------------------------------------
+// A client editing their own organisation and contact details.
+export * from './companyService';
+
+// -- Reviews ------------------------------------------
+// Client reviews of a placed candidate. They were written into the
+// notifications table as message text and never landed.
+export * from './reviewService';
+
+// -- Assignments --------------------------------------
+// Giving a client or a request an account or talent manager. The admin
+// panel used to upsert roles and user_roles from the browser to do it.
+export * from './assignmentService';
+
+// -- Matching -----------------------------------------
+// Operations submitting a shortlist to a client.
+export * from './matchingService';
+
+// -- Contract status ----------------------------------
+// Moving a contract through signature, activation and termination.
+export * from './contractStatusService';
+
+// -- Contract templates -------------------------------
+// Drafts, publishing and versioning. Never stored anywhere before.
+export * from './templateService';
+
+// -- Vetting ------------------------------------------
+// Scores, grade and the stage pipeline. The panel ran all of it in
+// browser state and posted the whole talents array back.
+export * from './vettingService';
+
+// -- Uploads ------------------------------------------
+// Signed upload URLs. The browser used to pick its own object path.
+export * from './uploadService';

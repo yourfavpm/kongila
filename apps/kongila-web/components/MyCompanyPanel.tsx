@@ -1,5 +1,5 @@
+import { apiFetch } from '../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient';
 
 interface MyCompanyPanelProps {
   currentUser: any;
@@ -58,25 +58,32 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
     setErrorMsg('');
 
     try {
-      // 1. Update Organization
-      const { error: orgErr } = await supabase.from('organizations').update({
-        name: formData.name,
-        industry: formData.industry,
-        company_size: formData.company_size,
-        country: formData.country,
-        website: formData.website,
-        how_did_you_hear_about_us: formData.how_did_you_hear_about_us,
-        contact_phone: formData.contactPhone
-      }).eq('id', organizationId);
+      // Through the server. organizations and client_profiles both have
+      // RLS off in the live database, and the organisation id came from
+      // component state, so this update could land on another company.
+      // The route resolves the organisation from the caller's own profile.
+      const response = await apiFetch('/api/company', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          organization: {
+            name: formData.name,
+            industry: formData.industry,
+            company_size: formData.company_size,
+            country: formData.country,
+            website: formData.website,
+            how_did_you_hear_about_us: formData.how_did_you_hear_about_us,
+            contact_phone: formData.contactPhone
+          },
+          profile: {
+            position: formData.position,
+            phone: formData.contactPhone
+          }
+        })
+      });
 
-      if (orgErr) throw orgErr;
-
-      // 2. Update Client Profile (Primary Contact position/phone)
-      if (currentProfile?.id) {
-        await supabase.from('client_profiles').update({
-          position: formData.position,
-          phone: formData.contactPhone
-        }).eq('id', currentProfile.id);
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || 'Failed to update company profile');
       }
 
       setSuccessMsg('Company profile updated successfully.');
@@ -103,7 +110,7 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
     setInviteResult(null);
 
     try {
-      const res = await fetch('/api/company/invite', {
+      const res = await apiFetch('/api/company/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

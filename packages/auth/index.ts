@@ -53,3 +53,7 @@ export function getMockUserSession(role: UserRole): User {
       };
   }
 }
+
+// ─── Roles ───────────────────────────────────────────────
+// The six roles and what each can see. Covered by roles.test.ts.
+export * from './roles';

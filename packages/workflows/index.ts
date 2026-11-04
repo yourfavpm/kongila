@@ -19,10 +19,21 @@ const REQUEST_STATUS_ALIASES: Record<string, RequestStatus> = {
   'onboarding': 'Onboarding'
 };
 
-export function normalizeRequestStatus(status?: string | null): RequestStatus {
-  if (!status) return 'New Request';
+/**
+ * Resolves a stored or inbound status to a canonical one, or null if it is
+ * not recognised.
+ *
+ * This used to return 'New Request' for anything it did not recognise, which
+ * meant a typo, a renamed status or a value from another part of the product
+ * silently sent a request back to the start of the pipeline. Unknown input is
+ * now an answer the caller has to handle rather than a silent reset.
+ *
+ * Use this on any path that writes. For display, use coerceRequestStatus.
+ */
+export function normalizeRequestStatus(status?: string | null): RequestStatus | null {
+  if (!status) return null;
   const trimmed = String(status).trim();
-  if (!trimmed) return 'New Request';
+  if (!trimmed) return null;
 
   const direct = REQUEST_STATUS_ALIASES[trimmed.toLowerCase()];
   if (direct) return direct;
@@ -33,18 +44,124 @@ export function normalizeRequestStatus(status?: string | null): RequestStatus {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return REQUEST_STATUS_ALIASES[normalized] || 'New Request';
+  return REQUEST_STATUS_ALIASES[normalized] || null;
+}
+
+/**
+ * Display-only. Resolves to a canonical status, falling back when the value
+ * is not recognised, and says so in the console rather than hiding it.
+ *
+ * Never use this to decide what to write.
+ */
+export function coerceRequestStatus(
+  status?: string | null,
+  fallback: RequestStatus = 'New Request'
+): RequestStatus {
+  const resolved = normalizeRequestStatus(status);
+  if (resolved) return resolved;
+  if (status) {
+    console.warn(`[workflows] unrecognised request status "${status}", displaying as ${fallback}`);
+  }
+  return fallback;
 }
 
 export function isMatchingRequestStatus(status?: string | null): boolean {
-  const normalized = normalizeRequestStatus(status);
+  const normalized = coerceRequestStatus(status);
   return normalized === 'Sourcing Talent' || normalized === 'Candidates Ready' || normalized === 'Client Interview' || normalized === 'Offer Accepted' || normalized === 'Onboarding';
 }
 
 export function isActiveRequestStatus(status?: string | null): boolean {
-  const normalized = normalizeRequestStatus(status);
+  const normalized = coerceRequestStatus(status);
+  if (normalized === 'Closed') return false;
   return normalized === 'New Request' || normalized === 'Reviewing' || isMatchingRequestStatus(normalized);
 }
+
+/**
+ * Hired means a contract has been signed, not that an offer was accepted.
+ * Only 'Onboarding' qualifies: a request reaches it once the contract is
+ * signed, which is what the stage covers (welcome kit, NDAs, tools check).
+ *
+ * A request at 'Offer Accepted' has a candidate who said yes and no signed
+ * contract, so it is still in flight. Backs the client portal's Hired tab.
+ */
+export function isHiredRequestStatus(status?: string | null): boolean {
+  return coerceRequestStatus(status) === 'Onboarding';
+}
+
+/** An offer is out and accepted, but nothing is signed yet. */
+export function isOfferRequestStatus(status?: string | null): boolean {
+  return coerceRequestStatus(status) === 'Offer Accepted';
+}
+
+export function isClosedRequestStatus(status?: string | null): boolean {
+  return coerceRequestStatus(status) === 'Closed';
+}
+
+/** A client may still edit a request until sourcing has started. */
+export function isEditableRequestStatus(status?: string | null): boolean {
+  const normalized = coerceRequestStatus(status);
+  return normalized === 'New Request' || normalized === 'Reviewing';
+}
+
+// ─── What the client sees ────────────────────────────────────────────────────
+//
+// The seven canonical values are internal operations stages. Showing a client
+// "Sourcing Talent" is not useful to them, and the scope document specifies a
+// five-step journey instead. That journey is derived here rather than stored,
+// so there is still exactly one set of values in the database.
+//
+// The client portal previously keyed on "Matching", "Interview" and
+// "Completed", which the normaliser can never produce, so the stepper never
+// moved past the first step.
+
+/**
+ * Six steps rather than the scope document's five. The scope does not
+ * distinguish an accepted offer from a signed contract, but the product does,
+ * and Hired means signed. Without a separate Offer step a client would see
+ * "Hired" the moment a candidate said yes, before anything was countersigned.
+ */
+export const CLIENT_JOURNEY_STEPS = [
+  'Submitted',
+  'Matching',
+  'Candidates Ready',
+  'Interview',
+  'Offer',
+  'Hired'
+] as const;
+
+export type ClientJourneyStep = typeof CLIENT_JOURNEY_STEPS[number];
+
+export interface ClientStatusView {
+  /** The label to show the client. */
+  label: ClientJourneyStep | 'Closed';
+  /** Zero-based index into CLIENT_JOURNEY_STEPS, or -1 for a closed request. */
+  step: number;
+  /** Progress for a bar, 0 to 100. */
+  pct: number;
+}
+
+/** Progress for each journey step, so a stepper and a bar cannot disagree. */
+export function clientJourneyStepPct(index: number): number {
+  return Math.round(((index + 1) / CLIENT_JOURNEY_STEPS.length) * 100);
+}
+
+const CLIENT_STATUS_VIEW: Record<RequestStatus, ClientStatusView> = {
+  'New Request':      { label: 'Submitted',        step: 0, pct: 8 },
+  'Reviewing':        { label: 'Submitted',        step: 0, pct: 16 },
+  'Sourcing Talent':  { label: 'Matching',         step: 1, pct: 33 },
+  'Candidates Ready': { label: 'Candidates Ready', step: 2, pct: 50 },
+  'Client Interview': { label: 'Interview',        step: 3, pct: 66 },
+  'Offer Accepted':   { label: 'Offer',            step: 4, pct: 83 },
+  'Onboarding':       { label: 'Hired',            step: 5, pct: 100 },
+  'Closed':           { label: 'Closed',           step: -1, pct: 0 }
+};
+
+/** The client-facing view of any stored status. Safe for unrecognised input. */
+export function clientStatusView(status?: string | null): ClientStatusView {
+  return CLIENT_STATUS_VIEW[coerceRequestStatus(status)];
+}
+
+export { CLIENT_STATUS_VIEW };
 
 // Client Service Request Workflows
 export const SERVICE_REQUEST_STATUSES: RequestStatus[] = [
@@ -57,19 +174,38 @@ export const SERVICE_REQUEST_STATUSES: RequestStatus[] = [
   'Onboarding'
 ];
 
+/**
+ * Which moves are legal. Each stage can go forward one step or back one step,
+ * so an operator can correct a mistake without jumping the pipeline. 'Closed'
+ * is reachable from anywhere and is terminal.
+ *
+ * Enforced server-side by apps/admin-panel/pages/api/requests/status.ts. Do
+ * not write a status from the browser without going through that route.
+ */
 export const VALID_REQUEST_TRANSITIONS: Record<RequestStatus, RequestStatus[]> = {
-  'New Request': ['Reviewing'],
-  'Reviewing': ['Sourcing Talent', 'New Request'],
-  'Sourcing Talent': ['Candidates Ready', 'Reviewing'],
-  'Candidates Ready': ['Client Interview', 'Sourcing Talent'],
-  'Client Interview': ['Offer Accepted', 'Candidates Ready'],
-  'Offer Accepted': ['Onboarding', 'Client Interview'],
-  'Onboarding': ['Onboarding'] // Terminus stage
+  'New Request': ['Reviewing', 'Closed'],
+  'Reviewing': ['Sourcing Talent', 'New Request', 'Closed'],
+  'Sourcing Talent': ['Candidates Ready', 'Reviewing', 'Closed'],
+  'Candidates Ready': ['Client Interview', 'Sourcing Talent', 'Closed'],
+  'Client Interview': ['Offer Accepted', 'Candidates Ready', 'Closed'],
+  'Offer Accepted': ['Onboarding', 'Client Interview', 'Closed'],
+  'Onboarding': ['Closed'],
+  'Closed': [] // Terminal. Reopening means a new request.
 };
 
 export function canTransitionRequest(from: RequestStatus, to: RequestStatus): boolean {
   if (from === to) return true;
   return VALID_REQUEST_TRANSITIONS[from]?.includes(to) || false;
+}
+
+/** Why a move was refused, for an error message a human can act on. */
+export function explainTransition(from: RequestStatus, to: RequestStatus): string | null {
+  if (canTransitionRequest(from, to)) return null;
+  const allowed = VALID_REQUEST_TRANSITIONS[from] || [];
+  if (allowed.length === 0) {
+    return `A request at "${from}" is closed and cannot be moved.`;
+  }
+  return `A request at "${from}" can only move to ${allowed.map(s => `"${s}"`).join(' or ')}, not "${to}".`;
 }
 
 // Talent Journey Workflows
@@ -150,3 +286,41 @@ export const GET_SERVICE_STAGES = (service: ServiceType): { name: string; descri
       ];
   }
 };
+
+// ─── Interviews ──────────────────────────────────────────
+// The interviews row is the source of truth; conflict checking and status
+// mapping live with it. Covered by interviews.test.ts (`pnpm test`).
+export * from './interviews';
+
+// The compliance gate. Covered by compliance.test.ts.
+export * from './compliance';
+
+// How each service line is billed, and the margin applied to it.
+export * from './billing';
+
+// The monthly payroll run: proration, commission and the export.
+export * from './payroll';
+
+// Invoice numbering, due dates and going overdue.
+export * from './invoicing';
+
+// Document versions, and certifications that expire.
+export * from './documents';
+
+// Who may write which talent profile field, and what the values must
+// look like. Covered by profileFields.test.ts.
+export * from './profileFields';
+
+// Marking a skill assessment from the answer key. Covered by
+// assessmentScoring.test.ts.
+export * from './assessmentScoring';
+
+// What a client may do to a match. The four statuses
+// matches_status_check allows, and nothing else. Covered by
+// matchStatus.test.ts.
+export * from './matchStatus';
+
+// What a contract's status may be. The admin panel worked in title
+// case throughout and the column takes none of those values. Covered
+// by contractStatus.test.ts.
+export * from './contractStatus';

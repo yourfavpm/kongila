@@ -1,126 +1,56 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, writeDbAsync } from '@kongila/database';
+import {
+  createTicket,
+  getRequestUser,
+  listTickets,
+  replyToTicket,
+  setTicketStatus
+} from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const rawDb = await readDbAsync();
-  const db = rawDb as any;
-  if (!db.supportTickets) db.supportTickets = [];
-  if (!db.supportMessages) db.supportMessages = [];
-
+  // Admin portal route. A talent or client session is a valid session and
+  // still has no business here, so check the kind, not just that someone is
+  // signed in. This runs before any database read.
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  if (actor.kind !== 'admin') {
+    console.warn('[api/support] refused ' + actor.kind + ' ' + actor.userId);
+    return res.status(403).json({ error: 'Not authorised' });
+  }
   if (req.method === 'GET') {
-    return res.status(200).json({
-      tickets: db.supportTickets,
-      messages: db.supportMessages,
-    });
+    const result = await listTickets(actor);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    return res.status(200).json(result.data);
   }
 
   if (req.method === 'POST') {
-    const { type, ...body } = req.body;
-
-    if (type === 'message') {
-      // Reply to a ticket
-      const newMessage = {
-        ...body,
-        id: `msg_admin_${Date.now()}`,
-        isSupport: true,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        createdAt: new Date().toISOString(),
-      };
-      db.supportMessages.push(newMessage);
-
-      // Update ticket lastActivity
-      db.supportTickets = db.supportTickets.map((t: any) =>
-        t.id === body.ticketId
-          ? { ...t, lastActivity: 'Active', status: t.status === 'Resolved' ? t.status : 'In Progress' }
-          : t
-      );
-
-      db.auditLogs = [
-        {
-          id: `audit_${Date.now()}`,
-          actor: 'Admin Support',
-          action: 'Reply to Support Ticket',
-          details: `Replied to ticket ${body.ticketId}. Message: "${body.text?.slice(0, 60)}..."`,
-          timestamp: new Date().toISOString(),
-        },
-        ...(db.auditLogs || []),
-      ];
-
-      // Notify talent
-      const ticket = db.supportTickets.find((t: any) => t.id === body.ticketId);
-      if (ticket?.talentId) {
-        db.notifications = [
-          {
-            id: `notif_${Date.now()}`,
-            userId: ticket.talentId,
-            title: 'Support Ticket Update',
-            message: `An admin has responded to your ticket: "${ticket.subject}".`,
-            read: false,
-            createdAt: new Date().toISOString(),
-          },
-          ...(db.notifications || []),
-        ];
-      }
-
-      await writeDbAsync(db);
-      return res.status(201).json(newMessage);
-    }
-
-    // Create new ticket (admin-created)
-    const newTicket = {
-      ...body,
-      id: `TK-${Math.floor(10000 + Math.random() * 90000)}`,
-      status: 'Open',
-      lastActivity: 'Active',
-      createdAt: new Date().toISOString(),
-    };
-    db.supportTickets.push(newTicket);
-    await writeDbAsync(db);
-    return res.status(201).json(newTicket);
+    const body = req.body || {};
+    const result = body.type === 'message'
+      ? await replyToTicket(actor, {
+          ticketId: String(body.ticketId || ''),
+          text: String(body.text || '')
+        })
+      : await createTicket(actor, {
+          subject: String(body.subject || ''),
+          category: String(body.category || ''),
+          description: body.description,
+          linkedContractId: body.linkedContractId || null
+        });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    return res.status(result.status).json({
+      ...(body.type === 'message' ? { message: result.data } : { ticket: result.data }),
+      warnings: result.warnings
+    });
   }
 
   if (req.method === 'PUT') {
-    const { id, ...updates } = req.body;
-    if (!id) return res.status(400).json({ error: 'Missing ticket id' });
-
-    let updated: any = null;
-    db.supportTickets = db.supportTickets.map((t: any) => {
-      if (t.id === id) {
-        updated = { ...t, ...updates, updatedAt: new Date().toISOString() };
-        return updated;
-      }
-      return t;
+    const result = await setTicketStatus(actor, {
+      ticketId: String(req.body?.id || req.body?.ticketId || ''),
+      status: String(req.body?.status || ''),
+      assignedTo: req.body?.assignedTo
     });
-
-    if (!updated) return res.status(404).json({ error: 'Ticket not found' });
-
-    db.auditLogs = [
-      {
-        id: `audit_${Date.now()}`,
-        actor: 'Admin Support',
-        action: 'Update Ticket Status',
-        details: `Ticket ${id} status changed to "${updated.status}".`,
-        timestamp: new Date().toISOString(),
-      },
-      ...(db.auditLogs || []),
-    ];
-
-    if (updated.status === 'Resolved' && updated.talentId) {
-      db.notifications = [
-        {
-          id: `notif_${Date.now()}`,
-          userId: updated.talentId,
-          title: 'Support Ticket Resolved',
-          message: `Your ticket "${updated.subject}" has been resolved.`,
-          read: false,
-          createdAt: new Date().toISOString(),
-        },
-        ...(db.notifications || []),
-      ];
-    }
-
-    await writeDbAsync(db);
-    return res.status(200).json(updated);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    return res.status(200).json(result.data);
   }
 
   return res.status(405).json({ error: 'Method not allowed' });

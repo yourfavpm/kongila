@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard as Card, NeonButton as Button } from '@kongila/ui';
 import { SupportTicket, TalentProfile } from '@kongila/shared-types';
-import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 interface TalentSupportPanelProps {
   currentUser: any;
@@ -68,41 +68,29 @@ export default function TalentSupportPanel({
         break;
     }
 
-    const ticketRow = {
-      id: crypto.randomUUID(),
-      talent_id: profile.id,
-      subject: newTicket.subject,
-      category: newTicket.category,
-      description: newTicket.description,
-      status: 'open',
-      priority: priority,
-      assigned_to: assignedTo,
-      created_at: new Date().toISOString(),
-      last_activity: new Date().toISOString()
-    };
+    // Through the server. The browser insert set its own talent_id and
+    // assigned the ticket to placeholder ids like 'talent-manager-id', which
+    // are not users, and nothing told operations anything had arrived. The
+    // routing note above is still shown to the candidate; the real priority
+    // is decided server-side from the category.
+    const response = await apiFetch('/api/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: newTicket.subject,
+        category: newTicket.category,
+        description: newTicket.description
+      })
+    });
 
-    const { data, error } = await supabase.from('support_tickets').insert([ticketRow]).select();
-
-    if (error) {
-      alert("Error creating ticket: " + error.message);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert('Error creating ticket: ' + (payload?.error || response.status));
       return;
     }
 
-    if (data && data[0]) {
-      const formattedTicket: SupportTicket = {
-        id: data[0].id,
-        talentId: data[0].talent_id,
-        clientId: data[0].client_id,
-        linkedContractId: data[0].linked_contract_id,
-        assignedTo: data[0].assigned_to,
-        subject: data[0].subject,
-        category: data[0].category,
-        status: data[0].status,
-        priority: data[0].priority,
-        createdAt: data[0].created_at,
-        lastActivity: data[0].last_activity
-      };
-      setSupportTickets((prev: any[]) => [formattedTicket, ...prev]);
+    if (payload.ticket) {
+      setSupportTickets((prev: any[]) => [payload.ticket as SupportTicket, ...prev]);
     }
 
     setShowNewTicketModal(false);

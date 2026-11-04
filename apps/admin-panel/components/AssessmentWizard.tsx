@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import { Assessment, AssessmentCategory, AssessmentQuestion, QuestionType } from '@kongila/shared-types';
 
@@ -66,7 +67,7 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
         if (isTempId) {
           // Strip temp id so Supabase generates a real UUID
           const { id: _tempId, ...catData } = cat as any;
-          const res = await fetch('/api/assessments', {
+          const res = await apiFetch('/api/assessments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ entity: 'category', data: catData })
@@ -89,7 +90,7 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
         if (isTempQ) {
           // Strip temp id so Supabase generates a real UUID
           const { id: _tempQId, ...qData } = q as any;
-          const res = await fetch('/api/assessments', {
+          const res = await apiFetch('/api/assessments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ entity: 'question', data: { ...qData, category_id: realCatId } })
@@ -116,7 +117,7 @@ export default function AssessmentWizard({ onClose, onSuccess, globalCategories,
         created_by: 'Admin'
       };
 
-      const res = await fetch('/api/assessments', {
+      const res = await apiFetch('/api/assessments', {
         method: assessment.id ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity: 'assessment', id: assessment.id, data: payload })

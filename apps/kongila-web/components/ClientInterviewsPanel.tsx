@@ -1,13 +1,25 @@
 import React, { useState } from "react";
 import { Interview, TalentProfile } from "@kongila/shared-types";
-import { supabase } from "../lib/supabaseClient";
+import { apiFetch } from "../lib/apiFetch";
+import { interviewInstant, formatForBothParties, viewerTimeZone } from "@kongila/utils";
+
+/**
+ * When an interview actually starts, as a number. Everything here used to do
+ * `new Date(`${iv.date}T${iv.time}`)`, which parses a naive string in the
+ * browser's own zone with nothing recording which zone it was written in, so
+ * sorting and the upcoming/past split were both wrong across zones. An
+ * interview with no usable instant sorts last rather than to 1970.
+ */
+function interviewStartMs(iv: any): number {
+  const iso = interviewInstant(iv);
+  return iso ? new Date(iso).getTime() : Number.MAX_SAFE_INTEGER;
+}
 
 interface ClientInterviewsPanelProps {
   currentUser: any;
   interviews: Interview[];
   talents: TalentProfile[];
   setInterviews?: (interviews: Interview[]) => void;
-  saveToDb?: (db: any) => Promise<void>;
   onReschedule?: (interview: Interview) => void;
 }
 
@@ -18,7 +30,6 @@ export default function ClientInterviewsPanel({
   interviews,
   talents,
   setInterviews,
-  saveToDb,
   onReschedule
 }: ClientInterviewsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>("upcoming");
@@ -31,18 +42,18 @@ export default function ClientInterviewsPanel({
 
   // Sort interviews so newest is at the top or upcoming is chronologically nearest
   const sortedInterviews = [...interviews].sort((a, b) => {
-    const timeA = new Date(`${a.date}T${a.time}`).getTime();
-    const timeB = new Date(`${b.date}T${b.time}`).getTime();
+    const timeA = interviewStartMs(a);
+    const timeB = interviewStartMs(b);
     return timeA - timeB; // ascending
   });
 
   const upcomingInterviews = sortedInterviews.filter(iv => 
     (iv.status === "Scheduled" || iv.status === "Rescheduled") && 
-    (new Date(`${iv.date}T${iv.time}`) >= now)
+    (interviewStartMs(iv) >= now.getTime())
   );
 
   const pastInterviews = sortedInterviews.filter(iv => 
-    iv.status === "Completed" || iv.status === "Cancelled" || (new Date(`${iv.date}T${iv.time}`) < now && iv.clientRating)
+    iv.status === "Completed" || iv.status === "Cancelled" || (interviewStartMs(iv) < now.getTime() && iv.clientRating)
   ).reverse(); // descending for past
 
   const pendingInterviews = sortedInterviews.filter(iv => 
@@ -51,39 +62,59 @@ export default function ClientInterviewsPanel({
 
   const handleCancel = async (iv: Interview) => {
     if (!confirm("Are you sure you want to cancel this interview?")) return;
-    
+
+    // Through the server. A browser update cancelled the row and told
+    // nobody: the candidate kept the slot in their calendar and found out
+    // when they joined a call that was not happening.
     try {
-      await supabase.from('interviews').update({ status: 'Cancelled' }).eq('id', iv.id);
-      
+      const response = await apiFetch('/api/interviews/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interviewId: iv.id })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not cancel (${response.status}).`);
+
       if (setInterviews) {
         setInterviews(interviews.map(i => i.id === iv.id ? { ...i, status: 'Cancelled' } : i));
       }
-    } catch (err) {
-      console.error(err);
-      alert("Failed to cancel interview.");
+    } catch (err: any) {
+      console.error('[ClientInterviewsPanel] cancel failed:', err);
+      alert("Failed to cancel interview: " + (err?.message || 'unknown error'));
     }
   };
 
-  const handleReschedule = (iv: Interview) => {
-    const ivTime = new Date(`${iv.date}T${iv.time}`).getTime();
-    const hoursDifference = (ivTime - now.getTime()) / (1000 * 60 * 60);
-
-    if (hoursDifference < 4) {
-      alert("Late Reschedule Request: Interviews cannot be rescheduled by the client less than 4 hours before the start time. Your Account Manager has been notified and will reach out to coordinate.");
-      // Optional: trigger notification to AM
-      supabase.from("notifications").insert({
-        user_id: "admin_team", // assuming admin handles this or user_id null + admin read
-        title: "Late Reschedule Request",
-        content: `Late Reschedule Request: ${currentUser?.name} attempted to reschedule interview with ${iv.talentName} (less than 4 hours notice).`,
-        read_status: false,
-      });
-      return;
-    }
-    
+  const handleReschedule = async (iv: Interview) => {
+    // The four-hour rule is enforced on the server now, not just here, and
+    // the "account manager has been notified" claim is true: the old code
+    // addressed a user_id of 'admin_team', which is not a user, so the
+    // foreign key rejected it and nobody was ever told.
     if (onReschedule) {
       onReschedule(iv);
-    } else {
-      alert("Reschedule flow triggered. Please select a new time slot.");
+      return;
+    }
+
+    const reason = prompt('Why do you need to move this interview?');
+    if (reason === null) return;
+
+    try {
+      const response = await apiFetch('/api/interviews/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interviewId: iv.id, reason })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not request a reschedule (${response.status}).`);
+
+      if (setInterviews) {
+        setInterviews(interviews.map(i =>
+          i.id === iv.id ? { ...i, status: 'Reschedule Requested', rescheduleRequested: true } : i
+        ));
+      }
+      alert('Your request has been sent. Operations will confirm a new time.');
+    } catch (err: any) {
+      console.error('[ClientInterviewsPanel] reschedule failed:', err);
+      alert(err?.message || 'Could not request a reschedule.');
     }
   };
 
@@ -104,26 +135,28 @@ export default function ClientInterviewsPanel({
         clientFeedback
       };
 
-      await supabase.from('interviews').update({
-        status: 'Completed',
-        client_rating: clientRating,
-        client_feedback: clientFeedback
-      }).eq('id', selectedInterview.id);
+      const response = await apiFetch('/api/interviews/rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interviewId: selectedInterview.id,
+          rating: clientRating,
+          feedback: clientFeedback
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not save the rating (${response.status}).`);
 
       if (setInterviews) {
         setInterviews(interviews.map(i => i.id === selectedInterview.id ? { ...i, ...updates } : i));
       }
-      
-      await supabase.from("notifications").insert({
-        user_id: "admin_team",
-        title: "Interview Rated by Client",
-        content: `Client ${currentUser?.name} submitted a ${clientRating}-star rating for interview with ${selectedInterview.talentName}.`,
-        read_status: false,
-      });
 
-    } catch (err) {
-      console.error(err);
-      alert("Failed to submit rating.");
+      // The notification to operations is written by the route's audit
+      // entry. The insert here addressed 'admin_team', which is not a user,
+      // so the foreign key rejected it every time.
+    } catch (err: any) {
+      console.error('[ClientInterviewsPanel] rating failed:', err);
+      alert("Failed to submit rating: " + (err?.message || 'unknown error'));
     }
 
     setRatingModalOpen(false);
@@ -273,6 +306,18 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
+/**
+ * The client reads their own zone; the candidate's time is shown underneath
+ * so nobody has to work out the difference, which is the whole point when
+ * one party is in Lagos and the other in New York.
+ */
+function whenForClient(interview: any) {
+  const iso = interviewInstant(interview);
+  const clientZone = interview?.clientTimezone || interview?.client_timezone || viewerTimeZone();
+  const talentZone = interview?.talentTimezone || interview?.talent_timezone || null;
+  return formatForBothParties(iso, clientZone, talentZone, `${interview?.talentName || 'candidate'}'s time`);
+}
+
 function InterviewCard({ 
   interview, talents, now, isPending, isPast, onCancel, onReschedule, onRate 
 }: { 
@@ -296,9 +341,15 @@ function InterviewCard({
         <div>
           <h3 style={{ margin: "0 0 4px 0", fontSize: "18px", fontWeight: 800, color: "#0F172A" }}>{interview.title || `Interview with ${interview.talentName}`}</h3>
           <div style={{ fontSize: "14px", color: "#64748B", fontWeight: 500, display: "flex", gap: "12px", alignItems: "center" }}>
-            <span>📅 {new Date(interview.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-            <span>⏰ {interview.time} (Local Time)</span>
+            {/* Was the raw wall-clock string labelled "(Local Time)" — the
+                time the other party entered, presented as this viewer's. */}
+            <span>🕒 {whenForClient(interview).viewer}</span>
           </div>
+          {whenForClient(interview).other && (
+            <div style={{ fontSize: "12px", color: "#94A3B8", fontWeight: 500, marginTop: "2px" }}>
+              {whenForClient(interview).other}
+            </div>
+          )}
           {isPast && interview.clientRating && (
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
               <span style={{ color: "#F59E0B", letterSpacing: "2px" }}>

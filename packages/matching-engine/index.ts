@@ -90,6 +90,65 @@ export function buildDefaultVettingPipeline(): VettingStageRecord[] {
  * Applies a stage decision and advances (or stops) the pipeline.
  * Returns an updated pipeline array.
  */
+/**
+ * True when a stage must produce a score before it can be passed.
+ *
+ * Stages 1 to 5 each feed one dimension of the composite grade. Stage 0
+ * (Application Screening) and stage 6 (Final Review) are pass or fail and
+ * carry no score.
+ */
+export function stageRequiresScore(stageIdx: number): boolean {
+  return Boolean(VETTING_STAGES[stageIdx]?.scoreKey);
+}
+
+/**
+ * Checks a stage decision before it is applied. Returns a reason the decision
+ * cannot be made, or null when it can.
+ *
+ * Personality Test, Remote Readiness and Work Simulation could all be passed
+ * with no score at all. Between them they are 40% of the composite grade, so
+ * a candidate who passed every stage topped out at 60, which grades as
+ * Reject. Nobody could be vetted.
+ */
+export function validateStageDecision(
+  stageIdx: number,
+  decision: VettingDecision,
+  score: number | undefined,
+  pipeline?: VettingStageRecord[]
+): string | null {
+  const stage = VETTING_STAGES[stageIdx];
+  if (!stage) return `There is no vetting stage ${stageIdx}.`;
+  if (decision !== 'Proceed') return null;
+
+  // A rejected stage used to be walkable past: the next stage stayed pending,
+  // the UI moved on to it, and an admin could push a rejected candidate all
+  // the way to Final Review and Vetted. A failed stage behind you blocks every
+  // stage in front of it until it is reopened for re-assessment.
+  if (pipeline) {
+    const failedBehind = pipeline
+      .slice(0, stageIdx)
+      .findIndex(s => s?.status === 'failed');
+    if (failedBehind >= 0) {
+      const failedName = VETTING_STAGES[failedBehind]?.name || `stage ${failedBehind + 1}`;
+      return `${failedName} was rejected, so this candidate cannot be advanced past it. ` +
+             `Reopen that stage for re-assessment first, or leave the rejection standing.`;
+    }
+  }
+
+  if (!stageRequiresScore(stageIdx)) return null;
+
+  if (score === undefined || score === null || !Number.isFinite(Number(score))) {
+    return `${stage.name} needs a score out of 100 before it can be passed. It is ` +
+           `part of the composite vetting grade, and passing it without one ` +
+           `means the candidate cannot reach a deployable grade.`;
+  }
+  const numeric = Number(score);
+  if (numeric < 0 || numeric > 100) {
+    return `The score for ${stage.name} must be between 0 and 100.`;
+  }
+  return null;
+}
+
 export function advanceTalentStage(
   pipeline: VettingStageRecord[],
   stageIdx: number,
@@ -97,6 +156,9 @@ export function advanceTalentStage(
   score: number | undefined,
   notes: string
 ): VettingStageRecord[] {
+  const problem = validateStageDecision(stageIdx, decision, score, pipeline);
+  if (problem) throw new Error(problem);
+
   const updated = pipeline.map((s, idx) => {
     if (idx !== stageIdx) return s;
     return {
@@ -122,56 +184,94 @@ export function advanceTalentStage(
 
 
 /**
- * Calculates a matching score between a talent profile and a service request.
- * 
- * Weights:
- * - Skill Fit: 40%
- * - Behaviour Fit: 20%
- * - Personality Fit: 15%
- * - Availability: 15%
- * - Past Performance (experience score): 10%
+ * The single match-scoring implementation.
+ *
+ * There used to be two. This one, and a reimplementation inside the admin
+ * matching screen that matched skills by substring, so "Java" matched
+ * "JavaScript" and a Java developer scored 100% on a JavaScript role. The
+ * admin version also overwrote this one's score when a shortlist was
+ * submitted, so a client saw one match percentage at intake and a different
+ * one afterwards. The admin screen now calls this.
+ *
+ * Weights: skill fit 40, behaviour 20, personality 15, engagement 15,
+ * work readiness 10.
+ *
+ * Nothing here invents a number. A dimension that has not been scored
+ * contributes zero rather than a flattering default.
  */
-export function calculateMatchScore(talent: TalentProfile, request: ServiceRequest): {
+export interface MatchScoreResult {
   score: number;
   breakdown: MatchBreakdown;
-} {
-  // 1. Skill Fit (40%)
-  // Calculate overlap between required skills and talent skills.
-  let skillFitScore = 0;
-  if (!request.requiredSkills || request.requiredSkills.length === 0) {
-    // If no skills are requested, use talent's default technical vetting score.
-    skillFitScore = talent.vettingScores.technical;
+  /** The required skills this candidate actually has, for the admin screen. */
+  matchedSkills: string[];
+  requiredSkillCount: number;
+}
+
+/** Skills can live under either name depending on where the profile came from. */
+function talentSkillList(talent: any): string[] {
+  const raw = talent?.skills || talent?.primarySkills || [];
+  return Array.isArray(raw) ? raw.map((s: any) => String(s)) : [];
+}
+
+export function calculateMatchScore(
+  talent: TalentProfile | any,
+  request: ServiceRequest | any
+): MatchScoreResult {
+  const vs = talent?.vettingScores || {};
+  const num = (v: any) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+  };
+
+  // ── 1. Skill fit (40%) ────────────────────────────────────────────────────
+  // Exact match, case-insensitive. Deliberately not substring: substring
+  // matching made "Java" satisfy a "JavaScript" requirement, and "C" satisfy
+  // almost everything.
+  const requiredSkills: string[] = Array.isArray(request?.requiredSkills) ? request.requiredSkills : [];
+  const talentSkills = talentSkillList(talent).map(s => s.trim().toLowerCase());
+
+  let matchedSkills: string[] = [];
+  let skillFitScore: number;
+  if (requiredSkills.length === 0) {
+    // Nothing specified to match against, so fall back to the assessed
+    // technical score rather than awarding a free 100.
+    skillFitScore = num(vs.technical);
   } else {
-    const matchingSkills = request.requiredSkills.filter(skill =>
-      talent.skills.map(s => s.toLowerCase()).includes(skill.toLowerCase())
+    matchedSkills = requiredSkills.filter(rs =>
+      talentSkills.includes(String(rs).trim().toLowerCase())
     );
-    skillFitScore = Math.round((matchingSkills.length / request.requiredSkills.length) * 100);
+    skillFitScore = Math.round((matchedSkills.length / requiredSkills.length) * 100);
   }
 
-  // 2. Behaviour Fit (20%)
-  const behaviourFitScore = talent.vettingScores.behavioral;
+  // ── 2. Behaviour fit (20%) ────────────────────────────────────────────────
+  const behaviourFitScore = num(vs.behavioral);
 
-  // 3. Personality Fit (15%)
-  const personalityFitScore = talent.vettingScores.personality;
+  // ── 3. Personality fit (15%) ──────────────────────────────────────────────
+  const personalityFitScore = num(vs.personality);
 
-  // 4. Availability (15%)
-  const availabilityScore = talent.availability; // e.g. 100 for full availability
+  // ── 4. Engagement match (15%) ─────────────────────────────────────────────
+  // Does the candidate want the kind of engagement the client is offering.
+  // This used to read talent.availability, which holds hours per week, so a
+  // candidate available 40 hours scored 40 out of 100.
+  const preferred = String(talent?.preferredEngagementType || '').toLowerCase();
+  const wanted = String(request?.commitmentLevel || '').toLowerCase();
+  const availabilityScore = wanted && preferred
+    ? (preferred.includes(wanted.split('-')[0].trim()) ? 100 : 70)
+    : 70;
 
-  // 5. Past Performance (10%)
-  // Uses a combination of work simulation score (70%) and experience rating (30%)
+  // ── 5. Work readiness (10%) ───────────────────────────────────────────────
+  // Work simulation and remote readiness. Replaces "past performance", which
+  // undeployed candidates have none of.
   const pastPerformanceScore = Math.round(
-    (talent.vettingScores.workSimulation * 0.7) + (talent.vettingScores.experience * 0.3)
+    (num(vs.workSimulation) * 0.6) + (num(vs.remoteReadiness) * 0.4)
   );
 
-  // Apply weights
-  const weightedSkill = skillFitScore * 0.40;
-  const weightedBehavior = behaviourFitScore * 0.20;
-  const weightedPersonality = personalityFitScore * 0.15;
-  const weightedAvailability = availabilityScore * 0.15;
-  const weightedPerformance = pastPerformanceScore * 0.10;
-
   const totalScore = Math.round(
-    weightedSkill + weightedBehavior + weightedPersonality + weightedAvailability + weightedPerformance
+    (skillFitScore * 0.40) +
+    (behaviourFitScore * 0.20) +
+    (personalityFitScore * 0.15) +
+    (availabilityScore * 0.15) +
+    (pastPerformanceScore * 0.10)
   );
 
   return {
@@ -182,7 +282,9 @@ export function calculateMatchScore(talent: TalentProfile, request: ServiceReque
       personalityFit: personalityFitScore,
       availability: availabilityScore,
       pastPerformance: pastPerformanceScore
-    }
+    },
+    matchedSkills,
+    requiredSkillCount: requiredSkills.length
   };
 }
 
@@ -193,15 +295,33 @@ export function generateMatchesForRequest(
   request: ServiceRequest,
   talents: TalentProfile[]
 ): Match[] {
-  // Only match candidates who are Vetted or Matched (deployable grades: A+, A)
+  // Only candidates who have finished vetting. 'Applied' and 'Review' were in
+  // this list, which put candidates who had not been assessed, and candidates
+  // who had been sent back for review, in front of clients.
+  //
+  // Grade B is the trainable pool. It is deliberately not matched
+  // automatically: an operator can still put a B candidate forward from the
+  // admin matching screen, with a recorded override reason.
+  //
+  // requiresReReview is set when a vetted candidate edits something material
+  // about themselves. Nothing used to read it, so a candidate could change
+  // their skills or rate and keep being matched on the old profile.
   const deployableTalents = talents.filter(
-    t => (t.grade === 'A+' || t.grade === 'A') && (t.vettingStatus === 'Vetted' || t.vettingStatus === 'Matched' || t.vettingStatus === 'Applied' || t.vettingStatus === 'Review')
+    t => !(t as any).requiresReReview &&
+         (t.grade === 'A+' || t.grade === 'A') &&
+         (t.vettingStatus === 'Vetted' || t.vettingStatus === 'Matched')
   );
 
   return deployableTalents.map(talent => {
     const { score, breakdown } = calculateMatchScore(talent, request);
     return {
-      id: `match_${request.id.split('_')[1]}_${talent.id.split('_')[1]}`,
+      // Was `match_${request.id.split('_')[1]}_${talent.id.split('_')[1]}`.
+      // Ids are UUIDs with no underscore, so both halves were undefined and
+      // every candidate got the same id: the rows collided and the whole
+      // batch upsert was rejected, so no match was ever saved. Using the ids
+      // whole also makes this idempotent, so re-running matching updates the
+      // existing rows instead of duplicating them.
+      id: `match_${request.id}_${talent.id}`,
       requestId: request.id,
       talentId: talent.id,
       score,
@@ -211,35 +331,88 @@ export function generateMatchesForRequest(
   }).sort((a, b) => b.score - a.score);
 }
 
-export interface VettingScoresInput {
-  technical: number;
-  workSimulation: number;
-  behavioral: number;
-  communication: number;
-  personality: number;
-  remoteReadiness: number;
-  experience: number;
+/**
+ * Rebuilds a request's matches against the current talent pool.
+ *
+ * Matches used to be generated once, at intake, and never touched again.
+ * Editing the request, or a candidate's grade or vetting status changing
+ * afterwards, left the old rows in place: a candidate rejected at vetting
+ * stayed on a client's shortlist, and a request whose skills changed kept
+ * being matched on the skills it no longer asked for.
+ *
+ * What this does:
+ *   - rescores every match that is still eligible,
+ *   - drops matches for candidates who are no longer eligible, unless the
+ *     client has already acted on them,
+ *   - adds matches for candidates who have become eligible since.
+ *
+ * A match the client has already engaged with is never removed. Taking a
+ * candidate off a shortlist after an interview has been scheduled, or an
+ * offer made, would lose the history of what happened.
+ */
+const CLIENT_ENGAGED_STATUSES = [
+  'shortlisted', 'interview requested', 'interview_requested',
+  'interview scheduled', 'interview_scheduled', 'interviewed',
+  'offer extended', 'offer_extended', 'offer accepted', 'accepted',
+  'rejected', 'rejected_by_client', 'declined'
+];
+
+export function reconcileMatchesForRequest(
+  request: ServiceRequest | any,
+  talents: TalentProfile[] | any[],
+  existingMatches: Match[] | any[]
+): { matches: Match[]; added: number; removed: number; rescored: number } {
+  const requestId = String(request?.id);
+  const mine = (existingMatches || []).filter((m: any) => String(m.requestId) === requestId);
+  const others = (existingMatches || []).filter((m: any) => String(m.requestId) !== requestId);
+
+  const fresh = generateMatchesForRequest(request, talents as TalentProfile[]);
+  const freshById = new Map(fresh.map(m => [String(m.talentId), m]));
+
+  const kept: Match[] = [];
+  let removed = 0;
+  let rescored = 0;
+
+  for (const match of mine as any[]) {
+    const stillEligible = freshById.get(String(match.talentId));
+    const engaged = CLIENT_ENGAGED_STATUSES.includes(String(match.status || '').toLowerCase());
+
+    if (stillEligible) {
+      if (match.score !== stillEligible.score) rescored++;
+      kept.push({ ...match, score: stillEligible.score, breakdown: stillEligible.breakdown });
+      freshById.delete(String(match.talentId));
+    } else if (engaged) {
+      // Keep the row and the history, but say why it is no longer offered.
+      kept.push({ ...match, noLongerEligible: true } as any);
+    } else {
+      removed++;
+    }
+  }
+
+  const added = Array.from(freshById.values());
+  const matches = [...others, ...kept, ...added].sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+
+  return { matches, added: added.length, removed, rescored };
 }
 
-export function calculateCompositeVettingGrade(scores: Partial<VettingScoresInput>): {
-  score: number;
-  grade: 'A+' | 'A' | 'B' | 'Reject';
-} {
-  const compositeScore = Math.round(
-    ((scores?.technical || 0) * 0.30) +
-    ((scores?.behavioral || 0) * 0.30) +
-    ((scores?.workSimulation || 0) * 0.20) +
-    ((scores?.personality || 0) * 0.10) +
-    ((scores?.remoteReadiness || 0) * 0.10)
-  );
+// ─── Composite vetting grade ─────────────────────────────────────────────────
+//
+// The weights, the grade thresholds and the open scope question about
+// communication and experience all live in ./grading.ts, which imports
+// nothing so it can be tested on its own (`pnpm test`). Re-exported here so
+// every existing import of '@kongila/matching-engine' keeps working.
 
-  let grade: 'A+' | 'A' | 'B' | 'Reject' = 'Reject';
-  if (compositeScore >= 85) grade = 'A+';
-  else if (compositeScore >= 75) grade = 'A';
-  else if (compositeScore >= 65) grade = 'B';
+export type {
+  VettingScoresInput,
+  VettingGrade,
+  WeightedDimension
+} from './grading';
 
-  return {
-    score: compositeScore,
-    grade
-  };
-}
+export {
+  COMPOSITE_WEIGHTS,
+  DROPPED_DIMENSIONS,
+  UNMEASURED_DIMENSIONS,
+  GRADE_THRESHOLDS,
+  gradeForScore,
+  calculateCompositeVettingGrade
+} from './grading';

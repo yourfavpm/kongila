@@ -1,0 +1,422 @@
+openapi: 3.1.0
+info:
+  title: Kongila API
+  version: 1.0.0
+  description: |
+    Kongila HTTP API for the client, talent, and admin applications.
+    Protected routes require a Supabase Auth access token. The deprecated
+    read-only /api/db hydration route and dormant Remotan routes are excluded.
+servers:
+  - url: http://localhost:3000
+    description: Local client/talent app
+  - url: http://localhost:3002
+    description: Local admin app
+  - url: https://kongila-web-staging.vercel.app
+    description: Staging client/talent application
+  - url: https://kongila-admin-staging.vercel.app
+    description: Staging admin application
+security:
+  - supabaseBearer: []
+tags:
+  - name: Account
+  - name: Profile
+  - name: Requests and support
+  - name: Interviews
+  - name: Messaging
+  - name: Offers and contracts
+  - name: Documents
+  - name: Finance
+  - name: Admin
+paths:
+  /api/account/provision:
+    post:
+      tags: [Account]
+      operationId: provisionAccount
+      summary: Provision the authenticated account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/profile/talent:
+    get:
+      tags: [Profile]
+      operationId: getTalentProfile
+      summary: Get the authenticated talent profile
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    patch:
+      tags: [Profile]
+      operationId: updateTalentProfile
+      summary: Update the authenticated talent profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/company:
+    get:
+      tags: [Profile]
+      operationId: getCompany
+      summary: Get the authenticated client's company
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    patch:
+      tags: [Profile]
+      operationId: updateCompany
+      summary: Update the authenticated client's company
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/company/invite:
+    post:
+      tags: [Profile]
+      operationId: inviteCompanyUser
+      summary: Invite a user to a company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, example: member }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/requests:
+    get:
+      tags: [Requests and support]
+      operationId: listRequests
+      summary: List requests visible to the authenticated user
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Requests and support]
+      operationId: createRequest
+      summary: Create a client or talent request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description]
+              properties:
+                title: { type: string, example: Help with onboarding }
+                description: { type: string }
+                category: { type: string, example: onboarding }
+                priority: { type: string, enum: [low, medium, high, urgent], default: medium }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/requests/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/RequestId' }
+    get:
+      tags: [Requests and support]
+      operationId: getRequest
+      summary: Get one request
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/support:
+    get:
+      tags: [Requests and support]
+      operationId: listSupportTickets
+      summary: List support tickets for the user or admin scope
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Requests and support]
+      operationId: createSupportTicket
+      summary: Create a support ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, message]
+              properties:
+                subject: { type: string, example: Unable to update my profile }
+                message: { type: string }
+                category: { type: string, example: account }
+                priority: { type: string, enum: [low, medium, high, urgent], default: medium }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+    patch:
+      tags: [Requests and support]
+      operationId: updateSupportTicket
+      summary: Reply to or update a support ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/interviews:
+    get:
+      tags: [Interviews]
+      operationId: listInterviews
+      summary: List interviews visible to the authenticated user
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Interviews]
+      operationId: createInterview
+      summary: Schedule an interview
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/interviews/cancel:
+    parameters:
+    post:
+      tags: [Interviews]
+      operationId: cancelInterview
+      summary: Cancel an interview
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/messages:
+    get:
+      tags: [Messaging]
+      operationId: listMessages
+      summary: List messages
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Messaging]
+      operationId: sendMessage
+      summary: Send a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                threadId: { type: string, format: uuid }
+                recipientId: { type: string, format: uuid }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/offers:
+    get:
+      tags: [Offers and contracts]
+      operationId: listOffers
+      summary: List offers
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Offers and contracts]
+      operationId: createOffer
+      summary: Create an authorized offer
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/offers/respond:
+    post:
+      tags: [Offers and contracts]
+      operationId: respondToOffer
+      summary: Respond to an offer
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/contracts:
+    get:
+      tags: [Offers and contracts]
+      operationId: listContracts
+      summary: List contracts
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Offers and contracts]
+      operationId: createContract
+      summary: Create an authorized contract
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/contracts/sign:
+    get:
+      tags: [Offers and contracts]
+      operationId: getContractSigningDetails
+      summary: Read contract signing details
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Offers and contracts]
+      operationId: signContract
+      summary: Sign a contract
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/documents:
+    get:
+      tags: [Documents]
+      operationId: listDocuments
+      summary: List documents
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Documents]
+      operationId: createDocument
+      summary: Create a document record
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/uploads:
+    post:
+      tags: [Documents]
+      operationId: createUploadUrl
+      summary: Create a signed upload URL
+      description: Use the returned signed URL for the file upload. The browser does not write the database record directly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, contentType]
+              properties:
+                fileName: { type: string, example: passport.pdf }
+                contentType: { type: string, example: application/pdf }
+                bucket: { type: string, example: documents }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/finance:
+    get:
+      tags: [Finance]
+      operationId: getFinance
+      summary: Get finance data
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Finance]
+      operationId: createFinanceRecord
+      summary: Create an authorized finance record
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenericObject' }
+      responses:
+        '201': { $ref: '#/components/responses/Success' }
+  /api/notifications:
+    get:
+      tags: [Messaging]
+      operationId: listNotifications
+      summary: List notifications
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/users:
+    get:
+      tags: [Admin]
+      operationId: listAdminUsers
+      summary: List users in the admin application
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/payroll:
+    get:
+      tags: [Admin]
+      operationId: getAdminPayroll
+      summary: Read payroll data
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    supabaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase Auth access token, never the service-role key.
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    RequestId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+    ApiSuccess:
+      type: object
+      properties:
+        data: {}
+        message: { type: string }
+        requestId: { type: string }
+      additionalProperties: true
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, example: Not authenticated }
+        code: { type: string, example: UNAUTHORIZED }
+        requestId: { type: string }
+      additionalProperties: true
+  responses:
+    Success:
+      description: Successful response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiSuccess' }
+    Unauthorized:
+      description: Missing or invalid Supabase access token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: Authenticated user lacks the required role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }

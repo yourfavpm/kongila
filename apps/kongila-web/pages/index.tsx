@@ -1,14 +1,15 @@
+import { apiFetch } from '../lib/apiFetch';
+import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import Head from 'next/head';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
-import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
-import { generateMatchesForRequest } from '@kongila/matching-engine';
+import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc } from '@kongila/utils';
 import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
 import { 
   TalentProfile, ServiceRequest, Match, Contract, ServiceType, calculateTalentProfileCompletion, hasCoreTalentProfileChanges
 } from '@kongila/shared-types';
-import { normalizeRequestStatus } from '@kongila/workflows';
+import { coerceRequestStatus } from '@kongila/workflows';
 import { supabase } from '../lib/supabaseClient';
 import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES } from '../lib/onboarding-constants';
 import TalentDashboard from '../components/TalentDashboard';
@@ -311,38 +312,115 @@ export default function KongilaWeb() {
   const [clientProfiles, setClientProfiles] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [requestActivityLogs, setRequestActivityLogs] = useState<any[]>([]);
+  const [supportTickets, setSupportTickets] = useState<any[]>([]);
 
   const [activeMatch, setActiveMatch] = useState<any>(null);
+
+  // Offers awaiting this candidate's answer. Fetched on its own rather than
+  // through /api/db, which already reads around thirty tables per poll.
+  const [talentOffers, setTalentOffers] = useState<any[]>([]);
+
+  const loadTalentOffers = async () => {
+    try {
+      const res = await apiFetch('/api/offers/mine');
+      if (!res.ok) return;
+      const data = await res.json();
+      setTalentOffers(data.offers || []);
+    } catch (e) {
+      console.warn('[offers] could not load offers', e);
+    }
+  };
+
+  const handleRespondToOffer = async (offerId: string, decision: 'accept' | 'decline', reason?: string) => {
+    const res = await apiFetch('/api/offers/respond', {
+      method: 'POST',
+      body: JSON.stringify({ offerId, decision, reason })
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result?.ok) {
+      triggerBanner(result?.error || 'Could not record your response.', 'error');
+      return false;
+    }
+    if (result.warnings?.length) {
+      triggerBanner(result.warnings.join(' '), 'info');
+    } else {
+      triggerBanner(decision === 'accept' ? 'Offer accepted. Your contract is being prepared.' : 'Offer declined.', 'success');
+    }
+    await loadTalentOffers();
+    return true;
+  };
 
   // Invite states
   const [inviteOrgId, setInviteOrgId] = useState<string | null>(null);
   const [invitePermission, setInvitePermission] = useState<string | null>(null);
+  const [inviteEmailLocked, setInviteEmailLocked] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  // Kept so provisioning can re-verify the signature server-side rather than
+  // trusting the organisation and permission level held in client state.
+  const [inviteTokenRaw, setInviteTokenRaw] = useState<string | null>(null);
 
   useEffect(() => {
-    // Parse URL params for invitations
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
+    // Invitations arrive as one signed token. The organisation and permission
+    // level used to be plain query parameters that signup trusted verbatim,
+    // which let anyone join any organisation at Full Access by editing the URL.
+    // They now come back from the server only after the signature checks out.
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('invite');
+
+    if (!token) {
+      // Non-invite entry, e.g. a direct link to the signup view.
       const authV = params.get('authView');
       if (authV) {
         setAuthView(authV as any);
-        if (authV === 'signup') {
-          const role = params.get('role');
-          if (role) setAuthRole(role as any);
-          const email = params.get('inviteEmail');
-          if (email) setEmailInput(email);
-          const name = params.get('inviteName');
-          if (name) setNameInput(name);
-          const orgId = params.get('orgId');
-          if (orgId) setInviteOrgId(orgId);
-          const perm = params.get('permissionLevel');
-          if (perm) setInvitePermission(perm);
-          
-          // Clear params from URL so it doesn't linger
-          window.history.replaceState({}, '', '/');
-        }
+        const role = params.get('role');
+        if (role) setAuthRole(role as any);
+        window.history.replaceState({}, '', '/');
       }
+      return;
     }
+
+    // Clear the token from the address bar straight away so it does not end up
+    // in browser history or a screenshot.
+    window.history.replaceState({}, '', '/');
+
+    (async () => {
+      try {
+        const res = await fetch('/api/company/verify-invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data?.ok) {
+          setInviteError(data?.error || 'This invitation link is not valid.');
+          setAuthView('signup');
+          return;
+        }
+
+        setAuthView('signup');
+        setAuthRole('client' as any);
+        setInviteTokenRaw(token);
+        setEmailInput(data.email);
+        setInviteEmailLocked(data.email);
+        if (data.name) setNameInput(data.name);
+        setInviteOrgId(data.orgId);
+        setInvitePermission(data.permissionLevel);
+      } catch (e) {
+        setInviteError('Could not check this invitation. Try the link again.');
+        setAuthView('signup');
+      }
+    })();
   }, []);
+
+  // Load offers once a candidate is signed in, and again whenever the
+  // poll refreshes their profile, so an offer sent while they are looking
+  // at the page appears without a reload.
+  useEffect(() => {
+    if (currentUser?.role === 'talent') loadTalentOffers();
+  }, [currentUser?.id, currentUser?.role]);
 
   // Trigger temporary floating notification
   const triggerBanner = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -350,6 +428,11 @@ export default function KongilaWeb() {
     setBannerType(type);
     setTimeout(() => setBannerMessage(null), 5000);
   };
+
+  // Surface a bad or expired invitation to the person holding the link.
+  useEffect(() => {
+    if (inviteError) triggerBanner(inviteError, 'error');
+  }, [inviteError]);
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -365,7 +448,7 @@ export default function KongilaWeb() {
     try {
       const controller = new AbortController();
       const fetchTimeout = setTimeout(() => controller.abort(), 60000);
-      const res = await fetch('/api/db', { signal: controller.signal }).catch(e => {
+      const res = await apiFetch('/api/db', { signal: controller.signal }).catch(e => {
         console.warn("fetch /api/db error or abort", e);
         return { ok: false, json: async () => ({}) } as Response;
       });
@@ -373,45 +456,40 @@ export default function KongilaWeb() {
 
       if (res && res.ok) {
         const dbData = await res.json();
-        // Fetch Organizations, Profiles, and Users from Supabase
-        const { data: supabaseOrgs } = await supabase.from('organizations').select('*');
-        if (supabaseOrgs) {
-          setOrganizations(supabaseOrgs);
-        } else {
-          setOrganizations(dbData.organizations || []);
-        }
-
-        const { data: supabaseClientProfiles } = await supabase.from('client_profiles').select('*');
-        if (supabaseClientProfiles) {
-          setClientProfiles(supabaseClientProfiles);
-        } else {
-          setClientProfiles(dbData.clientProfiles || []);
-        }
-
-        const { data: supabaseUsers } = await supabase.from('users').select('*');
-        if (supabaseUsers) {
-          setUsers(supabaseUsers);
-        } else {
-          setUsers(dbData.users || []);
-        }
+        // These three used to be read straight from the tables with the
+        // anon key, overriding the already-scoped /api/db response. Every
+        // candidate and every client therefore received every
+        // organization, every client profile and every row of `users`:
+        // emails, roles and account status for the whole platform. The
+        // scoped values were sitting right there as the fallback.
+        setOrganizations(dbData.organizations || []);
+        setClientProfiles(dbData.clientProfiles || []);
+        setUsers(dbData.users || []);
 
         setTalents(dbData.talents || []);
         
-        // Fetch service requests from Supabase
-        let query = supabase.from('talent_requests').select('payload').order('created_at', { ascending: false });
         const activeUser = currentUserRef.current;
-        if (activeUser?.role === 'client') {
-           query = query.eq('client_id', activeUser.id);
-        }
-        
-        const { data: supabaseRequests, error: reqErr } = await query;
-        const mappedRemoteRequests = (supabaseRequests || []).map((r: any) => ({
-          ...(r.payload || {}),
-          status: normalizeRequestStatus(r.payload?.status)
+        // Client requests are read through the authenticated resource API.
+        // The browser must not query the table directly.
+        const requestResponse = activeUser?.role === 'client'
+          ? await apiFetch('/api/requests')
+          : null;
+        const requestBody = requestResponse?.ok
+          ? await requestResponse.json().catch(() => ({}))
+          : {};
+        const mappedRemoteRequests = (requestBody.requests || []).map((request: any) => ({
+          ...request,
+          status: coerceRequestStatus(request.status)
         }));
+        const supportResponse = activeUser?.role === 'client' || activeUser?.role === 'talent'
+          ? await apiFetch('/api/support')
+          : null;
+        const supportBody = supportResponse?.ok
+          ? await supportResponse.json().catch(() => ({}))
+          : {};
         const mappedLocalRequests = (dbData.clientRequests || []).map((request: any) => ({
           ...request,
-          status: normalizeRequestStatus(request.status)
+          status: coerceRequestStatus(request.status)
         }));
         const mergedRequests = new Map<string, any>();
         for (const request of mappedLocalRequests) {
@@ -422,35 +500,32 @@ export default function KongilaWeb() {
         }
         setRequests(Array.from(mergedRequests.values()));
 
-        // Fetch invoices from Supabase
-        let invoicesQuery = supabase.from('invoices').select('*, invoice_line_items(*)').order('created_at', { ascending: false });
-        if (activeUser?.role === 'client') {
-           invoicesQuery = invoicesQuery.eq('client_id', activeUser.id);
-        }
-        const { data: supabaseInvoices } = await invoicesQuery;
-        if (supabaseInvoices) {
-          const mappedInvoices = supabaseInvoices.map(inv => ({
-            id: inv.id,
-            clientId: inv.client_id,
-            invoiceNumber: inv.invoice_number,
-            status: inv.status,
-            isDisputed: inv.is_disputed,
-            disputeReason: inv.dispute_reason,
-            subtotalUsd: inv.subtotal_usd,
-            taxAmountUsd: inv.tax_amount_usd,
-            totalUsd: inv.total_usd,
-            dueDate: inv.due_date,
-            createdAt: inv.created_at,
-            lineItems: inv.invoice_line_items?.map((li: any) => ({
-               id: li.id,
-               talentId: li.talent_id,
-               description: li.description,
-               amountUsd: li.amount_usd
-            })) || []
-          }));
-          setInvoices(mappedInvoices);
-        } else {
-          setInvoices(dbData.invoices || []);
+        // Invoices, scoped to this user by the server.
+        //
+        // This used to query the table straight from the browser and add a
+        // client_id filter only when the role string read 'client', so any
+        // other session received every invoice on the platform.
+        try {
+          const invoiceRes = await apiFetch('/api/finance');
+          if (invoiceRes.ok) {
+            const body = await invoiceRes.json();
+            const linesByInvoice = new Map<string, any[]>();
+            for (const line of body.lineItems || []) {
+              const list = linesByInvoice.get(line.invoiceId) || [];
+              list.push(line);
+              linesByInvoice.set(line.invoiceId, list);
+            }
+            setInvoices((body.invoices || []).map((inv: any) => ({
+              ...inv,
+              lineItems: linesByInvoice.get(inv.id) || []
+            })));
+          } else {
+            // A candidate has no invoices, which is a 403 rather than an
+            // error worth showing. Either way, show none.
+            setInvoices([]);
+          }
+        } catch {
+          setInvoices([]);
         }
 
         // ── Fetch matches from Supabase so clients see admin-submitted candidates ──
@@ -470,23 +545,30 @@ export default function KongilaWeb() {
           setMatches(dbData.matches || []);
         }
         setContracts(dbData.contracts || []);
-        // Fetch conversations
-        const { data: supabaseConvos } = await supabase.from('conversations').select('*').order('updated_at', { ascending: false });
-        if (supabaseConvos) {
-          setConversations(supabaseConvos);
-        } else {
+        // Conversations and messages, scoped to this user by the server.
+        //
+        // These two queries used to select every row in both tables with no
+        // filter at all, so each portal held every conversation and every
+        // message on the platform — other clients', other candidates' — and
+        // only the rendering decided what was shown.
+        try {
+          const msgResponse = await apiFetch('/api/messages');
+          if (msgResponse.ok) {
+            const msgPayload = await msgResponse.json();
+            setConversations(msgPayload.conversations || []);
+            setMessages(msgPayload.messages || []);
+          } else {
+            setConversations([]);
+            setMessages([]);
+          }
+        } catch (err) {
+          console.error('Failed to load messages', err);
           setConversations([]);
-        }
-
-        // Fetch messages
-        const { data: supabaseMsgs } = await supabase.from('messages').select('*').order('timestamp', { ascending: true });
-        if (supabaseMsgs) {
-          setMessages(supabaseMsgs);
-        } else {
-          setMessages(dbData.messages || []);
+          setMessages([]);
         }
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
+        setSupportTickets(supportBody.tickets || dbData.supportTickets || []);
         // ── Fetch interviews from Supabase ──
         const { data: supabaseInterviews } = await supabase
           .from('interviews')
@@ -522,15 +604,29 @@ export default function KongilaWeb() {
     }
   };
 
-  const saveToDb = async (updatedDb: any) => {
+  // saveToDb is gone. It posted the browser's whole in-memory copy of
+  // the database to /api/db, which upserts about twenty tables from
+  // it. Every write now goes to the route that owns that thing.
+
+  // The caller's own profile, in the shape isTalentProfileOnboardingComplete
+  // expects. The route returns camelCase; the check reads the column
+  // names, so map rather than loosening the check.
+  const loadOwnTalentProfile = async (): Promise<any | null> => {
     try {
-      await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedDb)
-      });
-    } catch (e) {
-      console.error('Failed to save DB', e);
+      const response = await apiFetch('/api/profile/talent');
+      if (!response.ok) return null;
+      const profile = await response.json();
+      if (!profile || !profile.id) return null;
+      return {
+        id: profile.id,
+        bio: profile.bio,
+        full_name: profile.fullName,
+        level: profile.level,
+        country: profile.country,
+        vetting_status: profile.vettingStatus
+      };
+    } catch {
+      return null;
     }
   };
 
@@ -560,17 +656,15 @@ export default function KongilaWeb() {
       let draftWizardStep = 1;
 
       if (role === 'talent') {
-        const { data: dbTalentProfile } = await supabase
-          .from('talent_profiles')
-          .select('id,bio,full_name,level,country,vetting_status')
-          .eq('id', dbUser?.id || authUser.id)
-          .maybeSingle();
+        // Through the server. Reading talent_profiles from the browser
+        // works today only because RLS is off on that table.
+        const dbTalentProfile = await loadOwnTalentProfile();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
 
         // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
         if (!isOnboardingComplete) {
           try {
-            const legacyRes = await fetch('/api/db');
+            const legacyRes = await apiFetch('/api/db');
             if (legacyRes.ok) {
               const legacyDb = await legacyRes.json();
               const legacyTalent = legacyDb.talents?.find((t: any) => t.email === authUser.email || t.id === (dbUser?.id || authUser.id));
@@ -610,7 +704,10 @@ export default function KongilaWeb() {
         email: authUser.email || '',
         role,
         onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
-        emailVerified: true,
+        // Was hardcoded true. Signup set it false and then both login and
+        // session restore overwrote it, so the flag meant nothing and the
+        // 'verify' view it gates was unreachable.
+        emailVerified: Boolean(authUser.email_confirmed_at || (authUser as any).confirmed_at),
         companyName: authUser.user_metadata?.company_name,
         createdAt: authUser.created_at
       };
@@ -742,77 +839,34 @@ export default function KongilaWeb() {
       createdAt: new Date().toISOString()
     };
 
-    // Save to Supabase Postgres backend
+    // Request creation is server-owned so the browser never writes the
+    // talent_requests table or fabricates its audit trail.
     try {
-      const { error } = await supabase.from('talent_requests').insert([{
-        client_id: currentUser?.id || 'anon_client',
-        service_type: formData.serviceType,
-        payload: newReq
-      }]);
-      if (error) {
-        console.error("Supabase storage error:", error);
-        triggerBanner('Error saving to database. Please try again.', 'error');
-        setLoading(false);
-        return;
+      const response = await apiFetch('/api/requests', {
+        method: 'POST',
+        body: JSON.stringify({ request: newReq })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.request) {
+        throw new Error(body.error || 'Could not save the request.');
       }
+      Object.assign(newReq, body.request);
     } catch (err) {
-      console.error("Failed to connect to Supabase", err);
-      triggerBanner('Connection error. Please try again.', 'error');
+      console.error("Failed to save request", err);
+      triggerBanner('Could not save your request. Please try again.', 'error');
       setLoading(false);
       return;
     }
 
-    // Calculate matches instantly
-    const calculatedMatches = generateMatchesForRequest(newReq, talents);
-
+    // Matching happens in the admin portal, not here. The client's browser
+    // only ever holds the talent it is allowed to see, so matches generated
+    // here were computed against a partial pool and then written to the
+    // database as if they were the real shortlist.
     const updatedRequests = [...requests, newReq];
-    const updatedMatches = [...matches, ...calculatedMatches];
+    const updatedMatches = matches;
     
-    // Insert real audit log
-    await supabase.from('audit_logs').insert({
-      actor: currentUser ? currentUser.name : 'Guest Client',
-      action: 'Intake Submitted',
-      details: `Requested ${formData.numberOfHires}x ${formData.serviceType} role. Budget: $${formData.budget}/mo`
-    });
-
-    // Log action
-    const updatedDb = {
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      tasks: [],
-      contracts,
-      notifications: [
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentUser?.id || 'user_client_1',
-          title: 'Intake Received',
-          message: `Your talent request for a ${formData.serviceType} is submitted! Vetted matching scanned.`,
-          read: false,
-          createdAt: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_${Date.now()}`,
-          agentName: 'Context Agent',
-          message: `Discovered new Service Request ${newReq.id} for a ${newReq.serviceType} role. Matching active.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        },
-        {
-          id: `alog_m_${Date.now()}`,
-          agentName: 'Matching Agent',
-          message: `Calculated match profiles. ${calculatedMatches.length} matching candidates shortlisted.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'info'
-        }
-      ]
-    };
-
     setRequests(updatedRequests);
     setMatches(updatedMatches);
-    await saveToDb(updatedDb);
 
     setSelectedRequest(newReq);
     setLoading(false);
@@ -830,12 +884,30 @@ export default function KongilaWeb() {
       return;
     }
 
+    // An invitation is bound to the address it was issued to. Without this,
+    // a forwarded link would attach whoever opened it to that organisation at
+    // the invited permission level.
+    if (
+      inviteEmailLocked &&
+      emailInput.trim().toLowerCase() !== inviteEmailLocked.trim().toLowerCase()
+    ) {
+      triggerBanner(
+        `This invitation was issued to ${inviteEmailLocked}. Please sign up with that address.`,
+        'error'
+      );
+      return;
+    }
+
     try {
       setLoading(true);
       const { data, error } = await supabase.auth.signUp({
         email: emailInput,
         password: passwordInput,
         options: {
+          // Where Supabase sends them after they click the link in the
+          // verification email. Without this it falls back to the project's
+          // Site URL, which is wrong in every environment but one.
+          emailRedirectTo: `${window.location.origin}/?authView=verified`,
           data: {
             full_name: nameInput,
             role: authRole,
@@ -848,68 +920,26 @@ export default function KongilaWeb() {
 
       const authUserId = data.user?.id || crypto.randomUUID();
 
-      // Write to public.users table.
-      // status must be one of: 'active', 'suspended', 'inactive' (per DB constraint).
-      // Talent users start as 'inactive' until onboarding is complete;
-      // the handleTalentWizardSubmit sets them to 'active' when done.
-      const { error: userErr } = await supabase.from('users').upsert({
-        id: authUserId,
-        email: emailInput,
-        password_hash: 'auth_managed',
-        role: authRole,
-        status: authRole === 'talent' ? 'inactive' : 'active',
-        email_verified: false
-      }, { onConflict: 'id' });
-      if (userErr) throw new Error(`User DB Error: ${userErr.message}`);
-
-      if (authRole === 'client') {
-        let orgId = inviteOrgId;
-        if (!orgId) {
-          // Create new organization record
-          orgId = crypto.randomUUID();
-          const { error: orgErr } = await supabase.from('organizations').upsert({
-            id: orgId,
-            name: companyInput || `${nameInput}'s Company`,
-            created_by: authUserId
-          });
-          if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
-        }
-
-        // Create client profile
-        const { error: clpErr } = await supabase.from('client_profiles').upsert({
-          id: crypto.randomUUID(),
-          user_id: authUserId,
-          organization_id: orgId,
-          position: invitePermission ? 'Team Member' : 'Admin',
-          permission_level: invitePermission || 'Full Access'
-        });
-        if (clpErr) throw new Error(`Client Profile DB Error: ${clpErr.message}`);
-      } else {
-        // Create talent profile placeholder — use auth UUID as the profile ID so onboarding
-        // can upsert by id without creating duplicate records
-        const { error: tpErr } = await supabase.from('talent_profiles').upsert({
-          id: authUserId,
-          user_id: authUserId,
-          full_name: nameInput,
-          status: 'active',
-          vetting_stage: 'Application Screening',
-          vetting_status: 'Applied',
-          level: null,
-          country: null,
-          timezone: null,
-          availability_hours: null,
-          bio: ''
-        }, { onConflict: 'id' });
-        if (tpErr) console.error('[Signup] talent_profiles upsert error:', tpErr);
+      // The browser can no longer write public.users: UPDATE was revoked from
+      // authenticated and granted back on three harmless columns only, so the
+      // role column cannot be set from here. user_roles and roles are closed
+      // the same way. All of the provisioning happens server-side instead, in
+      // one call, so a partial failure cannot leave someone with an auth
+      // account and no profile.
+      const provisionRes = await apiFetch('/api/account/provision', {
+        method: 'POST',
+        body: JSON.stringify({
+          role: authRole,
+          name: nameInput,
+          email: emailInput,
+          companyName: authRole === 'client' ? companyInput : undefined,
+          inviteToken: inviteTokenRaw || undefined
+        })
+      });
+      const provision = await provisionRes.json();
+      if (!provisionRes.ok || !provision?.ok) {
+        throw new Error(provision?.error || 'Could not finish creating your account.');
       }
-
-      // Always write to user_roles table
-      const { error: urErr } = await supabase.from('user_roles').upsert({
-        id: crypto.randomUUID(),
-        user_id: authUserId,
-        role_id: authRole
-      }, { onConflict: 'id' });
-      if (urErr) console.warn('[Signup] user_roles upsert skipped (table may not exist or RLS):', urErr);
 
       const newUser = {
         id: authUserId,
@@ -971,17 +1001,15 @@ export default function KongilaWeb() {
       const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
       let isOnboardingComplete = dbUser?.status === 'active';
       if (role === 'talent') {
-        const { data: dbTalentProfile } = await supabase
-          .from('talent_profiles')
-          .select('id,bio,full_name,level,country,vetting_status')
-          .eq('id', dbUser?.id || data.user?.id)
-          .maybeSingle();
+        // Through the server. Reading talent_profiles from the browser
+        // works today only because RLS is off on that table.
+        const dbTalentProfile = await loadOwnTalentProfile();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
 
         // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
         if (!isOnboardingComplete) {
           try {
-            const legacyRes = await fetch('/api/db');
+            const legacyRes = await apiFetch('/api/db');
             if (legacyRes.ok) {
               const legacyDb = await legacyRes.json();
               const legacyTalent = legacyDb.talents?.find((t: any) => t.email === emailInput || t.id === (dbUser?.id || data.user?.id));
@@ -1007,7 +1035,7 @@ export default function KongilaWeb() {
         email: emailInput,
         role,
         onboardingStatus: isOnboardingComplete ? 'complete' : 'incomplete',
-        emailVerified: true,
+        emailVerified: Boolean(data.user?.email_confirmed_at || (data.user as any)?.confirmed_at),
         companyName: data.user?.user_metadata?.company_name,
         createdAt: data.user?.created_at || new Date().toISOString()
       };
@@ -1041,15 +1069,14 @@ export default function KongilaWeb() {
     const userId = currentUser?.id;
     if (!userId) return;
     try {
-      const draftPayload = JSON.stringify({
-        __kongila_draft: true,
-        wizardStep: step,
-        onboardingData: data,
-        savedAt: new Date().toISOString()
+      // Through the server. The draft lives in the bio column, and the
+      // same upsert used to carry the whole row, so a half-finished signup
+      // could set a grade on the way past. talent_profiles has RLS off in
+      // the live database, so it landed.
+      await apiFetch('/api/profile/talent', {
+        method: 'PATCH',
+        body: JSON.stringify({ action: 'draft', step, data })
       });
-      await supabase
-        .from('talent_profiles')
-        .upsert({ id: userId, user_id: userId, full_name: data.fullName || currentUser?.name || '', bio: draftPayload }, { onConflict: 'id' });
     } catch (e) {
       // Non-critical — draft save failure should not block user
       console.warn('[Onboarding] Draft save failed:', e);
@@ -1111,9 +1138,10 @@ export default function KongilaWeb() {
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
-  const uploadToBucket = async (bucket: string, fileName: string, file: File) => {
-    return supabase.storage.from(bucket).upload(fileName, file, { upsert: true });
-  };
+  // uploadToBucket is gone. It uploaded with the anon key to a path the
+  // browser chose, with upsert on, so one person could overwrite another's
+  // file by naming it. uploadFile asks the server for a signed URL and the
+  // server decides the path from the session.
 
   const handleProfilePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1149,26 +1177,9 @@ export default function KongilaWeb() {
     if (!imageUrl) return;
 
     setMockUploading(true);
-    const fileName = `${currentUser?.id || Date.now()}-profile-${file.name}`;
     try {
-      const bucketsToTry = ['profile-assets', 'documents'];
-      let uploadResult: any = null;
-      let uploadedBucket = 'profile-assets';
-      let lastError: any = null;
-
-      for (const bucket of bucketsToTry) {
-        const result = await uploadToBucket(bucket, fileName, file);
-        if (!result.error) {
-          uploadResult = result;
-          uploadedBucket = bucket;
-          break;
-        }
-        lastError = result.error;
-      }
-
-      if (!uploadResult?.data) throw lastError || new Error('Profile photo upload failed.');
-
-      const publicUrl = supabase.storage.from(uploadedBucket).getPublicUrl(uploadResult.data.path).data.publicUrl;
+      const uploaded = await uploadFile('talent_avatar', file);
+      const publicUrl = uploaded.url;
       setTalentOnboardingData(prev => ({
         ...prev,
         profilePhotoUrl: publicUrl,
@@ -1200,17 +1211,10 @@ export default function KongilaWeb() {
     setUploadProgress(10);
     
     try {
-      const fileName = `${currentUser?.id || Date.now()}-cv-${file.name}`;
-
-      const { data, error } = await uploadToBucket('documents', fileName, file);
-
-      if (error) {
-        throw error;
-      }
-      
+      const uploaded = await uploadFile('talent_document', file);
       setUploadProgress(100);
-      const publicUrl = supabase.storage.from('documents').getPublicUrl(data.path).data.publicUrl;
-      setTalentOnboardingData(prev => ({ ...prev, cvName: data.path, cvUrl: publicUrl, cvSize: file.size }));
+      const publicUrl = uploaded.url;
+      setTalentOnboardingData(prev => ({ ...prev, cvName: file.name, cvUrl: publicUrl, cvSize: file.size }));
       triggerBanner('CV successfully uploaded.', 'success');
     } catch (err: any) {
       triggerBanner('Upload failed: ' + err.message, 'error');
@@ -1233,10 +1237,8 @@ export default function KongilaWeb() {
           triggerBanner(`Unsupported certification format: ${file.name}`, 'error');
           continue;
         }
-        const fileName = `${currentUser?.id || Date.now()}-cert-${file.name}`;
-        const { data, error } = await uploadToBucket('documents', fileName, file);
-        if (error) throw error;
-        const publicUrl = supabase.storage.from('documents').getPublicUrl(data.path).data.publicUrl;
+        const uploaded = await uploadFile('talent_document', file);
+        const publicUrl = uploaded.url;
         nextFiles.push({ name: file.name, url: publicUrl, size: file.size, type: file.type });
       }
       if (nextFiles.length > 0) {
@@ -1397,73 +1399,71 @@ export default function KongilaWeb() {
         bio: bioText
       });
 
-      // ── 1. Ensure user row exists in public.users to avoid FK constraint violations ──
+      // ── 1. The public.users row already exists ──
+      // It is created server-side by /api/account/provision during signup.
+      // The browser cannot write that table: UPDATE is revoked from
+      // authenticated, so this upsert would always fail. Activation happens
+      // in step 3 below, through /api/account/activate.
       if (authUserId) {
-        const { error: userErr } = await supabase.from('users').upsert({
-          id: authUserId,
-          email: currentUser?.email || emailInput || '',
-          password_hash: 'auth_managed',
-          role: 'talent',
-          status: 'active',
-          email_verified: true
-        }, { onConflict: 'id' });
-        if (userErr) {
-          console.warn('[Onboarding] Could not ensure public.users row:', userErr.message);
-        }
-
         // ── 2. Upsert full onboarding data directly into Supabase talent_profiles ──
-        const supabasePayload = {
-          id: authUserId,
-          user_id: authUserId,
+        // The payload used to carry vetting_stage, vetting_status and grade,
+        // upserted straight from the browser with the anon key. RLS is off on
+        // talent_profiles in the live database, so a candidate could post
+        // themselves a grade. Those columns are refused by the route now and
+        // set server side on the first write.
+        const profilePatch = {
           full_name: talentName,
           phone: talentOnboardingData.phone || null,
           country: talentOnboardingData.country || null,
-          address: null,
           gender: talentOnboardingData.gender || null,
           level: talentOnboardingData.primaryRole || null,
           availability_hours: Number(talentOnboardingData.availability) || null,
           salary_max: resolvedSalaryUsd || null,
           salary_expectation: resolvedSalaryUsd || null,
           experience_years: Number(talentOnboardingData.yearsExperience) || null,
-          vetting_stage: 'Application Screening',
-          vetting_status: 'Applied',
-          grade: 'Ungraded',
-          status: 'active',
           timezone: talentOnboardingData.timezone || null,
           bio: packedBio,
           avatar_url: talentOnboardingData.profilePhotoUrl || null
         };
 
-        const { error: spErr } = await supabase
-          .from('talent_profiles')
-          .upsert(supabasePayload, { onConflict: 'id' });
+        // Skills go with the profile. The route resolves each name to a row
+        // in the skills table, which has a unique constraint on name, so the
+        // old id-based upsert could create the same skill twice.
+        const skillClaims = skillsList.map((skillName: string) => ({
+          name: skillName,
+          level: talentOnboardingData.skillLevels?.[skillName]
+            ? String(talentOnboardingData.skillLevels[skillName]).toLowerCase()
+            : 'intermediate'
+        }));
 
-        if (spErr) {
-          console.error('[Onboarding] Supabase talent_profiles upsert error:', spErr);
-          throw spErr;
-        } else {
-          console.log('[Onboarding] Saved talent profile to Supabase successfully.');
+        const profileRes = await apiFetch('/api/profile/talent', {
+          method: 'PATCH',
+          body: JSON.stringify({ patch: profilePatch, skills: skillClaims })
+        });
+
+        if (!profileRes.ok) {
+          const detail = await profileRes.json().catch(() => ({}));
+          console.error('[Onboarding] profile save failed:', detail?.error, detail?.problems);
+          throw new Error(detail?.error || 'Your profile could not be saved.');
         }
 
-        // ── 2. Upsert skills into talent_skills table ──
-        if (skillsList.length > 0) {
-          // First ensure skills exist in the skills table
-          for (const skillName of skillsList) {
-            const skillId = `skl_${skillName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
-            await supabase.from('skills').upsert({ id: skillId, name: skillName }, { onConflict: 'id' });
-            await supabase.from('talent_skills').upsert(
-              { id: `ts_${authUserId}_${skillId}`, talent_id: authUserId, skill_id: skillId, level: talentOnboardingData.skillLevels?.[skillName] ? String(talentOnboardingData.skillLevels[skillName]).toLowerCase() : 'intermediate' },
-              { onConflict: 'id' }
-            );
-          }
+        // ── 3. Mark the account active ──
+        // Server-side: UPDATE on public.users is revoked from authenticated,
+        // so the browser cannot set status. The route activates the caller
+        // only, taking the id from the verified token.
+        const activateRes = await apiFetch('/api/account/activate', { method: 'POST' });
+        if (!activateRes.ok) {
+          const detail = await activateRes.json().catch(() => ({}));
+          console.error('[Onboarding] account activation failed:', detail?.error);
+          triggerBanner(
+            'Your profile saved, but the account could not be activated. Contact support.',
+            'error'
+          );
         }
-
-        // ── 3. Update public.users with verified name ──
-        await supabase.from('users').update({ status: 'active' }).eq('id', authUserId);
       }
 
       // ── 4. Sync to local db.json for offline/admin panel fallback ──
-      const res = await fetch('/api/db');
+      const res = await apiFetch('/api/db');
       if (res.ok) {
         const dbData = await res.json();
         if (!dbData.talents) dbData.talents = [];
@@ -1501,7 +1501,7 @@ export default function KongilaWeb() {
           vettingStatus: 'Applied' as any,
           vettingScores: baseTalent.vettingScores || {
             technical: 0, behavioral: 0, personality: 0,
-            remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0
+            remoteReadiness: 0, workSimulation: 0
           },
           grade: 'Ungraded' as any,
           tags: primarySkills,
@@ -1553,32 +1553,12 @@ export default function KongilaWeb() {
           dbData.talents.push(updatedTalent);
         }
 
-        dbData.notifications.push({
-          id: `notif_${Date.now()}`,
-          userId: updatedTalent.id,
-          title: 'Application Intake Submitted',
-          message: 'Your talent application screening review is running. Complete your assessment.',
-          read: false,
-          createdAt: new Date().toISOString()
-        });
-
-        dbData.auditLogs.push({
-          id: `audit_${Date.now()}`,
-          actor: updatedTalent.name,
-          action: 'Progressive Onboarding Completed',
-          details: `Role: ${updatedTalent.title}. Setup: ${talentOnboardingData.workSetup}`,
-          timestamp: new Date().toISOString()
-        });
-
-        dbData.agentLogs.push({
-          id: `alog_talent_${Date.now()}`,
-          agentName: 'Compliance Agent',
-          message: `Screening pipeline initiated for ${updatedTalent.name}. KYC & equipment logs verified.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'info'
-        });
-
-        await saveToDb(dbData);
+        // The three pushes and the whole-database save that used to be
+        // here are gone. They posted the browser's copy of talents,
+        // clientRequests, matches and contracts back through /api/db, which
+        // upserts every one of those tables, so a stale snapshot overwrote
+        // whatever the profile route had just written correctly. The audit
+        // entry is written server side by that route.
         setTalents(dbData.talents);
       }
     } catch (e) {
@@ -1623,136 +1603,51 @@ export default function KongilaWeb() {
               } 
             : t
         );
-        const updatedDb = {
-          talents: updatedTalents,
-          clientRequests: requests,
-          matches: matches,
-          tasks: [],
-          contracts: contracts,
-          notifications: [
-            {
-              id: `notif_${Date.now()}`,
-              userId: currentTalent.id,
-              title: 'Assessment Cleared',
-              message: 'Your specialized assessment challenge score computed at 92%! Interview booked.',
-              read: false,
-              createdAt: new Date().toISOString()
-            }
-          ],
-          auditLogs: [
-            {
-              id: `audit_${Date.now()}`,
-              actor: currentTalent.name,
-              action: 'Specialized Challenge Submitted',
-              details: 'Scored 92/100 in structural operational optimization sandbox.',
-              timestamp: new Date().toISOString()
-            }
-          ],
-          agentLogs: [
-            {
-              id: `alog_v_${Date.now()}`,
-              agentName: 'Vetting Agent',
-              message: `Specialized assessment compiled for ${currentTalent.name}: 92% efficiency. Escalated to scheduling.`,
-              timestamp: new Date().toLocaleTimeString(),
-              type: 'success'
-            }
-          ]
-        };
+        // The whole-database save that used to follow is gone. It posted
+        // the browser's talents, clientRequests, matches and contracts back
+        // through /api/db, which upserts all of them, so a stale snapshot
+        // could overwrite rows the server had just written.
         setTalents(updatedTalents);
-        await saveToDb(updatedDb);
       }
     }, 1500);
   };
 
-  // Trigger Mock Fully Vetted state directly for local evaluation
-  const handleSimulateFullVetting = async () => {
-    const currentTalent = talents.find(t => t.email.toLowerCase() === currentUser?.email?.toLowerCase());
-    if (!currentTalent) return;
-
-    setLoading(true);
-    const updatedTalents = talents.map(t => 
-      t.id === currentTalent.id 
-        ? { 
-            ...t, 
-            vettingStage: 'Final Review' as const, 
-            vettingStatus: 'Vetted' as const,
-            vettingScores: {
-              technical: 94,
-              behavioral: 88,
-              personality: 90,
-              remoteReadiness: 95,
-              workSimulation: 92,
-              communication: 90,
-              experience: 85
-            },
-            grade: 'A+' as const,
-            tags: ['Vetted Professional', 'High speed Fiber', 'Independent Worker']
-          } 
-        : t
-    );
-
-    const updatedDb = {
-      talents: updatedTalents,
-      clientRequests: requests,
-      matches: matches,
-      tasks: [],
-      contracts: contracts,
-      notifications: [
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentTalent.id,
-          title: 'Vetting Milestone Cleared',
-          message: 'Congratulations! Your profile is verified as fully VETTED & DEPLOYABLE globally.',
-          read: false,
-          createdAt: new Date().toISOString()
-        }
-      ],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: 'Super Admin Grader',
-          action: 'Verify Talent Vetting',
-          details: `Set profile status of ${currentTalent.name} to Vetted (Grade: A+).`,
-          timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_ad_${Date.now()}`,
-          agentName: 'Vetting Agent',
-          message: `Composite vetting computed: A+ grade for ${currentTalent.name}. Profile released to radar matches.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        }
-      ]
-    };
-
-    setTalents(updatedTalents);
-    await saveToDb(updatedDb);
-    setLoading(false);
-    triggerBanner('Profile verified as fully VETTED! Access to full portal unlocked.', 'success');
-  };
 
   // Schedule Interview
   const handleScheduleMeeting = async () => {
     if (!selectedTalent || !selectedRequest || !currentUser) return;
     
-    // Insert into Supabase interviews table
-    const { data: insertedData, error: insertError } = await supabase.from('interviews').insert({
-      request_id: selectedRequest.id,
-      talent_id: selectedTalent.id,
-      client_id: currentUser.id,
-      title: `${selectedRequest.roleTitle || selectedRequest.serviceType} - Interview with ${selectedTalent.name}`,
-      scheduled_time: new Date(`${meetingDate}T${meetingTime}`).toISOString(),
-      duration_minutes: 60,
-      status: 'pending_confirmation'
+    // Through the server. A browser insert could not check whether either
+    // party was already booked, could not email the candidate, and wrote
+    // nothing to the audit log.
+    const clientZone = viewerTimeZone();
+    const ivResponse = await apiFetch('/api/interviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: selectedRequest.id,
+        talentId: selectedTalent.id,
+        talentName: selectedTalent.name,
+        clientName: currentUser.name,
+        title: `${selectedRequest.roleTitle || selectedRequest.serviceType} - Interview with ${selectedTalent.name}`,
+        date: meetingDate,
+        time: meetingTime,
+        timezone: clientZone,
+        clientTimezone: clientZone,
+        talentTimezone: (selectedTalent as any)?.timezone || null,
+        durationMinutes: 60
+      })
     });
 
-    if (insertError) {
-      console.error('Failed to insert interview', insertError);
-      triggerBanner('Failed to schedule interview.', 'error');
+    const ivPayload = await ivResponse.json().catch(() => ({}));
+    if (!ivResponse.ok) {
+      console.error('Failed to schedule interview', ivPayload?.error);
+      // Says why. A clash or a past slot is something the client can act on,
+      // and "Failed to schedule interview." told them nothing.
+      triggerBanner(ivPayload?.error || 'Failed to schedule interview.', 'error');
       return;
     }
+    const insertedData = ivPayload.interview;
 
     // Still maintain the local 'matches' array update for the dashboard visual if needed, 
     // or just rely on the new UI reading directly from Supabase.
@@ -1764,42 +1659,12 @@ export default function KongilaWeb() {
       setMatches(updatedMatches);
     }
 
-    // Add alert log
-    const updatedDb = {
-      talents,
-      clientRequests: requests,
-      matches: requestMatch ? matches.map(m => m.id === requestMatch.id ? { ...m, status: 'Interview Scheduled' as const } : m) : matches,
-      tasks: [],
-      contracts,
-      notifications: [],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: currentUser ? currentUser.name : 'Guest Client',
-          action: 'Schedule Interview',
-          details: `Booked video interview with ${selectedTalent.name} on ${meetingDate} at ${meetingTime}`,
-          timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_${Date.now()}`,
-          agentName: 'Workflow Agent',
-          message: `Transitioned Match ${requestMatch?.id || 'unknown'} status to 'Interview Scheduled'. Syncing calendars.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'info'
-        },
-        {
-          id: `alog_sms_${Date.now()}`,
-          agentName: 'Communication Agent',
-          message: `WhatsApp calendar link dispatched to talent ${selectedTalent.name}`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        }
-      ]
-    };
-
-    await saveToDb(updatedDb);
+    // The audit and agent-log entries that used to be assembled here and
+    // posted through /api/db are gone. That payload also carried matches
+    // with status 'Interview Scheduled', which matches_status_check does
+    // not allow, so the upsert failed while the rest of the payload still
+    // overwrote talents, clientRequests and contracts from browser state.
+    // /api/interviews writes the audit entry itself.
     setShowCalendar(false);
     triggerBanner(`Interview requested with ${selectedTalent.name}! Awaiting their confirmation.`, 'success');
   };
@@ -1808,19 +1673,21 @@ export default function KongilaWeb() {
   const handleExtendOffer = async (talent: TalentProfile) => {
     if (!selectedRequest || !currentUser) return;
 
-    // Insert Contract into Supabase
-    const { data: insertedContract, error: contractErr } = await supabase.from('contracts').insert({
-      client_id: currentUser.id,
-      talent_id: talent.id,
-      role_title: selectedRequest.roleDescription || selectedRequest.title || 'Role',
-      start_date: selectedRequest.startDate,
-      engagement_type: 'Full-time',
-      status: 'pending',
-      client_monthly_fee_usd: selectedRequest.budget || 0
-    }).select().single();
-
-    if (contractErr || !insertedContract) {
-      console.error('Failed to create contract', contractErr);
+    const contractResponse = await apiFetch('/api/contracts', {
+      method: 'POST',
+      body: JSON.stringify({
+        talentId: talent.id,
+        requestId: selectedRequest.id,
+        serviceType: selectedRequest.serviceType,
+        roleTitle: selectedRequest.roleDescription || selectedRequest.title || 'Role',
+        startDate: selectedRequest.startDate,
+        budget: selectedRequest.budget
+      })
+    });
+    const contractBody = await contractResponse.json().catch(() => ({}));
+    const insertedContract = contractBody.contract;
+    if (!contractResponse.ok || !insertedContract) {
+      console.error('Failed to create contract', contractBody.error);
       triggerBanner('Failed to generate contract.', 'error');
       return;
     }
@@ -1841,115 +1708,40 @@ export default function KongilaWeb() {
     setActiveNDA(ndaText);
     setSigningContractId(insertedContract.id);
 
-    const updatedDb = {
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      tasks: [],
-      contracts: contracts, // keeping local mock unchanged, handled directly by Supabase
-      notifications: [],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: currentUser.name,
-          action: 'Extend Job Offer',
-          details: `Extended EOR contract for ${talent.name} ($${selectedRequest.budget}/mo)`,
-          timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_${Date.now()}`,
-          agentName: 'Compliance Agent',
-          message: `Job offer generated for ${talent.name}. Contractor compliance package initiated.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'info'
-        }
-      ]
-    };
-
+    // Same again: this posted matches with status 'Offer Extended', which
+    // matches_status_check does not allow, alongside the browser's copy of
+    // talents, clientRequests and contracts. /api/contracts records the
+    // offer and the audit entry.
     setMatches(updatedMatches);
     setRequests(updatedRequests);
-    await saveToDb(updatedDb);
     setShowSignModal(true);
   };
 
-  const handleSignContract = async () => {
+  /**
+   * After the client has signed.
+   *
+   * This used to be the signing itself: it wrote the contract to "Signed"
+   * from the browser with no signature of any kind, credited the candidate
+   * in the audit log for the client's action, and invented an onboarding
+   * task in a product Kongila is launching without. The signature is now
+   * recorded by /api/signatures, which hashes the document, takes the IP and
+   * user agent from the request and stamps the server's time. All that is
+   * left here is reflecting the result.
+   */
+  const handleSignContract = async (result?: any) => {
     if (!signingContractId) return;
 
-    // Sign contract
-    const updatedContracts = contracts.map(c => 
-      c.id === signingContractId ? { ...c, status: 'Signed' as const, signedAt: new Date().toISOString() } : c
+    const status = result?.status || 'talent_signed';
+    setContracts(prev => prev.map(c =>
+      c.id === signingContractId ? { ...c, status, signedAt: result?.signedAt || new Date().toISOString() } : c
+    ));
+
+    triggerBanner(
+      result?.bothParties
+        ? 'Contract signed by both parties.'
+        : 'Your signature is recorded. The contract is waiting for the other party.',
+      'success'
     );
-
-    const currentContract = contracts.find(c => c.id === signingContractId);
-    if (!currentContract) return;
-
-    // Set talent deployed
-    const updatedTalents = talents.map(t => 
-      t.id === currentContract.talentId ? { ...t, vettingStatus: 'Deployed' as const } : t
-    );
-
-    // Set request onboarding
-    const updatedRequests = requests.map(r => 
-      r.id === selectedRequest?.id ? { ...r, status: 'Onboarding' as const } : r
-    );
-
-    // Create general onboarding task in Remotan board
-    const welcomeTask = {
-      id: `task_onb_${Date.now()}`,
-      projectId: 'project_general',
-      projectName: 'General Onboarding',
-      title: 'Complete Onboarding Welcome Videos & Systems Setup',
-      description: 'Read the IT security handbook, complete portal onboarding details, and watch introducing media.',
-      assigneeId: currentContract.talentId,
-      assigneeName: currentContract.talentName,
-      status: 'In Progress',
-      priority: 'High',
-      dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      createdAt: new Date().toISOString()
-    };
-
-    const updatedDb = {
-      talents: updatedTalents,
-      clientRequests: updatedRequests,
-      matches,
-      tasks: [welcomeTask],
-      contracts: updatedContracts,
-      notifications: [],
-      auditLogs: [
-        {
-          id: `audit_${Date.now()}`,
-          actor: currentContract.talentName,
-          action: 'E-Sign NDA & Contract',
-          details: `Contract ${signingContractId} securely signed. Deploying workspace setup.`,
-          timestamp: new Date().toISOString()
-        }
-      ],
-      agentLogs: [
-        {
-          id: `alog_${Date.now()}`,
-          agentName: 'Compliance Agent',
-          message: `E-Signature verified for ${currentContract.talentName}. NDA locked and archived.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        },
-        {
-          id: `alog_task_${Date.now()}`,
-          agentName: 'Workflow Agent',
-          message: `Spawned general onboarding task board in Remotan for ${currentContract.talentName}.`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'success'
-        }
-      ]
-    };
-
-    setContracts(updatedContracts);
-    setTalents(updatedTalents);
-    setRequests(updatedRequests);
-    await saveToDb(updatedDb);
-    setShowSignModal(false);
-    triggerBanner(`Contract signed! Deployed onboarding task to Remotan Work OS.`, 'success');
   };
 
   const getMatchedTalentsForRequest = () => {
@@ -2006,111 +1798,78 @@ export default function KongilaWeb() {
         bio: nextProfile.bio || ''
       });
 
-      const supabasePayload = {
-        id: nextProfile.id,
-        user_id: nextProfile.id,
+      // vetting_stage, vetting_status and grade used to be sent from here
+      // too, so every profile save rewrote the judgement operations had made
+      // about this candidate from whatever the browser happened to be
+      // holding. They are not in the patch and the route refuses them.
+      const profilePatch = {
         full_name: nextProfile.name || null,
         phone: nextProfile.phone || null,
         country: nextProfile.country || null,
-        address: null,
         gender: nextProfile.gender || null,
         level: nextProfile.title || null,
         availability_hours: Number(nextProfile.availability) || null,
         salary_max: Number(nextProfile.salaryExpectationUsd) || null,
         salary_expectation: Number(nextProfile.salaryExpectationUsd) || null,
         experience_years: Number(nextProfile.experienceYears) || null,
-        vetting_stage: nextProfile.vettingStage || 'Application Screening',
-        vetting_status: nextProfile.vettingStatus || 'Applied',
-        grade: nextProfile.grade || 'Ungraded',
-        status: 'active',
         timezone: nextProfile.timezone || null,
         bio: packedBio,
         avatar_url: nextProfile.profilePhotoUrl || nextProfile.avatar || null
       };
 
-      const { error: spErr } = await supabase
-        .from('talent_profiles')
-        .upsert(supabasePayload, { onConflict: 'id' });
-        
-      if (spErr) {
-        throw spErr;
+      const response = await apiFetch('/api/profile/talent', {
+        method: 'PATCH',
+        body: JSON.stringify({ patch: profilePatch })
+      });
+
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || 'Your profile could not be saved.');
       }
-    } catch (e) {
-      console.error("Failed to persist profile update to Supabase", e);
+    } catch (e: any) {
+      console.error("Failed to persist profile update", e);
+      triggerBanner(e?.message || 'Your profile could not be saved.', 'error');
     }
   };
 
   const handleUpdateMatch = async (updatedMatch: any) => {
-    const updatedMatches = matches.map(m => m.id === updatedMatch.id ? updatedMatch : m);
-    setMatches(updatedMatches);
+    const previous = matches;
+    setMatches(matches.map(m => m.id === updatedMatch.id ? updatedMatch : m));
 
-    let updatedContracts = contracts;
-    let newContractToUpsert = null;
-
-    if (updatedMatch.status === 'Offer Accepted') {
-      const matchRequest = requests.find(r => r.id === updatedMatch.requestId);
-      const newContract = {
-        id: `KNG-CON-${Date.now().toString().slice(-4)}`,
-        matchId: updatedMatch.id,
-        clientId: matchRequest?.clientId || 'usr_horizon',
-        clientName: matchRequest?.clientName || 'Horizon Fintech',
-        talentId: updatedMatch.talentId,
-        talentName: currentUser?.name || 'Chidi Anya',
-        role: matchRequest?.roleDescription || 'Senior Engineer',
-        salary: matchRequest?.budget || 5000,
-        startDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        status: 'Signed' as const,
-        signedAt: new Date().toISOString(),
-        rateType: 'Monthly',
-        rateAmount: matchRequest?.budget || 5000,
-        totalEarned: 0,
-        invoicedBalance: 0,
-        nextPayout: matchRequest?.budget || 5000,
-        nextPayoutDate: 'End of Month',
-        engagementModel: matchRequest?.commitmentLevel || 'Remote / Full-time Retainer',
-        rating: 5,
-        qualityOfWork: 5.0
-      } as any;
-      updatedContracts = [...contracts, newContract];
-      setContracts(updatedContracts);
-      newContractToUpsert = newContract;
-    }
-
+    // Accepting an offer used to mint a contract here, in the browser: a
+    // KNG-CON id from a timestamp, a client id defaulting to 'usr_horizon',
+    // a talent name defaulting to 'Chidi Anya', a salary taken from the
+    // request budget, and status 'signed', which is not a value
+    // contracts_status_check allows. The upsert was rejected every time and
+    // the error was logged, so the screen showed a signed contract that did
+    // not exist. A contract is drawn up by operations from the agreed terms
+    // and signed through the signature flow.
     try {
-      // Upsert match directly to Supabase
-      const matchPayload = {
-        id: updatedMatch.id,
-        request_id: updatedMatch.requestId,
-        talent_id: updatedMatch.talentId,
-        status: updatedMatch.status?.toLowerCase() || 'proposed',
-        score: updatedMatch.score || 0,
-        breakdown: updatedMatch.breakdown || null
-      };
+      const response = await apiFetch('/api/matches', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          matchId: updatedMatch.id,
+          status: updatedMatch.status === 'Offer Accepted' ? 'accepted' : updatedMatch.status,
+          rejectionReason: updatedMatch.clientRejectionReason || updatedMatch.rejectionReason
+        })
+      });
 
-      const { error: matchErr } = await supabase.from('matches').upsert(matchPayload);
-      if (matchErr) throw matchErr;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'That decision was not saved.');
 
-      // Upsert contract directly to Supabase if newly created
-      if (newContractToUpsert) {
-        const contractPayload = {
-          id: newContractToUpsert.id,
-          talent_id: newContractToUpsert.talentId,
-          client_id: newContractToUpsert.clientId,
-          service_type: newContractToUpsert.role,
-          rate_type: newContractToUpsert.rateType || 'Monthly',
-          rate_amount: newContractToUpsert.rateAmount || newContractToUpsert.salary || 0,
-          start_date: newContractToUpsert.startDate,
-          end_date: newContractToUpsert.endDate,
-          status: 'signed',
-          signed_at: newContractToUpsert.signedAt || null,
-          client_monthly_fee_usd: newContractToUpsert.clientMonthlyFeeUsd || 0,
-          performance_score: newContractToUpsert.performanceScore || 0
-        };
-        const { error: contractErr } = await supabase.from('contracts').upsert(contractPayload);
-        if (contractErr) throw contractErr;
+      if (payload?.match) {
+        setMatches((prev: any[]) => prev.map((m: any) => m.id === updatedMatch.id
+          ? { ...m, status: payload.match.status, clientRejectionReason: payload.match.clientRejectionReason }
+          : m));
       }
-    } catch (e) {
+
+      if (updatedMatch.status === 'Offer Accepted') {
+        triggerBanner('Offer accepted. Operations will prepare the contract.', 'success');
+      }
+    } catch (e: any) {
       console.error("Failed to persist match update", e);
+      setMatches(previous);
+      triggerBanner(e?.message || 'That decision was not saved.', 'error');
     }
   };
 
@@ -3206,25 +2965,9 @@ export default function KongilaWeb() {
           }}>
             <SmartIntakeForm 
               onComplete={async (req) => {
-                const calculatedMatches = generateMatchesForRequest(req, talents);
+                // No matching here. The request goes to the admin matching
+                // queue, which scores it against the whole vetted pool.
                 setRequests([...requests, req]);
-                setMatches([...matches, ...calculatedMatches]);
-                
-                // Save matches to mock db for the matching engine
-                await fetch('/api/db', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    matches: [...matches, ...calculatedMatches]
-                  })
-                });
-
-                // Insert real audit log
-                await supabase.from('audit_logs').insert({
-                  actor: req.clientName || 'Guest Client',
-                  action: 'Intake Submitted',
-                  details: `Requested ${req.numberOfHires}x ${req.serviceType} role. Budget: $${req.budget}/mo`
-                });
 
                 setClientIntakeActive(false);
                 setAuthView(null);
@@ -4816,11 +4559,15 @@ export default function KongilaWeb() {
           <TalentDashboard
             currentUser={currentUser}
             talentProfile={getCurrentTalentProfile()}
+            supportTickets={supportTickets}
+            setSupportTickets={setSupportTickets}
             contracts={contracts}
             matches={matches}
             clientRequests={requests}
             allDocuments={documents}
             interviews={interviews}
+            offers={talentOffers}
+            onRespondToOffer={handleRespondToOffer}
             dashboardNotifications={notifications}
             setDashboardNotifications={setNotifications}
             assessments={assessments}
@@ -4837,35 +4584,35 @@ export default function KongilaWeb() {
               setDocuments(updatedDocs);
               
               try {
-                const docPayload = {
-                  id: updatedDoc.id,
-                  user_id: updatedDoc.userId || currentUser?.id,
-                  name: updatedDoc.name,
-                  file_name: updatedDoc.fileName || updatedDoc.name || null,
-                  type: updatedDoc.type || 'other',
-                  file_url: updatedDoc.fileUrl || null,
-                  file_size: updatedDoc.fileSize || null,
-                  file_size_bytes: updatedDoc.fileSizeBytes || 0,
-                  status: updatedDoc.status || 'uploaded',
-                  version_number: updatedDoc.versionNumber || 1,
-                  certification_name: updatedDoc.certificationName || null,
-                  issuing_body: updatedDoc.issuingBody || null,
-                  issue_date: updatedDoc.issueDate || null,
-                  expiry_date: updatedDoc.expiryDate || null,
-                  uploaded_at: updatedDoc.uploadedAt || new Date().toISOString(),
-                  updated_at: updatedDoc.updatedAt || new Date().toISOString(),
-                  is_mandatory: updatedDoc.isMandatory || false,
-                  is_hidden: updatedDoc.isHidden || false,
-                  template_id: updatedDoc.templateId || null,
-                  signature_data: updatedDoc.signatureData || null,
-                  signed_at: updatedDoc.signedAt || null,
-                  requires_re_review: updatedDoc.requiresReReview || false,
-                  description: updatedDoc.description || null
-                };
-                const { error } = await supabase.from('documents').upsert(docPayload);
-                if (error) throw error;
-              } catch (e) {
-                console.error("Failed to update document in Supabase", e);
+                // Through the server, which checks the document belongs to
+                // the caller. The browser upsert wrote the whole row,
+                // user_id and status included, to a table with RLS off.
+                const response = await apiFetch('/api/documents', {
+                  method: 'PATCH',
+                  body: JSON.stringify({
+                    docId: updatedDoc.id,
+                    updates: {
+                      name: updatedDoc.name,
+                      file_name: updatedDoc.fileName || updatedDoc.name || null,
+                      type: updatedDoc.type || undefined,
+                      file_url: updatedDoc.fileUrl || null,
+                      certification_name: updatedDoc.certificationName || null,
+                      issuing_body: updatedDoc.issuingBody || null,
+                      issue_date: updatedDoc.issueDate || null,
+                      expiry_date: updatedDoc.expiryDate || null,
+                      is_hidden: updatedDoc.isHidden || false,
+                      description: updatedDoc.description || null
+                    }
+                  })
+                });
+
+                if (!response.ok) {
+                  const detail = await response.json().catch(() => ({}));
+                  throw new Error(detail?.error || 'That document was not saved.');
+                }
+              } catch (e: any) {
+                console.error("Failed to update document", e);
+                triggerBanner(e?.message || "That document was not saved.", "error");
               }
             }}
             onSubmitAssessment={async (result: any) => {
@@ -4920,21 +4667,39 @@ export default function KongilaWeb() {
               }
 
               try {
-                // Upsert to talent_skill_assessments
-                const tsaPayload = {
-                  id: result.talentSkillAssessmentId,
-                  talent_id: profile?.id,
-                  assessment_id: result.assessmentId,
-                  status: 'submitted',
-                  score: result.autoScore,
-                  answers: result.answers || {},
-                  subjective_answers: result.subjectiveAnswers || {},
-                  submitted_at: result.submittedAt || new Date().toISOString()
-                };
-                const { error } = await supabase.from('talent_skill_assessments').upsert(tsaPayload);
-                if (error) throw error;
-              } catch (e) {
-                console.error("Failed to submit assessment to Supabase", e);
+                // Through the server. The browser marked its own paper and
+                // wrote the score into talent_skill_assessments, which has
+                // RLS off in the live database, so any score posted landed
+                // and the assessment could be retaken until it passed. Only
+                // the answers go up; the route scores them against the key
+                // and refuses a second submission.
+                const response = await apiFetch('/api/assessments/submit', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    talentSkillAssessmentId: result.talentSkillAssessmentId,
+                    assessmentId: result.assessmentId,
+                    answers: result.answers || {}
+                  })
+                });
+
+                if (!response.ok) {
+                  const detail = await response.json().catch(() => ({}));
+                  throw new Error(detail?.error || 'Your assessment was not submitted.');
+                }
+
+                // The stored score is the server's, not the one computed in
+                // the browser, so take it back from the response.
+                const saved = await response.json().catch(() => null);
+                if (saved && saved.autoScore !== undefined) {
+                  setTalentSkillAssessments((prev: any[]) => prev.map((tsa: any) =>
+                    tsa.id === result.talentSkillAssessmentId
+                      ? { ...tsa, status: 'submitted', score: saved.autoScore, submittedAt: saved.submittedAt }
+                      : tsa
+                  ));
+                }
+              } catch (e: any) {
+                console.error("Failed to submit assessment", e);
+                triggerBanner(e?.message || 'Your assessment was not submitted.', 'error');
               }
             }}
           />
@@ -4985,56 +4750,16 @@ export default function KongilaWeb() {
             setMessages={setMessages}
             setNotifications={setNotifications}
             setMatches={setMatches}
-            saveToDb={saveToDb}
             rehireRequests={rehireRequests}
             setRehireRequests={setRehireRequests}
+             supportTickets={supportTickets}
+             setSupportTickets={setSupportTickets}
             onAddRequest={async (newReq) => {
-              const calculatedMatches = generateMatchesForRequest(newReq, talents);
-              const updatedRequests = [...requests, newReq];
-              const updatedMatches = [...matches, ...calculatedMatches];
-              
-              setRequests(updatedRequests);
-              setMatches(updatedMatches);
+              // Matching is an admin step. See the note at the other intake.
+              // SmartIntakeForm has already received the server-confirmed row.
+              // Do not post a stale whole-database snapshot from the browser.
+              setRequests(prev => [newReq, ...prev.filter(r => r.id !== newReq.id)]);
               setSelectedRequest(newReq);
-
-              const updatedDb = {
-                talents,
-                clientRequests: updatedRequests,
-                matches: updatedMatches,
-                tasks: [],
-                contracts,
-                notifications: [
-                  {
-                    id: `notif_${Date.now()}`,
-                    userId: currentUser.id,
-                    title: 'New Service Request Created',
-                    message: `Created request matching your intake: ${newReq.roleDescription || newReq.title}. Scanning vetting databases.`,
-                    read: false,
-                    createdAt: new Date().toISOString()
-                  },
-                  ...notifications
-                ],
-                auditLogs: [
-                  {
-                    id: `audit_${Date.now()}`,
-                    actor: currentUser.name,
-                    action: 'Service Request Intake Completed',
-                    details: `Service Request generated: ${newReq.roleDescription || newReq.title}.`,
-                    timestamp: new Date().toISOString()
-                  }
-                ],
-                agentLogs: [
-                  {
-                    id: `alog_client_${Date.now()}`,
-                    agentName: 'Context Agent',
-                    message: `Talent vetting session initiated for role: ${newReq.roleDescription || newReq.title}.`,
-                    timestamp: new Date().toLocaleTimeString(),
-                    type: 'success'
-                  }
-                ]
-              };
-              
-              await saveToDb(updatedDb);
               triggerBanner('New Service Request created! Matchmaker engine initialized.', 'success');
             }}
             />

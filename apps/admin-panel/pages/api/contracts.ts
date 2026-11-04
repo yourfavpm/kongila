@@ -1,7 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, writeDbAsync } from '@kongila/database';
+import { readDbAsync, writeDbAsync, getRequestUser } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Admin portal route. A talent or client session is a valid session and
+  // still has no business here, so check the kind, not just that someone is
+  // signed in. This runs before any database read.
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  if (actor.kind !== 'admin') {
+    console.warn('[api/contracts] refused ' + actor.kind + ' ' + actor.userId);
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+  const auditActor = actor.email || actor.userId;
+
   const rawDb = await readDbAsync();
   const db = rawDb as any;
   if (!db.contracts) db.contracts = [];
@@ -23,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     db.auditLogs = [
       {
         id: `audit_${Date.now()}`,
-        actor: 'Admin Operator',
+        actor: auditActor,
         action: 'Draft Contract',
         details: `Created contract for ${newContract.talentName} with ${newContract.clientName} as ${newContract.role}.`,
         timestamp: new Date().toISOString(),
@@ -63,7 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     db.auditLogs = [
       {
         id: `audit_${Date.now()}`,
-        actor: 'Admin Operator',
+        actor: auditActor,
         action: updates.status === 'Signed' ? 'Sign Contract' : 'Update Contract',
         details: `Contract ${id} updated. Status: ${updated.status}.`,
         timestamp: new Date().toISOString(),

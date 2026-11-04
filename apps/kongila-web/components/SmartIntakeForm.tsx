@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
@@ -146,28 +147,28 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           finalUserId = authRes.user?.id || crypto.randomUUID();
           finalClientName = `${authData.fullName} (${authData.companyName})`;
 
-          // Create public.users
-          const { error: usersErr } = await supabase.from('users').upsert({
-            id: finalUserId, email: authData.businessEmail, password_hash: 'auth_managed', role: 'client', status: 'active', email_verified: false
+          // Users, organisation and client profile are created server-side in
+          // one call. The browser cannot write public.users: UPDATE is revoked
+          // from authenticated, so the role column is out of reach. Doing all
+          // three together also means a failure partway through no longer
+          // leaves an auth account with no profile and no way to retry.
+          const provisionRes = await apiFetch('/api/account/provision', {
+            method: 'POST',
+            body: JSON.stringify({
+              role: 'client',
+              name: authData.fullName,
+              email: authData.businessEmail,
+              companyName: authData.companyName,
+              position: authData.jobTitle,
+              phone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null,
+              contactEmail: authData.businessEmail,
+              contactPhone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null
+            })
           });
-          if (usersErr) throw new Error(`Users DB Error: ${usersErr.message}`);
-
-          // Create org
-          const orgId = crypto.randomUUID();
-          const { error: orgErr } = await supabase.from('organizations').upsert({
-            id: orgId, 
-            name: authData.companyName, 
-            created_by: finalUserId,
-            contact_email: authData.businessEmail,
-            contact_phone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null
-          });
-          if (orgErr) throw new Error(`Org DB Error: ${orgErr.message}`);
-
-          // Create client profile
-          const { error: cpErr } = await supabase.from('client_profiles').upsert({
-            id: crypto.randomUUID(), user_id: finalUserId, organization_id: orgId, position: authData.jobTitle, phone: authData.phone ? `${authData.phoneCode} ${authData.phone}` : null
-          });
-          if (cpErr) throw new Error(`Client Profile DB Error: ${cpErr.message}`);
+          const provision = await provisionRes.json();
+          if (!provisionRes.ok || !provision?.ok) {
+            throw new Error(provision?.error || 'Could not finish creating your account.');
+          }
         } else {
           // Login Flow
           const { data: loginRes, error: loginErr } = await supabase.auth.signInWithPassword({
@@ -184,7 +185,17 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       const randomChars = Math.floor(1000 + Math.random() * 9000);
       const refNumber = `KNG-REQ-${dateStr}-${randomChars}`;
 
+      // Everything the form collected, then the named mappings on top.
+      //
+      // This used to be an explicit field list, and fifteen answers the client
+      // had typed were thrown away on submit: roleTitle, seniorityLevel,
+      // mustHaveQualifications, coverageType, teamDescription,
+      // supervisionLevel, reportingStructure, projectName, projectDeadline,
+      // estimatedScope, partTimeHours, durationMonths, urgencyLevel,
+      // roleCriticality and additionalNotes. The payload column is jsonb, so
+      // there was never a reason to drop them.
       const payload: ServiceRequest = {
+        ...(formData as any),
         id: crypto.randomUUID(),
         referenceNumber: refNumber,
         clientId: finalUserId,
@@ -194,7 +205,16 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         createdAt: new Date().toISOString(),
 
         // Field mappings
-        roleDescription: formData.roleDescription || formData.description || (formData as any).projectDescription || '',
+        // teamDescription and projectName were not in this chain, so Outsource
+        // and Managed requests reached the admin with an empty role and the
+        // board fell back to showing the service type as the title.
+        roleDescription: formData.roleDescription
+          || (formData as any).roleTitle
+          || (formData as any).teamDescription
+          || (formData as any).projectDescription
+          || (formData as any).projectName
+          || formData.description
+          || '',
         requiredSkills: formData.requiredSkills || [],
         duration: formData.duration || (formData as any).durationType || 'Flexible',
         commitmentLevel: formData.commitmentLevel || (formData as any).engagementType || 'Full-Time',
@@ -203,6 +223,11 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         startDate: formData.startDate || new Date().toISOString(),
         budget: formData.budgetMinUsd || 0,
         priority: (formData.priority || 'Medium') as any,
+
+        // The admin board's Urgent filter and ASAP sort read this. Intake
+        // collected urgencyLevel and never set urgency, so the board had
+        // nothing to read and readDbAsync invented a value instead.
+        urgency: (formData as any).urgencyLevel || (formData as any).urgency || 'Standard',
 
         // Pass through remaining optional fields from formData
         currency: formData.currency,
@@ -213,16 +238,19 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         description: (formData as any).description,
       };
 
-      const { error: dbErr } = await supabase.from('talent_requests').insert([{
-        client_id: finalUserId,
-        service_type: formData.serviceType,
-        payload: payload
-      }]);
-      
-      if (dbErr) throw dbErr;
+      // Business data is persisted by the authenticated server API. The
+      // browser must not write directly to Supabase tables.
+      const requestRes = await apiFetch('/api/requests', {
+        method: 'POST',
+        body: JSON.stringify({ request: payload })
+      });
+      const requestBody = await requestRes.json().catch(() => ({}));
+      if (!requestRes.ok || !requestBody?.request) {
+        throw new Error(requestBody?.error || 'Could not save your request.');
+      }
 
       sessionStorage.removeItem('kongila_intake_draft');
-      onComplete(payload);
+      onComplete(requestBody.request);
 
     } catch (err: any) {
       setErrorMsg(err.message);

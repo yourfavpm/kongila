@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import React, { useState } from 'react';
 import { GlassCard, Chip } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
@@ -8,7 +9,6 @@ export default function ContractsManager({
   talents,
   organizations,
   requests,
-  saveToDb,
   auditLogs,
   setContracts,
   setContractTemplates,
@@ -48,33 +48,58 @@ export default function ContractsManager({
   const handleUpdateContractStatus = async (contractId: string, newStatus: string) => {
     if (saving) return;
     setSaving(true);
-    const updated = contracts.map((c: any) => c.id === contractId ? { ...c, status: newStatus } : c);
-    
-    const newLog = {
-      id: `audit_${Date.now()}`, actor: 'Admin', action: 'Update Contract Status',
-      details: `Updated contract ${contractId} to ${newStatus}`, timestamp: new Date().toISOString()
-    };
+    // The local array rewrite and the whole-database save that used to be
+    // here are gone. They posted every contract on screen through /api/db,
+    // which upserts all of them, and wrote statuses ('Active', 'Signed')
+    // that contracts_status_check does not allow, so Postgres refused them
+    // while the rest of the payload still overwrote good rows. The audit
+    // entry was inserted the same way with actor hardcoded to 'Admin'.
 
-    setContracts(updated);
-    setAuditLogs([newLog, ...auditLogs]);
-    if (selectedContract && selectedContract.id === contractId) setSelectedContract({ ...selectedContract, status: newStatus });
-
-    await saveToDb({ contracts: updated, auditLogs: [newLog, ...auditLogs] });
-
-    if (newStatus === 'Active') {
+    // Anything that is not an activation goes through the status route,
+    // which checks the move is legal and writes the audit entry.
+    if (newStatus !== 'Active' && newStatus !== 'Signed') {
       try {
-        await fetch('/api/workflows', {
+        const res = await apiFetch('/api/contracts/status', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'trigger',
-            workflow_type: 'talent_onboarding',
-            trigger_event: 'contract_activation',
-            trigger_entity_id: contractId
-          })
+          body: JSON.stringify({ action: 'status', contractId, status: newStatus })
         });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(result?.error || 'The contract status did not save.');
+          setSaving(false);
+          return;
+        }
+        setContracts(contracts.map((c: any) =>
+          c.id === contractId ? { ...c, status: result.status } : c));
+        if (selectedContract && selectedContract.id === contractId) {
+          setSelectedContract({ ...selectedContract, status: result.status });
+        }
+      } catch (e: any) {
+        console.error('Failed to update contract status', e);
+        alert(e?.message || 'The contract status did not save.');
+      }
+      setSaving(false);
+      return;
+    }
+
+    if (newStatus === 'Active' || newStatus === 'Signed') {
+      // This used to trigger the mock onboarding workflow, which is hardcoded
+      // to fail at step three. The real effect of signing is that the request
+      // moves to Onboarding, which is what makes it count as Hired.
+      try {
+        const res = await apiFetch('/api/contracts/sign', {
+          method: 'POST',
+          body: JSON.stringify({ contractId, activate: newStatus === 'Active' })
+        });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok || !result?.ok) {
+          alert(result?.error || 'The contract status did not save.');
+        } else if (result.warnings?.length) {
+          alert(result.warnings.join('\n'));
+        }
       } catch (e) {
-        console.error('Failed to trigger workflow', e);
+        console.error('Failed to record contract signature', e);
+        alert('The contract status did not save. Check the console.');
       }
     }
 
@@ -85,29 +110,37 @@ export default function ContractsManager({
     if (!voidReason || saving) return;
     setSaving(true);
     
-    const updated = contracts.map((c: any) => c.id === selectedContract.id ? { ...c, status: 'Voided', voidReason } : c);
-    
-    // Find linked service request and revert to Candidates Ready
-    let updatedRequests = requests;
-    if (selectedContract.matchId) {
-      // Find match to get requestId
-      const targetMatch = (await fetch('/api/db').then(r => r.json())).matches?.find((m: any) => m.id === selectedContract.matchId);
-      if (targetMatch && targetMatch.requestId) {
-        updatedRequests = requests.map((r: any) => r.id === targetMatch.requestId ? { ...r, status: 'Candidates Ready' } : r);
+    // Through the server. 'Voided' is not a value contracts_status_check
+    // allows, so this never saved; the route maps it to 'terminated' and
+    // reopens the request behind the contract, which the browser used to do
+    // by rewriting the whole clientRequests array.
+    try {
+      const res = await apiFetch('/api/contracts/status', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'status',
+          contractId: selectedContract.id,
+          status: 'Voided',
+          reason: voidReason
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'The contract was not voided.');
+        setSaving(false);
+        return;
       }
+
+      setContracts(contracts.map((c: any) =>
+        c.id === selectedContract.id ? { ...c, status: result.status, voidReason } : c));
+      setSelectedContract({ ...selectedContract, status: result.status, voidReason });
+      setShowVoidModal(false);
+      if (result.warnings?.length) alert(result.warnings.join('\n'));
+    } catch (e: any) {
+      console.error('Failed to void contract', e);
+      alert(e?.message || 'The contract was not voided.');
     }
 
-    const newLog = {
-      id: `audit_${Date.now()}`, actor: 'Admin', action: 'Void Contract',
-      details: `Voided contract ${selectedContract.id}. Reason: ${voidReason}`, timestamp: new Date().toISOString()
-    };
-
-    setContracts(updated);
-    setAuditLogs([newLog, ...auditLogs]);
-    setSelectedContract({ ...selectedContract, status: 'Voided', voidReason });
-    setShowVoidModal(false);
-
-    await saveToDb({ contracts: updated, clientRequests: updatedRequests, auditLogs: [newLog, ...auditLogs] });
     setSaving(false);
     setVoidReason('');
   };
@@ -115,25 +148,65 @@ export default function ContractsManager({
   const handleCreateContract = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    const newContract = {
-      ...contractForm,
-      id: `contract_${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      matchId: '' // normally mapped
-    };
-    const updated = [newContract, ...contracts];
-    setContracts(updated);
-    setShowContractModal(false);
-    await saveToDb({ contracts: updated });
+    // Through the server. This built a row in the browser with
+    // status 'Draft', which contracts_status_check does not allow, and
+    // posted every contract on screen through /api/db. The form also picks
+    // the client from the organisations list, and contracts.client_id is a
+    // foreign key to users; the route resolves one to the other.
+    try {
+      const res = await apiFetch('/api/contracts/status', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create',
+          talentId: contractForm.talentId,
+          clientId: contractForm.clientId,
+          serviceType: contractForm.role,
+          rateType: contractForm.rateType,
+          rateAmount: contractForm.rateAmount,
+          startDate: contractForm.startDate || undefined,
+          endDate: contractForm.endDate || undefined,
+          engagementModel: contractForm.engagementModel,
+          currency: contractForm.currency,
+          templateId: contractForm.templateId || undefined
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That contract was not created.');
+        setSaving(false);
+        return;
+      }
+      setContracts([result, ...contracts]);
+      setShowContractModal(false);
+    } catch (e: any) {
+      console.error('Failed to create contract', e);
+      alert(e?.message || 'That contract was not created.');
+    }
+
     setSaving(false);
   };
 
   const handleSendReminder = async (contractId: string) => {
-    alert("Reminder sent to parties via Email & In-App Notification.");
-    // In real app, this updates reminderCount and lastReminderSentAt
-    const updated = contracts.map((c: any) => c.id === contractId ? { ...c, reminderCount: (c.reminderCount || 0) + 1, lastReminderSentAt: new Date().toISOString() } : c);
-    setContracts(updated);
-    await saveToDb({ contracts: updated });
+    // This used to alert "Reminder sent to parties via Email & In-App
+    // Notification" and then increment a counter in browser state. Nothing
+    // was sent. Nothing tried.
+    try {
+      const res = await apiFetch('/api/contracts/status', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'remind', contractId })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'The reminder was not sent.');
+        return;
+      }
+      alert(result.reminded > 0
+        ? `Reminder sent to ${result.reminded} ${result.reminded === 1 ? 'party' : 'parties'}.`
+        : 'Nobody was reminded. ' + (result.warnings || []).join(' '));
+    } catch (e: any) {
+      console.error('Failed to send reminder', e);
+      alert(e?.message || 'The reminder was not sent.');
+    }
   };
 
   // ─── TEMPLATES LOGIC ────────────────────────────────────────────────────────
@@ -153,35 +226,42 @@ export default function ContractsManager({
     }
 
     setSaving(true);
-    const isNew = !templateForm.id;
-    let newTemplate: any;
-    let updated: any;
 
-    if (isNew) {
-      newTemplate = { ...templateForm, id: `tpl_${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), version: 1 };
-      updated = [newTemplate, ...contractTemplates];
-    } else {
-      // If publishing an existing draft, bump version if needed
-      const old = contractTemplates.find((t: any) => t.id === templateForm.id);
-      const isPublishingNewVersion = old.status === 'published' && templateForm.body !== old.body;
-      
-      newTemplate = { 
-        ...templateForm, 
-        updatedAt: new Date().toISOString(),
-        version: isPublishingNewVersion ? old.version + 1 : old.version 
-      };
-      updated = contractTemplates.map((t: any) => t.id === templateForm.id ? newTemplate : t);
+    // Through the server. The editor used to post a contractTemplates array
+    // through /api/db, which has no branch for that key, so every save was
+    // parsed and dropped. There was no table to put them in either; the
+    // 2026-11-04b migration adds one. The version bump is decided server
+    // side now, not from the browser's copy of the old row.
+    try {
+      const res = await apiFetch('/api/contracts/templates', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: templateForm.id || undefined,
+          name: templateForm.name,
+          serviceType: (templateForm as any).serviceType || undefined,
+          body: templateForm.body,
+          status: templateForm.status
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That template was not saved.');
+        setSaving(false);
+        return;
+      }
+
+      const saved = result.template;
+      const updated = templateForm.id
+        ? contractTemplates.map((t: any) => t.id === templateForm.id ? { ...t, ...saved } : t)
+        : [saved, ...contractTemplates];
+
+      setContractTemplates(updated);
+      setShowTemplateModal(false);
+    } catch (e: any) {
+      console.error('Failed to save template', e);
+      alert(e?.message || 'That template was not saved.');
     }
 
-    const newLog = {
-      id: `audit_${Date.now()}`, actor: 'Admin', action: isNew ? 'Create Template' : 'Update Template',
-      details: `${newTemplate.name} (v${newTemplate.version}) saved as ${newTemplate.status}`, timestamp: new Date().toISOString()
-    };
-
-    setContractTemplates(updated);
-    setAuditLogs([newLog, ...auditLogs]);
-    setShowTemplateModal(false);
-    await saveToDb({ contractTemplates: updated, auditLogs: [newLog, ...auditLogs] });
     setSaving(false);
   };
 

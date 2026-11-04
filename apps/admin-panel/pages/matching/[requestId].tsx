@@ -1,10 +1,11 @@
+import { apiFetch } from '../../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
-import { normalizeRequestStatus } from '@kongila/workflows';
-import { supabase } from '../../lib/supabaseClient';
+import { coerceRequestStatus } from '@kongila/workflows';
+import { calculateMatchScore } from '@kongila/matching-engine';
 import { useToast } from '@kongila/ui';
 
 // ─── Talent Profile Modal ──────────────────────────────────────────────────────
@@ -215,24 +216,30 @@ export default function MatchingEngine() {
     if (!requestId) return;
     const fetchData = async () => {
       try {
-        const requestPromise = supabase
-          .from('talent_requests')
-          .select('payload')
-          .eq('payload->>id', requestId as string)
-          .maybeSingle();
+        // The request comes from /api/db, which reads talent_requests
+        // server side and flattens the payload. Reading the table
+        // directly with the anon key is what RLS on it has to allow.
+        const db = await apiFetch('/api/db').then(res => res.json());
 
-        const dbPromise = fetch('/api/db').then(res => res.json());
-
-        const [{ data: requestData }, db] = await Promise.all([requestPromise, dbPromise]);
-
-        const req = requestData?.payload;
-        if (req) setRequest({ ...req, status: normalizeRequestStatus(req.status) });
-
-        // Only load deployable talent (A or A+ graded, and Vetted)
-        const allTalents = (db.talents || []).filter((t: any) =>
-          (t.vettingStage === 'Vetted & Available') ||
-          (t.vettingStatus === 'Vetted' && (t.grade === 'A' || t.grade === 'A+'))
+        const req = (db.clientRequests || []).find(
+          (r: any) => String(r.id) === String(requestId) || String(r.rowId) === String(requestId)
         );
+        if (req) setRequest({ ...req, status: coerceRequestStatus(req.status) });
+
+        // A and A+ are the deployable grades. B is the trainable pool the
+        // scope describes: it is scored and shown here so an operator can
+        // consider it, but automatic matching still leaves it out and
+        // submitting one needs an override reason.
+        //
+        // A candidate flagged for re-review has changed something material
+        // since being vetted, so they are left out entirely until an operator
+        // has looked again.
+        const allTalents = (db.talents || []).filter((t: any) => {
+          if (t.requiresReReview) return false;
+          if (t.vettingStage === 'Vetted & Available') return true;
+          return t.vettingStatus === 'Vetted' &&
+            (t.grade === 'A' || t.grade === 'A+' || t.grade === 'B');
+        });
         setTalents(allTalents);
         setMatches(db.matches || []);
 
@@ -246,70 +253,28 @@ export default function MatchingEngine() {
     fetchData();
   }, [requestId]);
 
+  // Scoring lives in @kongila/matching-engine. This screen used to carry its
+  // own copy of the formula, which matched skills by substring, so "Java"
+  // satisfied a "JavaScript" requirement, and which overwrote the engine's
+  // score on submit, so a client saw one match percentage at intake and a
+  // different one after shortlisting.
   const calculateScores = (req: any, deployableTalents: any[]) => {
-    const requiredSkills: string[] = req.requiredSkills || [];
-
     const results = deployableTalents.map(t => {
-      const vs = t.vettingScores || {};
-
-      // ── 1. Skill Fit (40%) ──────────────────────────────────────────────────
-      // Real calculation: overlap between required skills and talent skills.
-      // Falls back to the vetting technical score if no required skills are set.
-      const talentSkills: string[] = t.primarySkills || t.skills || [];
-      let skillScore: number;
-      if (requiredSkills.length === 0) {
-        skillScore = typeof vs.technical === 'number' ? vs.technical : 75;
-      } else {
-        const matched = requiredSkills.filter(rs =>
-          talentSkills.some(ts => ts.toLowerCase().includes(rs.toLowerCase()))
-        ).length;
-        skillScore = Math.round((matched / requiredSkills.length) * 100);
-      }
-
-      // ── 2. Behavioural Fit (20%) ────────────────────────────────────────────
-      // Pulled directly from the talent's vetting behavioral score.
-      const behaviorScore = typeof vs.behavioral === 'number' ? vs.behavioral : 0;
-
-      // ── 3. Personality Fit (15%) ────────────────────────────────────────────
-      const personalityScore = typeof vs.personality === 'number' ? vs.personality : 0;
-
-      // ── 4. Availability / Engagement Match (15%) ────────────────────────────
-      const prefEng = (t.preferredEngagementType || '').toLowerCase();
-      const reqEng = (req.commitmentLevel || '').toLowerCase();
-      const availScore = reqEng && prefEng.includes(reqEng.split('-')[0].trim()) ? 100 : 70;
-
-      // ── 5. Work Readiness (10%) — replaces "past performance" for undeployed talent ──
-      // Uses remote readiness + work simulation scores (actual vetting data).
-      // No inflated defaults — if not assessed, score is 0.
-      const remoteScore = typeof vs.remoteReadiness === 'number' ? vs.remoteReadiness : 0;
-      const workSimScore = typeof vs.workSimulation === 'number' ? vs.workSimulation : 0;
-      const workReadinessScore = remoteScore > 0 || workSimScore > 0
-        ? Math.round((remoteScore * 0.4) + (workSimScore * 0.6))
-        : 0;
-
-      const totalScore =
-        (skillScore * 0.40) +
-        (behaviorScore * 0.20) +
-        (personalityScore * 0.15) +
-        (availScore * 0.15) +
-        (workReadinessScore * 0.10);
-
+      const { score, breakdown, matchedSkills, requiredSkillCount } = calculateMatchScore(t, req);
       return {
         talent: t,
-        score: Math.min(100, Math.round(totalScore)),
+        score,
         breakdown: {
-          skillFit: Math.round(skillScore),
-          behavioralInterview: Math.round(behaviorScore),
-          personalityTest: Math.round(personalityScore),
-          engagementMatch: Math.round(availScore),
-          workReadiness: Math.round(workReadinessScore),
+          skillFit: breakdown.skillFit,
+          behavioralInterview: breakdown.behaviourFit,
+          personalityTest: breakdown.personalityFit,
+          engagementMatch: breakdown.availability,
+          workReadiness: breakdown.pastPerformance,
         },
-        // Pass raw vetting scores too for accurate display
-        vettingScores: vs,
-        skillsMatched: requiredSkills.filter(rs =>
-          talentSkills.some(ts => ts.toLowerCase().includes(rs.toLowerCase()))
-        ),
-        totalRequiredSkills: requiredSkills.length,
+        vettingScores: t.vettingScores || {},
+        isTrainablePool: t.grade === 'B',
+        skillsMatched: matchedSkills,
+        totalRequiredSkills: requiredSkillCount,
       };
     });
 
@@ -349,9 +314,13 @@ export default function MatchingEngine() {
       return;
     }
 
+    // Either a low-ranked pick, or a grade B candidate from the trainable
+    // pool. Both are deliberate choices a client may question later, so both
+    // are recorded with a reason.
     const requiresOverride = selectedCandidateIds.some(id => {
       const idx = scoredCandidates.findIndex(c => c.talent.id === id);
-      return idx >= 5;
+      if (idx >= 5) return true;
+      return Boolean(scoredCandidates[idx]?.isTrainablePool);
     });
 
     if (requiresOverride && !overrideReason) {
@@ -365,108 +334,25 @@ export default function MatchingEngine() {
   const executeSubmission = async () => {
     setIsSubmitting(true);
     try {
-      const resDb = await fetch('/api/db');
-      const db = await resDb.json();
-      const existingMatches = Array.isArray(db.matches) ? db.matches : [];
-
-      const newMatches = selectedCandidateIds.map(id => {
-        const c = scoredCandidates.find(sc => sc.talent.id === id);
-        const existingMatch = existingMatches.find((m: any) => m.requestId === requestId && m.talentId === id);
-        return {
-          id: existingMatch?.id || `match_${Date.now()}_${id}`,
-          requestId: requestId as string,
-          talentId: id,
-          score: c.score,
-          breakdown: c.breakdown,
-          status: 'Shortlisted',
-          overrideReason: overrideReason || undefined,
-          submissionJustification: submissionJustification || undefined
-        };
+      const candidates = selectedCandidateIds.map(id => {
+        const candidate = scoredCandidates.find(sc => sc.talent.id === id);
+        return { id, score: candidate?.score, breakdown: candidate?.breakdown };
       });
-
-      // ── Re-read the FULL row so we never overwrite AM/TM assignments that were already set ──
-      const { data: currentRow } = await supabase
-        .from('talent_requests')
-        .select('*')
-        .eq('payload->>id', requestId as string)
-        .maybeSingle();
-
-      const existingPayload = currentRow?.payload || request;
-      const resolvedAMId = currentRow?.account_manager_id || existingPayload.assignedAccountManagerId || '';
-      const resolvedTMId = currentRow?.talent_manager_id || existingPayload.assignedTalentManagerId || '';
-
-      const updatedPayload = {
-        ...existingPayload,
-        status: normalizeRequestStatus('Candidates Ready'),
-        assignedAccountManagerId: resolvedAMId,
-        assignedTalentManagerId: resolvedTMId,
-      };
-
-      const { error: reqError } = await supabase
-        .from('talent_requests')
-        .update({
-          payload: updatedPayload,
-          talent_manager_id: resolvedTMId || null,
-          account_manager_id: resolvedAMId || null,
-        })
-        .eq('payload->>id', requestId as string);
-      if (reqError) throw reqError;
-
-      await supabase.from('audit_logs').insert({
-        actor: 'Talent Manager',
-        action: 'Submit Candidates',
-        details: `Submitted ${selectedCandidateIds.length} candidates for request ${requestId}`
-      });
-
-      const mergedMatches = existingMatches.map((m: any) => {
-        const replacement = newMatches.find(next => next.id === m.id || (next.requestId === m.requestId && next.talentId === m.talentId));
-        return replacement ? { ...m, ...replacement } : m;
-      });
-      newMatches.forEach(next => {
-        if (!mergedMatches.some((m: any) => m.id === next.id || (m.requestId === next.requestId && m.talentId === next.talentId))) {
-          mergedMatches.push(next);
-        }
-      });
-
-      await fetch('/api/db', {
+      const response = await apiFetch('/api/matching/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
-            reqRow.id === requestId ? { ...reqRow, ...updatedPayload } : reqRow
-          ),
-          matches: mergedMatches
-        })
+        body: JSON.stringify({ requestId, candidates, overrideReason, submissionJustification })
       });
-
-      // Upsert into Supabase matches table with DB-normalised status
-      const matchesToInsert = newMatches.map(m => ({
-        id: m.id,
-        request_id: m.requestId,
-        talent_id: m.talentId,
-        status: 'shortlisted',
-        score: m.score,
-        breakdown: m.breakdown
-      }));
-      const { error: matchErr } = await supabase.from('matches').upsert(matchesToInsert, { onConflict: 'id' });
-      if (matchErr) console.error('Failed to upsert matches:', matchErr);
-
-      // Notify the client
-      if (updatedPayload.clientId) {
-        await supabase.from('notifications').insert({
-          id: crypto.randomUUID(),
-          user_id: updatedPayload.clientId,
-          title: 'New Talent Ready',
-          message: `${selectedCandidateIds.length} new candidate(s) are ready for your review on this request.`,
-          module_type: 'radar',
-          read: false,
-          created_at: new Date().toISOString()
-        });
-      }
-
-      setRequest(updatedPayload);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Failed to submit candidates');
+      setRequest(body.request);
       addToast('Candidates successfully submitted to the client!', 'success');
       router.push(`/requests/${requestId}`);
+      // Everything that used to follow was unreachable: a `return`
+      // sat above it. It upserted matches as 'shortlisted' (the
+      // client's verdict, not ours), updated talent_requests, and
+      // inserted an audit entry and a client notification from the
+      // browser. The route does all of it, correctly.
     } catch (e) {
       console.error(e);
       addToast('Failed to submit candidates.', 'error');
@@ -482,39 +368,16 @@ export default function MatchingEngine() {
     if (!confirm('Flag this request as Sourcing Required?')) return;
     try {
       setIsSubmitting(true);
-      const resDb = await fetch('/api/db');
-      const db = await resDb.json();
-      const updatedPayload = {
-        ...request,
-        status: 'Reviewing',
-        internalNotes: (request.internalNotes || '') + '\n[System]: Flagged as Sourcing Required.'
-      };
-      const { error: reqError } = await supabase
-        .from('talent_requests')
-        .update({ payload: updatedPayload })
-        .eq('payload->>id', requestId as string);
-      if (reqError) throw reqError;
-
-      const newTask = {
-        id: `task_${Date.now()}`,
-        title: `Source Talent for Request ${requestId}`,
-        assignedTo: 'Talent Acquisition Team',
-        status: 'Not Started',
-        priority: 'High',
-        createdAt: new Date().toISOString()
-      };
-      await fetch('/api/db', {
+      const response = await apiFetch('/api/matching/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientRequests: (db.clientRequests || []).map((reqRow: any) =>
-            reqRow.id === requestId ? { ...reqRow, ...updatedPayload } : reqRow
-          ),
-          tasks: [...(db.tasks || []), newTask]
-        })
+        body: JSON.stringify({ requestId, sourcingRequired: true })
       });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Action failed');
       addToast('Request flagged for Sourcing. TA team notified.', 'info');
       router.push(`/requests/${requestId}`);
+
     } catch (e) {
       console.error(e);
       addToast('Action failed.', 'error');

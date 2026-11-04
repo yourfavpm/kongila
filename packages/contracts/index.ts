@@ -60,3 +60,7 @@ By clicking "Sign and Deploy Contract", the contractor accepts all Terms of Use.
 ================================================================================
   `;
 }
+
+// The document a candidate is actually asked to sign, and the check that
+// stops them signing one whose terms do not exist.
+export * from './document';

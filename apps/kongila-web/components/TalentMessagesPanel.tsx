@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GlassCard as Card, NeonButton as Button } from '@kongila/ui';
 import { Conversation, Message } from '@kongila/shared-types';
+import { apiFetch } from '../lib/apiFetch';
+import { uploadFile } from '../lib/uploadFile';
+// Still needed for the attachment upload; every table write goes through the API.
 import { supabase } from '../lib/supabaseClient';
 
 interface TalentMessagesPanelProps {
@@ -43,13 +46,16 @@ export default function TalentMessagesPanel({
     if (unreadMessagesFromOthers.length > 0) {
       const markAsRead = async () => {
         const ids = unreadMessagesFromOthers.map(m => m.id);
-        const { error } = await supabase
-          .from('messages')
-          .update({ is_read: true, read_at: new Date().toISOString() })
-          .in('id', ids);
+        // Scoped to the thread, server-side. A browser update keyed only on
+        // message ids let anyone mark another person's messages read.
+        const response = await apiFetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'markRead', conversationId: activeConversationId })
+        });
 
-        if (!error) {
-          setMessages(messages.map(m => 
+        if (response.ok) {
+          setMessages(messages.map(m =>
             ids.includes(m.id) ? { ...m, isRead: true, readAt: new Date().toISOString() } : m
           ));
         }
@@ -77,65 +83,43 @@ export default function TalentMessagesPanel({
         return;
       }
       setIsUploading(true);
-      const fileExt = attachment.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-      const filePath = `talent-${currentUser.id}/${fileName}`;
-
-      const { data, error } = await supabase.storage
-        .from('message-attachments')
-        .upload(filePath, attachment);
-
-      if (error) {
-        alert('Failed to upload attachment: ' + error.message);
+      try {
+        const uploaded = await uploadFile('message_attachment', attachment);
+        attachmentUrl = uploaded.url;
+      } catch (err: any) {
+        alert(err?.message || 'Failed to upload attachment.');
         setIsUploading(false);
         return;
       }
 
-      const { data: urlData } = supabase.storage
-        .from('message-attachments')
-        .getPublicUrl(filePath);
-
-      attachmentUrl = urlData.publicUrl;
       attachmentName = attachment.name;
       setIsUploading(false);
     }
 
-    const newMessageRow = {
-      id: crypto.randomUUID(),
-      conversation_id: activeConversationId,
-      sender_id: currentUser.id,
-      content: composerText,
-      attachment_url: attachmentUrl || null,
-      attachment_name: attachmentName || null,
-      is_read: false,
-      timestamp: new Date().toISOString()
-    };
+    // Through the server. A browser insert set its own sender_id, so nothing
+    // stopped a message being sent as somebody else, and nobody in the thread
+    // was notified. The route also stamps the conversation's updated_at, so
+    // the separate update below is gone.
+    const response = await apiFetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId: activeConversationId,
+        content: composerText,
+        attachmentUrl: attachmentUrl || null,
+        attachmentName: attachmentName || null
+      })
+    });
 
-    const { data, error } = await supabase.from('messages').insert([newMessageRow]).select();
-
-    if (error) {
-      alert('Failed to send message: ' + error.message);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert('Failed to send message: ' + (payload?.error || response.status));
       return;
     }
 
-    if (data && data[0]) {
-      const formattedMessage: Message = {
-        id: data[0].id,
-        conversationId: data[0].conversation_id,
-        senderId: data[0].sender_id,
-        content: data[0].content,
-        attachmentUrl: data[0].attachment_url,
-        attachmentName: data[0].attachment_name,
-        timestamp: data[0].timestamp,
-        isRead: false
-      };
-      setMessages([...messages, formattedMessage]);
+    if (payload.data) {
+      setMessages([...messages, payload.data as Message]);
     }
-
-    // Update conversation updatedAt
-    await supabase.from('conversations')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', activeConversationId);
 
     setComposerText('');
     setAttachment(null);

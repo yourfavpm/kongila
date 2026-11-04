@@ -1,0 +1,311 @@
+{
+  "info": {
+    "name": "Kongila API",
+    "description": "External smoke-test collection for Kongila client, talent, and admin APIs. Set accessToken after signing in with Supabase Auth.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "adminBaseUrl",
+      "value": "http://localhost:3002"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    },
+    {
+      "key": "ticketId",
+      "value": ""
+    },
+    {
+      "key": "interviewId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication and health",
+      "item": [
+        {
+          "name": "Unauthenticated request is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/requests"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('returns an authentication response', function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authenticated request smoke test",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('request succeeds', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200,204]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Client or talent workflows",
+      "item": [
+        {
+          "name": "List requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/requests?page=1&pageSize=25"
+          }
+        },
+        {
+          "name": "Create support ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"subject\":\"Postman smoke test\",\"message\":\"Please resolve this test ticket.\",\"category\":\"account\",\"priority\":\"low\"}"
+            },
+            "url": "{{baseUrl}}/api/support"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('ticket created', function () {",
+                  "  pm.expect([200,201]).to.include(pm.response.code);",
+                  "});",
+                  "try { const json = pm.response.json(); pm.collectionVariables.set('ticketId', json.id || json.ticket?.id || json.data?.id || ''); } catch (_) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List my support tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/support"
+          }
+        },
+        {
+          "name": "Get talent profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/profile/talent"
+          }
+        },
+        {
+          "name": "List interviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/interviews"
+          }
+        },
+        {
+          "name": "List messages",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/messages"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin workflows",
+      "item": [
+        {
+          "name": "List admin users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{adminBaseUrl}}/api/users"
+          }
+        },
+        {
+          "name": "List admin clients",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{adminBaseUrl}}/api/clients"
+          }
+        },
+        {
+          "name": "List admin support tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{adminBaseUrl}}/api/support"
+          }
+        },
+        {
+          "name": "List admin requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{adminBaseUrl}}/api/requests"
+          }
+        },
+        {
+          "name": "List admin finance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{adminBaseUrl}}/api/finance"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents and finance",
+      "item": [
+        {
+          "name": "List documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/documents"
+          }
+        },
+        {
+          "name": "Create signed upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"fileName\":\"postman-smoke.txt\",\"contentType\":\"text/plain\",\"bucket\":\"documents\"}"
+            },
+            "url": "{{baseUrl}}/api/uploads"
+          }
+        },
+        {
+          "name": "Get finance data",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/finance"
+          }
+        }
+      ]
+    }
+  ]
+}

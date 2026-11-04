@@ -1,9 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, writeDbAsync } from '@kongila/database';
+import { readDbAsync, writeDbAsync, getRequestUser } from '@kongila/database';
 import crypto from 'crypto';
 import { WorkflowInstance, WorkflowState, WorkflowType } from '@kongila/shared-types';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Admin portal route. A talent or client session is a valid session and
+  // still has no business here, so check the kind, not just that someone is
+  // signed in. This runs before any database read.
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  if (actor.kind !== 'admin') {
+    console.warn('[api/workflows] refused ' + actor.kind + ' ' + actor.userId);
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+
   if (req.method === 'POST') {
     const action = req.body.action || 'trigger';
 

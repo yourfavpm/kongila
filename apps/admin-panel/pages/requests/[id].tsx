@@ -1,15 +1,14 @@
+import { apiFetch } from '../../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatDate, formatCurrency, getGradeColor } from '@kongila/utils';
-import { normalizeRequestStatus } from '@kongila/workflows';
+import { coerceRequestStatus } from '@kongila/workflows';
 import { supabase } from '../../lib/supabaseClient';
 import {
   enrichUsersWithRoleAssignments,
   formatAssignableUserLabel,
-  getDatabaseSafeAdminRole,
-  getPrimaryAssignableRoleId,
   isAccountManagerAssignable,
   isTalentManagerAssignable,
   mergeAuthenticatedUserIntoAssignableUsers,
@@ -50,11 +49,11 @@ export default function RequestDetailView() {
 
       // Keep this query deliberately simple; detail pages must still open if
       // optional relationship metadata is not present in the Supabase schema.
-      const requestPromise = supabase
-        .from('talent_requests')
-        .select('*')
-        .eq('payload->>id', requestId)
-        .maybeSingle();
+      const requestPromise = apiFetch(`/api/requests/${encodeURIComponent(requestId)}`)
+        .then(async response => ({
+          data: response.ok ? await response.json() : null,
+          error: response.ok ? null : new Error((await response.json().catch(() => ({}))).error || 'Could not load request')
+        }));
 
       // Fetch users and role assignments for assignment dropdowns.
       const sessionPromise = supabase.auth.getSession();
@@ -69,7 +68,7 @@ export default function RequestDetailView() {
         .from('user_roles')
         .select('user_id, role_id');
 
-      const dbPromise = fetch('/api/db').then(r => r.json());
+      const dbPromise = apiFetch('/api/db').then(r => r.json());
 
       const [
         { data: { session } },
@@ -112,12 +111,12 @@ export default function RequestDetailView() {
           ...req,
           assignedAccountManagerId: resolvedAMId,
           assignedTalentManagerId: resolvedTMId,
-          status: normalizeRequestStatus(req.status),
+          status: coerceRequestStatus(req.status),
         };
 
         setRequest(mergedReq);
         setFormData({
-          status: normalizeRequestStatus(req.status),
+          status: coerceRequestStatus(req.status),
           urgency: req.urgency || 'Standard',
           assignedAccountManagerId: resolvedAMId,
           assignedTalentManagerId: resolvedTMId,
@@ -148,12 +147,12 @@ export default function RequestDetailView() {
         if (fallbackRequest) {
           const mergedFallback = {
             ...fallbackRequest,
-            status: normalizeRequestStatus(fallbackRequest.status),
+            status: coerceRequestStatus(fallbackRequest.status),
           };
           setRequestRow(null);
           setRequest(mergedFallback);
           setFormData({
-            status: normalizeRequestStatus(fallbackRequest.status),
+            status: coerceRequestStatus(fallbackRequest.status),
             urgency: fallbackRequest.urgency || 'Standard',
             assignedAccountManagerId: fallbackRequest.assignedAccountManagerId || '',
             assignedTalentManagerId: fallbackRequest.assignedTalentManagerId || '',
@@ -219,7 +218,7 @@ export default function RequestDetailView() {
 
   const handleSave = async () => {
     const requestId = Array.isArray(id) ? id[0] : id;
-    const normalizedStatus = normalizeRequestStatus(formData.status);
+    const normalizedStatus = coerceRequestStatus(formData.status);
     if (normalizedStatus === 'Sourcing Talent' && !formData.assignedTalentManagerId) {
       alert("You must assign a Talent Manager before advancing to 'Sourcing Talent' (Matching).");
       return;
@@ -227,52 +226,11 @@ export default function RequestDetailView() {
 
     setIsSubmitting(true);
     try {
-      const ensureAssignableUserExists = async (userId: string, label: string) => {
-        const user = adminUsers.find(u => u.id === userId);
-        if (!user) throw new Error(`Selected ${label} could not be found. Please refresh and try again.`);
-        if (!user.email) throw new Error(`Selected ${label} is missing an email address and cannot be saved.`);
-
-        const safeUserRole = getDatabaseSafeAdminRole(user);
-        const assignableRoleId = getPrimaryAssignableRoleId(user, safeUserRole);
-
-        const { error: userUpsertError } = await supabase.from('users').upsert({
-          id: user.id,
-          email: user.email,
-          password_hash: 'auth_managed',
-          role: safeUserRole,
-          status: 'active',
-          email_verified: true,
-        }, { onConflict: 'id' });
-
-        if (userUpsertError) {
-          throw new Error(`Could not prepare ${label} user record: ${userUpsertError.message}`);
-        }
-
-        const { error: roleUpsertError } = await supabase.from('roles').upsert({
-          id: assignableRoleId,
-          name: assignableRoleId,
-        }, { onConflict: 'id' });
-
-        if (roleUpsertError) {
-          console.error(`Failed to verify ${label} role:`, roleUpsertError);
-          return;
-        }
-
-        const { error: userRoleError } = await supabase.from('user_roles').upsert({
-          id: `ur_${user.id}_${assignableRoleId}`,
-          user_id: user.id,
-          role_id: assignableRoleId,
-        }, { onConflict: 'id' });
-
-        if (userRoleError) console.error(`Failed to verify ${label} user role:`, userRoleError);
-      };
-
-      if (formData.assignedAccountManagerId) {
-        await ensureAssignableUserExists(formData.assignedAccountManagerId, 'Account Manager');
-      }
-      if (formData.assignedTalentManagerId) {
-        await ensureAssignableUserExists(formData.assignedTalentManagerId, 'Talent Manager');
-      }
+      // The roles and user_roles upserts that used to live here are gone.
+      // They ran in the browser against tables with RLS off, so an admin
+      // panel could grant a role link to any user id it named, and they
+      // derived the role id in the browser rather than reading it from the
+      // user's own record. The assign route does both, server side.
 
       const updatedPayload = {
         ...request,
@@ -283,51 +241,38 @@ export default function RequestDetailView() {
         internalNotes: formData.internalNotes,
       };
 
-      // 1. Update payload + dedicated columns on talent_requests in one call
-      const { error: updateErr } = await supabase
-        .from('talent_requests')
-        .update({
-          payload: updatedPayload,
-          talent_manager_id: formData.assignedTalentManagerId || null,
-          account_manager_id: formData.assignedAccountManagerId || null,
-        })
-        .eq('payload->>id', requestId as string);
-
-      if (updateErr) throw updateErr;
-
-      // 2. Also update the organization's account manager
-      if (formData.assignedAccountManagerId && client?.id) {
-        const { error: orgErr } = await supabase
-          .from('organizations')
-          .update({ account_manager_id: formData.assignedAccountManagerId })
-          .eq('id', client.id);
-        if (orgErr) throw new Error(`Failed to update client Account Manager: ${orgErr.message}`);
-      }
-
-      // 3. Audit log
-      await supabase.from('audit_logs').insert({
-        actor: 'Super Admin',
-        action: 'Update Service Request',
-        details: `Updated request ${requestId} → status: ${normalizedStatus}, AM: ${formData.assignedAccountManagerId}, TM: ${formData.assignedTalentManagerId}`
+      // Status first, which checks the transition is legal.
+      const requestResponse = await apiFetch('/api/requests/status', {
+        method: 'POST',
+        body: JSON.stringify({ requestId, status: normalizedStatus })
       });
+      const requestBody = await requestResponse.json().catch(() => ({}));
+      if (!requestResponse.ok) throw new Error(requestBody.error || 'Could not update this request.');
 
-      // 4. Keep the local snapshot in sync for legacy views and fallback readers.
-      try {
-        const dbRes = await fetch('/api/db');
-        if (dbRes.ok) {
-          const db = await dbRes.json();
-          const updatedRequests = (db.clientRequests || []).map((req: any) =>
-            req.id === requestId ? { ...req, ...updatedPayload } : req
-          );
-          await fetch('/api/db', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientRequests: updatedRequests })
-          });
-        }
-      } catch (syncErr) {
-        console.error('Failed to sync request snapshot:', syncErr);
-      }
+      // Then the assignments. These used to ride along in a `patch` on the
+      // status call, which only ever read `status`, so the managers,
+      // urgency and internal notes were silently dropped. The client
+      // organisation update and the audit entry were separate browser
+      // writes; both are part of this route now, and the audit entry names
+      // the administrator who made the change rather than 'Super Admin'.
+      const assignResponse = await apiFetch('/api/requests/assign', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId,
+          accountManagerId: formData.assignedAccountManagerId || undefined,
+          talentManagerId: formData.assignedTalentManagerId || undefined,
+          urgency: formData.urgency,
+          internalNotes: formData.internalNotes,
+          alsoSetClientAccountManager: Boolean(formData.assignedAccountManagerId)
+        })
+      });
+      const assignBody = await assignResponse.json().catch(() => ({}));
+      if (!assignResponse.ok) throw new Error(assignBody.error || 'Could not save those assignments.');
+
+      // The legacy snapshot sync that used to be here is gone. It read
+      // /api/db and posted the whole clientRequests array back, which
+      // upserts every request from browser state, on top of the assign
+      // route that had just written this one correctly.
 
       // 5. Refresh local state immediately (no re-fetch needed)
       setRequest(updatedPayload);
@@ -409,7 +354,7 @@ export default function RequestDetailView() {
                 </span>
               )}
               <span style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600 }}>
-                {normalizeRequestStatus(request.status)}
+                {coerceRequestStatus(request.status)}
               </span>
             </div>
             <p className="page-subtitle">Submitted by {client?.name || request.clientName || 'Unknown Client'} on {formatDate(request.createdAt)}</p>
@@ -425,7 +370,7 @@ export default function RequestDetailView() {
             ) : (
               <>
                 <button className="btn-secondary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px' }}>Message Client</button>
-                {(normalizeRequestStatus(request.status) === 'Sourcing Talent' || normalizeRequestStatus(request.status) === 'Candidates Ready') && (
+                {(coerceRequestStatus(request.status) === 'Sourcing Talent' || coerceRequestStatus(request.status) === 'Candidates Ready') && (
                   <button onClick={() => router.push(`/matching/${request.id}`)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', background: '#10B981', borderColor: '#10B981' }}>
                     Open Matching Engine
                   </button>
@@ -506,7 +451,7 @@ export default function RequestDetailView() {
                   <div style={{ textAlign: 'center', padding: '32px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>
                     <div style={{ fontSize: '32px', marginBottom: '12px' }}>📭</div>
                     No candidates have been submitted for this request yet.
-                    {(normalizeRequestStatus(request.status) === 'Sourcing Talent') && (
+                    {(coerceRequestStatus(request.status) === 'Sourcing Talent') && (
                       <div style={{ marginTop: '12px' }}>
                         <button onClick={() => router.push(`/matching/${request.id}`)} className="btn-primary" style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', background: '#10B981', borderColor: '#10B981' }}>
                           Open Matching Engine →

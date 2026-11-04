@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard as Card, NeonButton as Button } from '@kongila/ui';
 import { SupportTicket, Contract, ClientProfile } from '@kongila/shared-types';
-import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 interface ClientSupportPanelProps {
   currentUser: any;
@@ -37,46 +37,30 @@ export default function ClientSupportPanel({
     e.preventDefault();
 
     // Auto-route and priority logic based on REQ-KC-1301 and REQ-KC-1303
-    const isSensitive = newTicket.category === 'Billing Issue' || newTicket.category === 'Talent Performance Concern';
-    const priority = isSensitive ? 'High' : 'Medium';
-    
-    // Assign to Account Manager if sensitive (mock ID here, but represents a real DB write)
-    const assignedTo = isSensitive ? 'account-manager-uuid-001' : null; 
+    // Through the server. A browser insert set its own client_id, worked out
+    // its own priority, and assigned the ticket to a hardcoded placeholder
+    // id ('account-manager-uuid-001') that is not a user. Nothing told
+    // operations a ticket had arrived.
+    const response = await apiFetch('/api/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: newTicket.subject,
+        category: newTicket.category,
+        description: newTicket.description,
+        linkedContractId: newTicket.linkedContractId || null
+      })
+    });
 
-    const ticketRow = {
-      id: crypto.randomUUID(), // Ensure you have unique ID, but supabase will generate if omitted (unless mapped explicitly)
-      client_id: currentUser?.id,
-      linked_contract_id: newTicket.linkedContractId || null,
-      subject: newTicket.subject,
-      category: newTicket.category,
-      status: 'open',
-      priority: priority,
-      assigned_to: assignedTo,
-      created_at: new Date().toISOString(),
-      last_activity: new Date().toISOString()
-    };
-
-    const { data, error } = await supabase.from('support_tickets').insert([ticketRow]).select();
-
-    if (error) {
-      alert("Error creating ticket: " + error.message);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert('Error creating ticket: ' + (payload?.error || response.status));
       return;
     }
 
-    if (data && data[0]) {
-      const formattedTicket: SupportTicket = {
-        id: data[0].id,
-        clientId: data[0].client_id,
-        linkedContractId: data[0].linked_contract_id,
-        assignedTo: data[0].assigned_to,
-        subject: data[0].subject,
-        category: data[0].category,
-        status: data[0].status,
-        priority: data[0].priority,
-        createdAt: data[0].created_at,
-        lastActivity: data[0].last_activity
-      };
-      setSupportTickets((prev: any[]) => [formattedTicket, ...prev]);
+    // The route returns the ticket already mapped, so no snake_case here.
+    if (payload.ticket) {
+      setSupportTickets((prev: any[]) => [payload.ticket as SupportTicket, ...prev]);
     }
 
     setShowNewTicketModal(false);

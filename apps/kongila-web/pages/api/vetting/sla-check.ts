@@ -1,9 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, writeDbAsync } from '@kongila/database';
+import { readTalentVetting, writeTalentVetting, getRequestUser } from '@kongila/database';
 import { VettingStageRecord } from '@kongila/shared-types';
 
+/**
+ * Marks SLA breaches and auto-advances the personality stage after 48 hours.
+ *
+ * This is fired from the talent dashboard on mount, which means a candidate
+ * opening their own page is what drives the clock. It belongs in a scheduled
+ * job rather than a page load, but until that exists it at least now requires
+ * a session, only lets a candidate run it against themselves, and touches one
+ * row instead of rewriting sixteen tables.
+ */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
+
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  if (actor.kind === 'client') return res.status(403).json({ error: 'Not authorised' });
 
   try {
     const { talentId } = req.body;
@@ -11,18 +24,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'Missing talentId' });
     }
 
-    const db = await readDbAsync();
-    const talentIndex = db.talents.findIndex(t => t.id === talentId);
-    if (talentIndex === -1) {
-      return res.status(404).json({ error: 'Talent not found' });
+    if (actor.kind === 'talent' && String(actor.talentProfileId) !== String(talentId)) {
+      console.warn(`[vetting/sla-check] talent ${actor.userId} attempted to run against ${talentId}`);
+      return res.status(403).json({ error: 'Not authorised for this candidate' });
     }
 
-    const talent = db.talents[talentIndex];
-    if (!talent.vettingPipeline || !Array.isArray(talent.vettingPipeline)) {
+    const snapshot = await readTalentVetting(String(talentId));
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Talent not found' });
+    }
+    if (snapshot.pipeline.length === 0) {
       return res.status(200).json({ updated: false, pipeline: [] });
     }
 
-    let pipeline: VettingStageRecord[] = [...talent.vettingPipeline];
+    const pipeline: VettingStageRecord[] = [...snapshot.pipeline];
     let updated = false;
     const now = new Date();
 
@@ -31,9 +46,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (stage4 && stage4.status === 'in_progress' && stage4.startedAt) {
       const startedAt = new Date(stage4.startedAt);
       const hoursDiff = (now.getTime() - startedAt.getTime()) / (1000 * 60 * 60);
-      
+
       if (hoursDiff >= 48) {
-        // Auto-advance
+        // Auto-advance. Note this leaves the personality score unset, which
+        // the composite grade then treats as zero.
         stage4.status = 'skipped';
         stage4.notes = 'Auto-advanced after 48h non-completion.';
         stage4.completedAt = now.toISOString();
@@ -53,10 +69,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         let slaHours = 48; // Default 48h SLA
         if (stage.stageIndex === 1) slaHours = 72; // Skill Assessment
         if (stage.stageIndex === 5) slaHours = 24; // Work Simulation window
-        
+
         const startedAt = new Date(stage.startedAt);
         const hoursDiff = (now.getTime() - startedAt.getTime()) / (1000 * 60 * 60);
-        
+
         if (hoursDiff > slaHours && !stage.slaBreached) {
           stage.slaBreached = true;
           updated = true;
@@ -65,8 +81,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (updated) {
-      talent.vettingPipeline = pipeline;
-      await writeDbAsync(db);
+      const saved = await writeTalentVetting({ ...snapshot, pipeline });
+      if (!saved.ok) {
+        return res.status(500).json({ error: saved.error || 'Failed to save vetting pipeline' });
+      }
     }
 
     return res.status(200).json({ updated, pipeline });

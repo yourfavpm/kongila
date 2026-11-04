@@ -1,5 +1,7 @@
+import { isActiveRequestStatus, isHiredRequestStatus, isClosedRequestStatus, isEditableRequestStatus } from '@kongila/workflows';
 import React, { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { apiFetch } from "../lib/apiFetch";
 
 interface MyRequestsPanelProps {
   currentUser: any;
@@ -102,9 +104,12 @@ export default function MyRequestsPanel({
 
   const filteredRequests = requests.filter((req: any) => {
     // Tab filtering
-    if (activeTab === "Active" && !["new", "reviewing", "matching", "candidates_ready", "interviewing"].includes((req.status || "").toLowerCase())) return false;
-    if (activeTab === "Hired" && (req.status || "").toLowerCase() !== "hired") return false;
-    if (activeTab === "Closed/Cancelled" && !["closed", "cancelled"].includes((req.status || "").toLowerCase())) return false;
+    // These tabs used a third status vocabulary of their own, lowercase and
+    // underscored, that nothing in the product ever wrote. Active showed only
+    // requests sitting at Reviewing, and Hired could never show anything.
+    if (activeTab === "Active" && !isActiveRequestStatus(req.status)) return false;
+    if (activeTab === "Hired" && !isHiredRequestStatus(req.status)) return false;
+    if (activeTab === "Closed/Cancelled" && !isClosedRequestStatus(req.status)) return false;
     
     // Search filtering
     if (searchQuery) {
@@ -141,25 +146,25 @@ export default function MyRequestsPanel({
         });
 
         if (hasChanges) {
-          // Update DB
-          const { error: updateError } = await supabase.from('service_requests').update({
-            role_description: editForm.roleDescription,
-            service_type: editForm.serviceType,
-            num_of_talents: editForm.numberOfHires,
-            status: editForm.status
-          }).eq('id', editForm.id);
-
-          if (updateError) throw updateError;
-
-          // Log Activity
-          const { error: logError } = await supabase.from('request_activity_logs').insert({
-            request_id: editForm.id,
-            actor_id: currentUser?.id,
-            action_type: "EDIT_REQUEST",
-            field_changes: fieldChanges
+          // Requests live in talent_requests, which keeps the whole request in
+          // a jsonb payload. This used to update service_requests, which the
+          // product never writes to, so edits appeared to save and vanished on
+          // reload. The payload has to be read before it is written, or the
+          // fields not on this form are wiped.
+          const response = await apiFetch('/api/requests', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              requestId: editForm.id,
+              patch: {
+                roleDescription: editForm.roleDescription,
+                serviceType: editForm.serviceType,
+                numberOfHires: editForm.numberOfHires,
+                status: editForm.status
+              }
+            })
           });
-
-          if (logError) throw logError;
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || 'This request could not be updated.');
 
           alert("Request updated successfully! Note: Changes will reflect upon page reload until real-time sync is enabled.");
         }
@@ -175,7 +180,7 @@ export default function MyRequestsPanel({
     const request = requests.find((r) => r.id === detailsViewRequestId);
     if (!request) return <div>Request not found</div>;
 
-    const isEditable = ["New", "New Request", "Reviewing"].includes(request.status);
+    const isEditable = isEditableRequestStatus(request.status);
     const relatedLogs = requestActivityLogs.filter((log) => log.requestId === request.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const requestMatches = matches.filter((m) => m.requestId === request.id);
     const requestContracts = contracts.filter((c) => c.matchId?.includes(request.id) || requestMatches.some(m => c.matchId === m.id));

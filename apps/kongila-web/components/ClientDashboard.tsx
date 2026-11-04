@@ -1,3 +1,7 @@
+import { clientStatusView, CLIENT_JOURNEY_STEPS, clientJourneyStepPct } from '@kongila/workflows';
+import { apiFetch } from '../lib/apiFetch';
+import { uploadFile } from '../lib/uploadFile';
+import { viewerTimeZone, wallClockToUtc, interviewInstant, formatForBothParties, formatInstantInZone, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
 import React, { useState, useEffect } from "react";
 import { GlassCard, Badge, NeonButton } from "@kongila/ui";
 import { supabase } from "../lib/supabaseClient";
@@ -11,6 +15,17 @@ import MyTeamPanel from "./MyTeamPanel";
 import ClientSettingsPanel from "./ClientSettingsPanel";
 import ClientNotificationsPanel from "./ClientNotificationsPanel";
 import ClientSupportPanel from "./ClientSupportPanel";
+
+/**
+ * Vetting scores shown to a client. These used to fall back to invented
+ * numbers when a dimension had not been scored: technical 94, behavioural 90,
+ * remote readiness 98. A candidate part-way through vetting looked like a
+ * finished A+, which is the opposite of what a client needs to see.
+ */
+const formatVettingScore = (value: unknown): string => {
+  const score = Number(value);
+  return Number.isFinite(score) && score > 0 ? `${Math.round(score)}%` : 'Not scored';
+};
 
 // ─── SVG Navigation Icons Component ──────────────────────────────────────────
 const SidebarIcon = ({
@@ -285,7 +300,7 @@ interface ClientDashboardProps {
   setClientIntakeStep: (step: number) => void;
   onScheduleMeeting: () => void;
   onExtendOffer: (talent: any) => void;
-  onSignContract: () => void;
+  onSignContract: (result?: any) => void;
   showCalendar: boolean;
   setShowCalendar: (show: boolean) => void;
   selectedTalent: any;
@@ -308,7 +323,6 @@ interface ClientDashboardProps {
   setConversations?: (conversations: any[]) => void;
   setNotifications?: (notifications: any[]) => void;
   onAddRequest?: (newReq: any) => Promise<void>;
-  saveToDb?: (updatedDb: any) => Promise<void>;
   rehireRequests?: any[];
   setRehireRequests?: (rehireRequests: any[]) => void;
   supportTickets?: any[];
@@ -436,7 +450,6 @@ export default function ClientDashboard({
   setMatches,
   interviews = [],
   setInterviews,
-  saveToDb,
   rehireRequests,
   setRehireRequests,
   supportTickets = [],
@@ -469,7 +482,13 @@ export default function ClientDashboard({
         .map(m => m.id);
         
       if (unreadMsgIds.length > 0) {
-        await supabase.from('messages').update({ is_read: true }).in('id', unreadMsgIds);
+        // Scoped to the thread, server-side. A browser update keyed only on
+        // message ids let anyone mark another person's messages read.
+        await apiFetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'markRead', conversationId: convo.id })
+        });
       }
     };
     markRead();
@@ -555,49 +574,13 @@ export default function ClientDashboard({
 
   // Notifications and Messages badge calculations
   const effectiveNotifications = notifications || [];
-  const unreadNotifsCount = effectiveNotifications.filter(
-    (n) => !n.read,
-  ).length;
-  const unreadByModule = effectiveNotifications
-    .filter((n) => !n.read)
-    .reduce((acc: any, n: any) => {
-      const t = (n.title || "").toLowerCase();
-      const m = (n.message || "").toLowerCase();
-      if (t.includes("interview") || m.includes("interview"))
-        acc["scheduling"] = (acc["scheduling"] || 0) + 1;
-      else if (
-        t.includes("contract") ||
-        m.includes("contract") ||
-        t.includes("hire")
-      )
-        acc["contracts"] = (acc["contracts"] || 0) + 1;
-      else if (
-        t.includes("match") ||
-        m.includes("match") ||
-        t.includes("shortlist") ||
-        m.includes("shortlist") ||
-        t.includes("talent")
-      )
-        acc["radar"] = (acc["radar"] || 0) + 1;
-      else if (t.includes("request") || m.includes("request"))
-        acc["requests"] = (acc["requests"] || 0) + 1;
-      else if (
-        t.includes("invoice") ||
-        m.includes("invoice") ||
-        t.includes("billing")
-      )
-        acc["billing"] = (acc["billing"] || 0) + 1;
-      else if (
-        t.includes("review") ||
-        m.includes("review") ||
-        t.includes("feedback")
-      )
-        acc["reviews"] = (acc["reviews"] || 0) + 1;
-      return acc;
-    }, {});
-  const unreadMessagesCount = messages
-    ? messages.filter((m) => !m.read).length
-    : 0;
+  const unreadNotifsCount = countUnreadNotifications(effectiveNotifications);
+  // Was a keyword search over the title and message, so a notification that
+  // happened to mention another section counted against the wrong badge.
+  const unreadByModule = countUnreadByModule(effectiveNotifications);
+  // Was messages.filter(m => !m.read). A message row carries isRead, so the
+  // badge counted every message ever sent, including the client's own.
+  const unreadMessagesCount = countUnreadMessages(messages, currentUser?.id);
 
   // Viewing Talent Profile Detail State
   const [viewingTalentProfile, setViewingTalentProfile] = useState<any | null>(
@@ -690,13 +673,15 @@ export default function ClientDashboard({
       selectedRequest;
     if (!activeRequest) return;
 
-    const confCode = `${Math.random().toString(36).substring(2, 5)}-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 5)}`;
-    const meetingLink = `https://meet.google.com/${confCode}`;
-    const calEventId = `gcal_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const calendarTitle = encodeURIComponent(
-      `${activeRequest.serviceType} - Interview with ${requestInterviewTarget.talentName}`,
-    );
-    const googleCalendarLink = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${calendarTitle}&dates=${requestInterviewForm.date.replace(/-/g, "")}T${requestInterviewForm.time.replace(":", "")}00Z/${requestInterviewForm.date.replace(/-/g, "")}T${requestInterviewForm.time.replace(":", "")}00Z&location=${encodeURIComponent(meetingLink)}`;
+    // No fabricated joining link. This used to mint meet.google.com plus ten
+    // random letters — a well-formed URL that went nowhere — along with a
+    // Google Calendar event id and a render link for an event that did not
+    // exist. Operations supplies a real link; until then both portals say the
+    // joining details will follow, and the invitation email carries a real
+    // .ics so the time still lands in everyone's calendar.
+    const meetingLink = null;
+    const calEventId = null;
+    const googleCalendarLink = null;
 
     const newInterview = {
       id: `interview_${Date.now()}`,
@@ -720,57 +705,58 @@ export default function ClientDashboard({
     };
 
     try {
-      const { error: ivErr } = await supabase.from('interviews').insert({
-        request_id: newInterview.requestId,
-        match_id: newInterview.matchId,
-        client_id: currentUser?.id,
-        talent_id: newInterview.talentId,
-        talent_name: newInterview.talentName,
-        talent_avatar: newInterview.talentAvatar,
-        client_name: newInterview.clientName,
-        title: newInterview.title,
-        date: newInterview.date,
-        time: newInterview.time,
-        status: newInterview.status,
-        meeting_link: newInterview.meetingLink,
-        google_calendar_event_id: newInterview.googleCalendarEventId,
-        google_calendar_link: newInterview.googleCalendarLink,
-        notes: newInterview.notes
-      });
-      if (ivErr) throw ivErr;
+      // Through the server. A browser insert could not check whether either
+      // party was already booked, could not email the candidate, and wrote
+      // nothing to the audit log. The route does all three, and refuses a
+      // clash with a 409 rather than quietly double-booking someone.
+      const clientZone = viewerTimeZone();
+      const talentZone = (requestInterviewTarget as any)?.talentTimezone
+        || (talents || []).find((t: any) => t.id === requestInterviewTarget?.talentId)?.timezone
+        || null;
 
-      // Update match status to Interview Requested (consistent title-case)
+      const ivResponse = await apiFetch('/api/interviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: newInterview.requestId,
+          matchId: newInterview.matchId,
+          talentId: newInterview.talentId,
+          talentName: newInterview.talentName,
+          talentAvatar: newInterview.talentAvatar,
+          clientName: newInterview.clientName,
+          title: newInterview.title,
+          date: newInterview.date,
+          time: newInterview.time,
+          timezone: clientZone,
+          clientTimezone: clientZone,
+          talentTimezone: talentZone,
+          meetingLink: newInterview.meetingLink,
+          notes: newInterview.notes
+        })
+      });
+
+      const ivPayload = await ivResponse.json().catch(() => ({}));
+      if (!ivResponse.ok) throw new Error(ivPayload?.error || `Could not request the interview (${ivResponse.status}).`);
+
+      // Shortlisting goes through the server. matches_status_check allows
+      // only proposed/shortlisted/rejected/accepted, and the browser update
+      // here wrote 'interview_scheduled' at one point, which the database
+      // refused; the match never moved and the error was logged.
       if (newInterview.matchId) {
-        await supabase.from('matches').update({
-          status: 'interview_scheduled'
-        }).eq('id', newInterview.matchId);
-      }
-
-      // Notify the talent
-      await supabase.from("notifications").insert({
-        id: crypto.randomUUID(),
-        user_id: requestInterviewTarget.talentId,
-        title: "Interview Scheduled",
-        message: `Interview "${newInterview.title}" has been requested for ${newInterview.date} at ${newInterview.time}.`,
-        module_type: 'interviews',
-        read: false,
-        created_at: new Date().toISOString(),
-      });
-
-      // Notify admin — find the AM or TM from the active request
-      const requestForNotif = requests.find((r) => r.id === requestInterviewTarget.requestId) || selectedRequest;
-      const adminUserId = requestForNotif?.assignedTalentManagerId || requestForNotif?.assignedAccountManagerId;
-      if (adminUserId) {
-        await supabase.from("notifications").insert({
-          id: crypto.randomUUID(),
-          user_id: adminUserId,
-          title: "Interview Request Received",
-          message: `Client has requested an interview with ${requestInterviewTarget.talentName} on ${newInterview.date} at ${newInterview.time} for request: ${requestForNotif?.serviceType || requestInterviewTarget.requestId}.`,
-          module_type: 'interviews',
-          read: false,
-          created_at: new Date().toISOString(),
+        const msResponse = await apiFetch('/api/matches', {
+          method: 'PATCH',
+          body: JSON.stringify({ matchId: newInterview.matchId, status: 'shortlisted' })
         });
+        if (!msResponse.ok) {
+          const detail = await msResponse.json().catch(() => ({}));
+          console.error('[ClientDashboard] match not shortlisted:', detail?.error);
+        }
       }
+
+      // The route notified the candidate, in their own timezone and with a
+      // calendar file, and it tells operations as well. The two inserts that
+      // used to live here duplicated the first and addressed the second from
+      // the browser to the notifications table, which denies every write.
 
       if (setInterviews) {
         // Optimistically update local interviews if possible
@@ -844,22 +830,20 @@ export default function ClientDashboard({
     const updatedRehireRequests = [...(rehireRequests || []), newRehireRequest];
 
     try {
-      const { error: reqErr } = await supabase.from('talent_requests').insert({
-        client_id: currentUser?.id,
-        service_type: 'Re-hire',
-        payload: {
-          ...newRehireRequest,
-          referenceNumber: `KNG-REHIRE-${Math.floor(1000 + Math.random() * 9000)}`
-        }
+      // Through the request route, like every other service request. The
+      // browser insert skipped the service-type check, the reference number
+      // and the audit entry, and nothing told operations it had arrived.
+      const response = await apiFetch('/api/requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          request: { ...newRehireRequest, serviceType: 'Re-hire' }
+        })
       });
-      if (reqErr) throw reqErr;
 
-      await supabase.from("notifications").insert({
-        user_id: currentUser?.id,
-        title: "Re-hire Request Submitted",
-        content: `Re-hire request for "${rehireTarget.talentName}" submitted. Operations team will confirm terms shortly.`,
-        read_status: false,
-      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || 'The re-hire request was not submitted.');
+      }
 
       if (setRehireRequests) {
         setRehireRequests(updatedRehireRequests);
@@ -894,22 +878,27 @@ export default function ClientDashboard({
     const targetRole = reviewTalentDetails.role;
 
     try {
-      // 1. Insert primary review/telemetry into Supabase notifications
-      await supabase.from("notifications").insert({
-        user_id: currentUser?.id,
-        title: "Review Submitted",
-        content: `Review successfully posted for ${targetName} (${targetRole}) - Rating: ${reviewRating} Stars. ${publicFeedbackText ? `Comments: "${publicFeedbackText}"` : ""}`,
-        read_status: false,
+      // A review has a table of its own now. It used to be written as two
+      // notification rows with the rating inside the message text, and the
+      // notifications table denies every browser write, so nothing was ever
+      // stored while the modal reported success.
+      const response = await apiFetch('/api/reviews', {
+        method: 'POST',
+        body: JSON.stringify({
+          talentId: reviewTalentDetails.id,
+          rating: reviewRating,
+          technicalScore: techSkillValue,
+          communicationScore: commValue,
+          reliabilityScore: reliabilityValue,
+          publicFeedback: publicFeedbackText,
+          privateFeedback: privateFeedbackText,
+          isAnonymous: isAnonymousPost
+        })
       });
 
-      // 2. If private feedback is provided, insert a confidential admin notification log
-      if (privateFeedbackText.trim()) {
-        await supabase.from("notifications").insert({
-          user_id: currentUser?.id,
-          title: "Confidential Admin Review",
-          content: `CONFIDENTIAL ADMIN-ONLY REVIEW for ${targetName} (${targetRole}). Ratings - Overall: ${reviewRating} Stars, Tech: ${techSkillValue}, Comm: ${commValue}, Reliability: ${reliabilityValue}. Private feedback: "${privateFeedbackText}".`,
-          read_status: false,
-        });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || 'Your review was not saved.');
       }
 
       // Update local state notifications so it displays in UI logs
@@ -936,13 +925,14 @@ export default function ClientDashboard({
         }
         setNotifications([...(notifications || []), ...newNotifs]);
       }
-    } catch (e) {
-      console.error("Error inserting review telemetry:", e);
+    } catch (e: any) {
+      console.error("Review not saved:", e);
+      // The success alert used to fire whether or not anything was stored.
+      alert(e?.message || "Your review was not saved. Please try again.");
+      return;
     }
 
-    alert(
-      `Thank you! Your verified evaluation for ${targetName} has been logged in our EOR ledger and securely synchronized.`,
-    );
+    alert(`Thank you. Your review of ${targetName} has been recorded.`);
 
     // Reset inputs & close modal
     setReviewRating(0);
@@ -1014,16 +1004,10 @@ export default function ClientDashboard({
       ]);
     }
 
-    try {
-      await supabase.from("notifications").insert({
-        user_id: currentUser?.id,
-        title: "Interview Proposal Dispatched",
-        content: `Interview request successfully sent to ${candName}.`,
-        read_status: false,
-      });
-    } catch (error) {
-      // Swallow notification errors; app should continue for the user.
-    }
+    // The confirmation the client sees is the alert below. The insert here
+    // wrote a notification to themselves about their own click; the
+    // notifications table denies browser writes, so it never landed, and the
+    // candidate is notified by the interview route in any case.
 
     alert(
       `Interview proposal dispatched to ${candName}. Candidate has been notified to choose available slot.`,
@@ -2255,21 +2239,14 @@ export default function ClientDashboard({
                   (m: any) => m.status === "Interview Scheduled",
                 );
                 const hasMatch = reqMatches.length > 0;
-                const pct =
-                  req.status === "Candidates Ready"
-                    ? 75
-                    : hasInterview
-                      ? 90
-                      : hasMatch
-                        ? 50
-                        : 20;
-                const stages = [
-                  { label: "Sourcing", pct: 20 },
-                  { label: "Matching", pct: 50 },
-                  { label: "Shortlisted", pct: 75 },
-                  { label: "Interview", pct: 90 },
-                  { label: "Hired", pct: 100 },
-                ];
+                // Progress comes from the request's own status. It used to be
+                // inferred from whether matches or interviews happened to
+                // exist, which disagreed with the tracker on the detail page.
+                const pct = clientStatusView(req.status).pct;
+                const stages = CLIENT_JOURNEY_STEPS.map((label, index) => ({
+                  label,
+                  pct: clientJourneyStepPct(index),
+                }));
                 return (
                   <div key={req.id}>
                     <div
@@ -2479,41 +2456,46 @@ export default function ClientDashboard({
         
         // If conversation doesn't exist yet, create it!
         if (!finalConvoId) {
-          const newConvoId = 'conv_' + Math.random().toString(36).substr(2, 9);
-          const { error: convoError } = await supabase.from('conversations').insert({
-            id: newConvoId,
-            client_id: currentUser?.id,
-            admin_id: currentUser?.account_manager_id || null,
-            context_type: contextType,
-            context_id: contextId
+          // Through the server. A browser insert had to know the schema and
+          // guess at the participants; the route resolves operations itself,
+          // so a message to support actually reaches somebody.
+          const convoResponse = await apiFetch('/api/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'start',
+              type: 'client_admin',
+              contextType,
+              contextId
+            })
           });
-          if (convoError) throw convoError;
-          finalConvoId = newConvoId;
+          const convoPayload = await convoResponse.json().catch(() => ({}));
+          if (!convoResponse.ok) throw new Error(convoPayload?.error || 'Could not start the conversation.');
+          finalConvoId = convoPayload.data?.id;
+          if (!finalConvoId) throw new Error('The conversation was created but returned no id.');
         }
 
         let attachment_url = null;
         if (msgAttachment) {
-          const fileExt = msgAttachment.name.split('.').pop();
-          const fileName = `${Math.random()}.${fileExt}`;
-          const filePath = `${finalConvoId}/${fileName}`;
-          
-          const { error: uploadError } = await supabase.storage.from('message_attachments').upload(filePath, msgAttachment);
-          if (uploadError) throw uploadError;
-          
-          const { data: publicUrlData } = supabase.storage.from('message_attachments').getPublicUrl(filePath);
-          attachment_url = publicUrlData.publicUrl;
+          // Through the server. The browser chose the object path itself
+          // and uploaded with the anon key, then called getPublicUrl on a
+          // private bucket, so every attachment link was dead on arrival.
+          const uploaded = await uploadFile('message_attachment', msgAttachment);
+          attachment_url = uploaded.url;
         }
 
-        const newMessageId = 'msg_' + Math.random().toString(36).substr(2, 9);
-        const { error: msgError } = await supabase.from('messages').insert({
-          id: newMessageId,
-          conversation_id: finalConvoId,
-          sender_id: currentUser?.id,
-          content: msgInput,
-          attachment_url
+        const msgResponse = await apiFetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversationId: finalConvoId,
+            content: msgInput,
+            attachmentUrl: attachment_url,
+            attachmentName: msgAttachment?.name || null
+          })
         });
-        
-        if (msgError) throw msgError;
+        const msgPayload = await msgResponse.json().catch(() => ({}));
+        if (!msgResponse.ok) throw new Error(msgPayload?.error || 'Your message was not sent.');
 
         setMsgInput('');
         setMsgAttachment(null);
@@ -3075,21 +3057,23 @@ export default function ClientDashboard({
               {filteredRequests.length > 0 ? (
                 filteredRequests.map((req) => {
                   const isHire = req.serviceType?.toLowerCase() === "hire";
-                  const isMatching = req.status === "Matching";
 
-                  // Dot status mapping
-                  let statusDotColor = "#F59E0B"; // Qualification (yellow)
-                  let statusText = "Qualification";
-                  if (req.status === "Matching") {
-                    statusDotColor = "#06B6D4"; // Matching (cyan)
-                    statusText = "Matching";
-                  } else if (req.status === "Completed") {
-                    statusDotColor = "#10B981"; // Completed (green)
-                    statusText = "Completed";
-                  } else if (req.status === "Interview") {
-                    statusDotColor = "#3B82F6"; // Interview (blue)
-                    statusText = "Interview";
-                  }
+                  // Derived from the canonical status. The previous version
+                  // compared against labels the normaliser never emits, so
+                  // every row read "Qualification" regardless of progress.
+                  const rowView = clientStatusView(req.status);
+                  const statusText = rowView.label;
+                  const isMatching = rowView.label === "Matching";
+                  const CLIENT_STATUS_DOT: Record<string, string> = {
+                    Submitted: "#F59E0B",
+                    Matching: "#06B6D4",
+                    "Candidates Ready": "#F97316",
+                    Interview: "#3B82F6",
+                    Offer: "#8B5CF6",
+                    Hired: "#10B981",
+                    Closed: "#6B7280",
+                  };
+                  const statusDotColor = CLIENT_STATUS_DOT[rowView.label] || "#F59E0B";
 
                   return (
                     <tr
@@ -3368,38 +3352,15 @@ export default function ClientDashboard({
       (m: any) => matchingShortlistedState[m.talentId],
     ).length;
     const interviewCount = interviewRequests[request.id]?.length || 0;
-    const timeline = [
-      {
-        label: "New Request",
-        active:
-          request.status === "New Request" ||
-          request.status === "Reviewing" ||
-          request.status === "Matching" ||
-          request.status === "Interview" ||
-          request.status === "Completed",
-      },
-      {
-        label: "Reviewing",
-        active:
-          request.status === "Reviewing" ||
-          request.status === "Matching" ||
-          request.status === "Interview" ||
-          request.status === "Completed",
-      },
-      {
-        label: "Matching",
-        active:
-          request.status === "Matching" ||
-          request.status === "Interview" ||
-          request.status === "Completed",
-      },
-      {
-        label: "Interview",
-        active:
-          request.status === "Interview" || request.status === "Completed",
-      },
-      { label: "Completed", active: request.status === "Completed" },
-    ];
+    // Derived from the stored canonical status rather than compared against
+    // labels. The old version keyed on "Matching", "Interview" and
+    // "Completed", none of which the normaliser can ever produce, so the
+    // tracker never moved past the first step whatever operations did.
+    const journeyView = clientStatusView(request.status);
+    const timeline = CLIENT_JOURNEY_STEPS.map((label, index) => ({
+      label,
+      active: journeyView.step >= index,
+    }));
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
@@ -4373,7 +4334,7 @@ export default function ClientDashboard({
                     >
                       <span style={{ color: "#64748B" }}>Technical Fit</span>
                       <strong style={{ color: "#1E293B" }}>
-                        {viewingTalentProfile.vettingScores?.technical || 94}%
+                        {formatVettingScore(viewingTalentProfile.vettingScores?.technical)}
                       </strong>
                     </div>
                     <div
@@ -4385,23 +4346,14 @@ export default function ClientDashboard({
                     >
                       <span style={{ color: "#64748B" }}>Behavioral Fit</span>
                       <strong style={{ color: "#1E293B" }}>
-                        {viewingTalentProfile.vettingScores?.behavioral || 90}%
+                        {formatVettingScore(viewingTalentProfile.vettingScores?.behavioral)}
                       </strong>
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Communication</span>
-                      <strong style={{ color: "#1E293B" }}>
-                        {viewingTalentProfile.vettingScores?.communication ||
-                          95}
-                        %
-                      </strong>
-                    </div>
+                    {/* The Communication row was removed on 2 Nov 2026.
+                          Nothing ever scored it, so it fell through to a
+                          hardcoded 95% shown to clients as a vetting result.
+                          Communication is assessed inside the behavioural
+                          interview, which is already shown above. */}
                     <div
                       style={{
                         display: "flex",
@@ -4411,9 +4363,7 @@ export default function ClientDashboard({
                     >
                       <span style={{ color: "#64748B" }}>Remote Readiness</span>
                       <strong style={{ color: "#10B981" }}>
-                        {viewingTalentProfile.vettingScores?.remoteReadiness ||
-                          98}
-                        %
+                        {formatVettingScore(viewingTalentProfile.vettingScores?.remoteReadiness)}
                       </strong>
                     </div>
                   </div>
@@ -4777,38 +4727,54 @@ export default function ClientDashboard({
                       };
 
                       try {
-                        const { error: contractErr } = await supabase.from('contracts').insert({
-                          talent_id: newContract.talentId,
-                          client_id: currentUser?.id,
-                          service_type: newContract.role,
-                          rate_type: newContract.rateType,
-                          rate_amount: newContract.rateAmount,
-                          start_date: newContract.startDate,
-                          status: 'pending'
+                        // One server-side call. It authorises the request
+                        // against this client's organisation, writes the
+                        // contract, and reports honestly. Nothing below runs
+                        // unless the contract actually saved.
+                        // Creates an offer, not a contract. The contract is
+                        // created when the candidate accepts, so it always
+                        // has an agreement behind it.
+                        const res = await apiFetch('/api/offers', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            matchId: newContract.matchId,
+                            requestId: activeRequest?.id,
+                            talentId: newContract.talentId,
+                            roleTitle: newContract.role,
+                            serviceType: activeRequest?.serviceType || newContract.role,
+                            proposedRateUsd: newContract.rateAmount,
+                            proposedStartDate: newContract.startDate,
+                            paymentModel: 'flat_rate',
+                            paymentPeriod: 'monthly',
+                            clientNote: hireForm.notes,
+                            entryPoint: 'matched_talent_page'
+                          })
                         });
-                        if (contractErr) throw contractErr;
-
-                        await supabase.from('matches').update({
-                          status: 'offer_extended'
-                        }).eq('id', newContract.matchId);
-
-                        await supabase.from("notifications").insert({
-                          user_id: hireTarget.talentId,
-                          title: "Job Offer Received!",
-                          content: `You received a job offer for the "${newContract.role}" role at $${newContract.salary}/mo.`,
-                          read_status: false,
-                        });
+                        const result = await res.json();
+                        if (!res.ok || !result?.ok) {
+                          throw new Error(result?.error || 'The offer could not be saved.');
+                        }
 
                         if (setMatches) {
-                            setMatches(updatedMatches);
-                          }
-                          setShowHireModal(false);
-                          setHireTarget(null);
+                          setMatches(updatedMatches);
+                        }
+                        setShowHireModal(false);
+                        setHireTarget(null);
+
+                        // Secondary effects that did not land are named,
+                        // rather than hidden behind a success message.
+                        if (result.warnings?.length) {
                           alert(
-                            `Job Offer Extended to ${hireTarget.name} successfully! EOR drafting initiated.`,
+                            `Offer extended to ${hireTarget.name}, but some steps did not complete:\n\n` +
+                              result.warnings.join('\n')
                           );
+                        } else {
+                          alert(
+                            `Offer for ${hireTarget.name} submitted. Kongila will review the terms and send it to the candidate.`,
+                          );
+                        }
                       } catch (err: any) {
-                        alert("Failed to extend offer. Please try again.");
+                        alert(`Failed to extend offer. ${err?.message || 'Please try again.'}`);
                         console.error(err);
                       }
                     }}
@@ -5692,8 +5658,18 @@ export default function ClientDashboard({
     );
   };
 
-  const handleSinglePayment = (invoiceId: string, amount: number) => {
-    alert(`Payment gateway simulated for invoice ${invoiceId} ($${amount})`);
+  /**
+   * Opens the settle-invoice modal.
+   *
+   * This was `alert("Payment gateway simulated for invoice ...")`, which
+   * told a client their payment had been handled by something that does
+   * not exist.
+   */
+  const handleSinglePayment = (invoiceId: string) => {
+    const invoice = invoices.find((inv: any) => inv.id === invoiceId);
+    if (!invoice) return;
+    setSelectedInvoice(invoice);
+    setShowPaymentModal(true);
   };
 
   const renderBilling = () => {
@@ -5795,65 +5771,69 @@ export default function ClientDashboard({
       }
     };
 
+    /**
+     * Recording how a client intends to settle an invoice.
+     *
+     * This used to take no payment and then write status "paid" straight to
+     * the invoices table from the browser, telling the client their card
+     * payment "was successfully processed". No money moved. Kongila is
+     * launching without a payment provider, so there is no card path to
+     * take, and a fabricated confirmation is worse than none: it also
+     * released the candidate's payout, which is gated on the invoice being
+     * paid.
+     *
+     * An invoice is marked paid by finance, when the money has arrived.
+     */
     const handlePayNow = async () => {
       if (!selectedInvoice) return;
-      if (paymentMethod === "card") {
-        // REQ-KC-803: Online Card Payment immediate update
-        const { error } = await supabase
-          .from("invoices")
-          .update({ status: "paid" })
-          .eq("id", selectedInvoice.id);
-        if (error) {
-          alert("Payment failed. Please try again.");
+      try {
+        const res = await apiFetch('/api/finance/intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: selectedInvoice.id, method: paymentMethod })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(body.error || 'We could not record that just now. Please try again.');
           return;
         }
-        await supabase.from("notifications").insert({
-          user_id: currentUser?.id,
-          title: "Payment Successful",
-          content: `Payment of ${formatCurrency(selectedInvoice.totalUsd)} for ${selectedInvoice.invoiceNumber} was successfully processed via card.`,
-          read_status: false,
-        });
-        alert(
-          `Payment of ${formatCurrency(selectedInvoice.totalUsd)} successful! Receipt generated.`,
-        );
-        generateReceipt(selectedInvoice);
+        alert(body.message);
+      } catch {
+        alert('We could not record that just now. Please try again.');
+      } finally {
         setShowPaymentModal(false);
         setSelectedInvoice(null);
-      } else {
-        // REQ-KC-804: Bank Transfer Instructions Display
-        alert(
-          "Bank transfer instructions noted. Invoice will remain in SENT status until reconciled by Finance Admin.",
-        );
-        setShowPaymentModal(false);
       }
     };
 
     const handleDispute = async () => {
-      if (!selectedInvoice || !disputeReason) return;
-      // REQ-KC-806: Invoice Dispute Flow
-      const { error } = await supabase
-        .from("invoices")
-        .update({
-          is_disputed: true,
-          dispute_reason: disputeReason,
-        })
-        .eq("id", selectedInvoice.id);
+      if (!selectedInvoice || !disputeReason.trim()) return;
 
-      if (error) {
-        alert("Failed to submit dispute.");
+      // Recorded by the server, which also tells finance. The browser used
+      // to write the dispute itself and then insert a notification
+      // addressed to currentUser.id, the client who raised it, so nobody
+      // at Kongila ever heard about it.
+      try {
+        const res = await apiFetch('/api/finance/intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'dispute',
+            invoiceId: selectedInvoice.id,
+            reason: disputeReason
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(body.error || 'We could not record the dispute. Please try again.');
+          return;
+        }
+        alert(body.message);
+      } catch {
+        alert('We could not record the dispute. Please try again.');
         return;
       }
 
-      await supabase.from("notifications").insert({
-        user_id: currentUser?.id,
-        title: "Invoice Disputed",
-        content: `Dispute filed for ${selectedInvoice.invoiceNumber}. Our Finance Admin will review this shortly. Automated reminders are paused.`,
-        read_status: false,
-      });
-
-      alert(
-        "Dispute submitted successfully. Our Finance team has been notified.",
-      );
       setShowDisputeModal(false);
       setSelectedInvoice(null);
       setDisputeReason("");
@@ -6866,14 +6846,12 @@ export default function ClientDashboard({
                                       setMatches={setMatches}
                                       onScheduleMeeting={(talent, req) => setScheduleModalData({ talent, request: req })}
                                       onExtendOffer={onExtendOffer}
-                                      saveToDb={saveToDb}
                                     />;
       case 'scheduling':     return <ClientInterviewsPanel 
                                       currentUser={currentUser}
                                       interviews={interviews}
                                       talents={talents}
                                       setInterviews={setInterviews}
-                                      saveToDb={saveToDb}
                                       onReschedule={(iv) => {
                                         const talent = talents.find(t => t.id === iv.talentId);
                                         const req = requests.find(r => r.id === iv.requestId);
@@ -6892,7 +6870,6 @@ export default function ClientDashboard({
             talents={talents}
             requests={requests}
             onAddRequest={onAddRequest}
-            saveToDb={saveToDb}
           />
         );
       case 'billing':        return renderBilling();
@@ -6905,7 +6882,13 @@ export default function ClientDashboard({
             contracts={contracts} 
             onSaveSettings={async (settings) => {
               if (profile) {
-                await supabase.from('client_profiles').update({ settings }).eq('id', profile.id);
+                // Through the server. client_profiles has RLS off in the
+                // live database, so a browser update to it landed on any row
+                // whose id was supplied.
+                await apiFetch('/api/company', {
+                  method: 'PATCH',
+                  body: JSON.stringify({ settings })
+                });
                 // Also trigger sync
               }
             }} 
@@ -6919,7 +6902,13 @@ export default function ClientDashboard({
               const myNotifs = notifications.filter((n: any) => n.userId === currentUser?.id);
               const unreadIds = myNotifs.filter((n: any) => !n.read).map((n: any) => n.id);
               if (unreadIds.length > 0) {
-                await supabase.from('notifications').update({ read: true }).in('id', unreadIds);
+                // Through the server, which scopes the update to the
+                // caller so nobody can clear another person's notifications
+                // by sending their ids.
+                await apiFetch('/api/notifications', {
+                  method: 'POST',
+                  body: JSON.stringify({ notificationIds: unreadIds })
+                });
                 if (setNotifications) {
                   setNotifications(notifications.map((n: any) => unreadIds.includes(n.id) ? { ...n, read: true } : n));
                 }
@@ -7612,6 +7601,20 @@ export default function ClientDashboard({
         </main>
       </div>
 
+      {/* The client's signing modal. It was passed in as a prop and never
+          rendered, so the client half of a countersigned contract did not
+          exist. */}
+      {showSignModal && signingContractId && (
+        <ClientSignModal
+          contractId={signingContractId}
+          onClose={() => setShowSignModal(false)}
+          onSigned={(result) => {
+            setShowSignModal(false);
+            onSignContract(result);
+          }}
+        />
+      )}
+
       {/* ── Video Meeting Scheduler Modal Overlay ── */}
       {showCalendar && selectedTalent && (
         <div
@@ -8128,7 +8131,7 @@ export default function ClientDashboard({
                                       ? alert(
                                           `Receipt downloaded for INV-${inv.id.replace("inv_", "").substring(0, 6).toUpperCase()}`,
                                         )
-                                      : handleSinglePayment(inv.id, inv.amount)
+                                      : handleSinglePayment(inv.id)
                                   }
                                   style={{
                                     background: "transparent",
@@ -8979,6 +8982,139 @@ export default function ClientDashboard({
           onClose={() => setScheduleModalData(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The client's side of signing.
+ *
+ * There was none. `showSignModal` and `signingContractId` were threaded all
+ * the way into this component and never rendered, and `handleSignContract`
+ * wrote the contract to "Signed" from the browser with no signature, no
+ * name, no timestamp from anywhere trustworthy, and an audit line crediting
+ * the candidate for the client's action.
+ */
+function ClientSignModal({
+  contractId,
+  onClose,
+  onSigned
+}: {
+  contractId: string;
+  onClose: () => void;
+  onSigned: (result: any) => void;
+}) {
+  const [doc, setDoc] = React.useState<{ ready: boolean; text: string; reason: string | null } | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [typedName, setTypedName] = React.useState('');
+  const [scrolled, setScrolled] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiFetch(`/api/signatures?contractId=${encodeURIComponent(contractId)}&view=document`);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Could not load the agreement (${res.status}).`);
+        if (!cancelled) setDoc({ ready: Boolean(body.ready), text: String(body.text || ''), reason: body.reason || null });
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || 'Could not load the agreement.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [contractId]);
+
+  const ready = Boolean(doc?.ready);
+  const canSign = ready && scrolled && typedName.trim().length > 1 && !busy;
+
+  const submit = async () => {
+    if (!canSign) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch('/api/signatures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractId, typedName: typedName.trim() })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Your signature was not recorded.');
+      onSigned(body.signature || {});
+    } catch (err: any) {
+      setError(err?.message || 'Your signature was not recorded.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: '24px' }}>
+      <div style={{ background: '#fff', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '720px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#1A2340' }}>Review &amp; sign</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '14px', cursor: 'pointer', color: '#64748B', fontWeight: 600 }}>✕ Close</button>
+        </div>
+
+        <div
+          onScroll={(e) => {
+            const t = e.target as HTMLDivElement;
+            if (t.scrollHeight - t.scrollTop <= t.clientHeight + 50) setScrolled(true);
+          }}
+          style={{ height: '340px', overflowY: 'auto', background: '#F8FAFC', padding: '24px', borderRadius: '10px', border: '1px solid #CBD5E1', marginBottom: '16px', lineHeight: 1.6, color: '#334155' }}
+        >
+          {loading ? (
+            <p style={{ color: '#64748B' }}>Loading the agreement…</p>
+          ) : (
+            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{doc?.text || ''}</pre>
+          )}
+        </div>
+
+        {!loading && !ready && doc && (
+          <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', padding: '14px', borderRadius: '8px', marginBottom: '14px', fontSize: '14px' }}>
+            <strong style={{ display: 'block', marginBottom: '4px' }}>This agreement cannot be signed yet.</strong>
+            {doc.reason}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '12px', borderRadius: '8px', marginBottom: '14px', fontSize: '14px' }}>{error}</div>
+        )}
+
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px', color: '#0369A1' }}>Type your full legal name to sign</label>
+            <input
+              type="text"
+              value={typedName}
+              onChange={(e) => setTypedName(e.target.value)}
+              disabled={!ready || !scrolled}
+              placeholder="e.g. Jane Doe"
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #7DD3FC', fontSize: '14px', outline: 'none' }}
+            />
+          </div>
+          <button
+            onClick={submit}
+            disabled={!canSign}
+            style={{ padding: '12px 22px', background: canSign ? '#0047CC' : '#94A3B8', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: canSign ? 'pointer' : 'not-allowed' }}
+          >
+            {busy ? 'Signing…' : 'Sign contract'}
+          </button>
+        </div>
+
+        {ready && !scrolled && (
+          <p style={{ fontSize: '13px', color: '#B45309', marginTop: '12px' }}>Scroll to the end of the document to enable signing.</p>
+        )}
+        <p style={{ fontSize: '12px', color: '#64748B', marginTop: '14px', lineHeight: 1.5 }}>
+          Signing records your name, the time, your IP address and your browser, with a SHA-256
+          fingerprint of the exact text above, so both parties can confirm they signed the same document.
+        </p>
+      </div>
     </div>
   );
 }

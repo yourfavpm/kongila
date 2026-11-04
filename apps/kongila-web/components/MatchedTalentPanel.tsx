@@ -1,5 +1,15 @@
 import React, { useState, useMemo } from "react";
-import { supabase } from "../lib/supabaseClient";
+import { apiFetch } from "../lib/apiFetch";
+
+/**
+ * A match is rejected when its status is "rejected". Rows written before the
+ * status vocabulary was fixed may still read "rejected_by_client", so both
+ * are recognised here. Only "rejected" is ever written.
+ */
+function isRejectedMatch(status: unknown): boolean {
+  const s = String(status || "").toLowerCase();
+  return s === "rejected" || s === "rejected_by_client";
+}
 
 interface MatchedTalentPanelProps {
   currentUser: any;
@@ -9,7 +19,6 @@ interface MatchedTalentPanelProps {
   setMatches?: (matches: any[]) => void;
   onScheduleMeeting?: (talent: any, request: any) => void;
   onExtendOffer?: (talent: any) => void;
-  saveToDb?: (updatedDb: any) => Promise<void>;
 }
 
 export default function MatchedTalentPanel({
@@ -19,7 +28,6 @@ export default function MatchedTalentPanel({
   talents,
   setMatches,
   onScheduleMeeting,
-  saveToDb
 }: MatchedTalentPanelProps) {
   const [sortOption, setSortOption] = useState<"matchScore" | "vettingScore" | "recent">("matchScore");
   const [shortlistedMap, setShortlistedMap] = useState<Record<string, string[]>>({});
@@ -47,7 +55,7 @@ export default function MatchedTalentPanel({
       const requestMatches = matches.filter(m => 
         m.requestId === req.id && 
         // Must not be rejected
-        (m.status || "").toLowerCase() !== "rejected_by_client"
+        !isRejectedMatch(m.status)
       ).map(m => {
         const talent = talents.find(t => t.id === m.talentId) || { name: "Unknown", id: m.talentId, primarySkills: [], title: "Unknown Role" };
         return { match: m, talent };
@@ -108,33 +116,38 @@ export default function MatchedTalentPanel({
     const { match, request } = rejectionCandidate;
 
     try {
-      // Update in Supabase
-      await supabase.from("matches").update({
-        status: "rejected_by_client",
-        client_rejection_reason: rejectionReason
-      }).eq("id", match.id);
+      // Through the server. matches_status_check allows only
+      // proposed/shortlisted/rejected/accepted; "rejected_by_client" was
+      // rejected by the database and the error was logged and swallowed, so
+      // no rejection was ever recorded while the screen said otherwise.
+      const response = await apiFetch('/api/matches', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          matchId: match.id,
+          status: 'rejected',
+          rejectionReason
+        })
+      });
+
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail?.error || 'The rejection was not saved.');
+      }
 
       // Optimistic UI update
       if (setMatches) {
-        const updated = matches.map(m => m.id === match.id ? { ...m, status: "rejected_by_client", clientRejectionReason: rejectionReason } : m);
+        const updated = matches.map(m => m.id === match.id ? { ...m, status: "rejected", clientRejectionReason: rejectionReason } : m);
         setMatches(updated);
       }
 
-      // Check if ALL candidates for this request are now rejected
-      const remainingForReq = matches.filter(m => m.requestId === request.id && m.id !== match.id && m.status !== "rejected_by_client");
-      if (remainingForReq.length === 0) {
-         // Notify Account Manager
-         await supabase.from("notifications").insert({
-           user_id: "admin_team",
-           title: "All Candidates Rejected",
-           content: `Client ${currentUser?.name} has rejected ALL submitted candidates for request ${request.roleDescription}. Discovery call needed.`,
-           read_status: false,
-         });
-      }
+      // Operations is told by the route when the request runs out of
+      // candidates. The insert here addressed user_id "admin_team",
+      // which is not a row in users, so the foreign key refused it
+      // every time and nobody was ever told.
 
-    } catch(err) {
+    } catch(err: any) {
       console.error(err);
-      alert("Failed to reject candidate.");
+      alert(err?.message || "Failed to reject candidate.");
     }
 
     setRejectionModalOpen(false);

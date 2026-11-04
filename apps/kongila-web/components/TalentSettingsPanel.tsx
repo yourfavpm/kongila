@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard as Card, NeonButton as Button } from '@kongila/ui';
 import { TalentProfile, TalentSettings } from '@kongila/shared-types';
-import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import QRCode from 'react-qr-code';
 
 interface TalentSettingsPanelProps {
@@ -84,13 +84,22 @@ export default function TalentSettingsPanel({ profile, onUpdateProfile }: Talent
       onUpdateProfile({ ...profile, settings: updatedSettings });
     }
 
-    // Backend Update (REQ-KT-1301)
-    const { error } = await supabase
-      .from('talent_profiles')
-      .update({ settings: updatedSettings })
-      .eq('id', profile.id);
-
-    if (error) console.error('Failed to update notification settings', error);
+    // Backend Update (REQ-KT-1301). Through the server: talent_profiles
+    // has RLS off in the live database, so a browser update to it was
+    // landing on any row whose id was supplied.
+    try {
+      const response = await apiFetch('/api/profile/talent', {
+        method: 'PATCH',
+        body: JSON.stringify({ action: 'settings', settings: updatedSettings })
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Your settings were not saved.');
+      }
+    } catch (e: any) {
+      console.error('Failed to update notification settings', e);
+      showToast(e?.message || 'Your settings were not saved.');
+    }
   };
 
   const handleVerifyMfa = () => {
@@ -109,15 +118,25 @@ export default function TalentSettingsPanel({ profile, onUpdateProfile }: Talent
       return;
     }
     
-    // Create support ticket for Super Admin
-    await supabase.from('support_tickets').insert({
-      talent_id: profile.id,
-      category: 'Account Access',
-      subject: 'Account Deletion Request',
-      description: `Reason: ${deleteReason}`,
-      status: 'open',
-      priority: 'Urgent'
+    // Through the server, which also tells operations. Priority was 'Urgent',
+    // which support_tickets_priority_check does not allow, so this insert was
+    // rejected and no deletion request ever reached anyone. The route sets
+    // the priority from the category.
+    const response = await apiFetch('/api/support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category: 'Account Access',
+        subject: 'Account Deletion Request',
+        description: `Reason: ${deleteReason}`
+      })
     });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      showToast(payload?.error || 'Your request could not be submitted. Contact support directly.');
+      return;
+    }
 
     setShowDeleteConfirm(false);
     setDeleteReason('');

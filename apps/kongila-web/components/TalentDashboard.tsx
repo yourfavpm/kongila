@@ -1,7 +1,25 @@
+import { apiFetch } from '../lib/apiFetch';
+import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { formatCurrency } from '@kongila/utils';
+import { formatCurrency, interviewInstant, formatForBothParties, viewerTimeZone, wallClockToUtc, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
+
+/**
+ * When an interview starts, in the candidate's own zone, with the client's
+ * time underneath.
+ *
+ * Every one of these used to print the raw wall-clock string the other party
+ * typed, labelled "(Your Local Time)". A client in New York booking 15:00
+ * showed here as 15:00; the real start was 21:00 in Lagos. Candidates joined
+ * six hours early and nothing anywhere raised an error.
+ */
+function whenForTalent(interview: any, fallbackZone?: string | null) {
+  const iso = interviewInstant(interview);
+  const talentZone = interview?.talentTimezone || interview?.talent_timezone || fallbackZone || viewerTimeZone();
+  const clientZone = interview?.clientTimezone || interview?.client_timezone || null;
+  return formatForBothParties(iso, talentZone, clientZone, "client's time");
+}
 import type { Interview, Contract } from '@kongila/shared-types';
 import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -33,6 +51,8 @@ interface TalentDashboardProps {
   clientRequests?: any[];
   allDocuments?: any[];
   interviews?: any[];
+  offers?: any[];
+  onRespondToOffer?: (offerId: string, decision: 'accept' | 'decline', reason?: string) => Promise<boolean>;
   dashboardNotifications?: any[];
   setDashboardNotifications?: (notifications: any[]) => void;
   // Assessment engine props
@@ -47,6 +67,8 @@ interface TalentDashboardProps {
   onUpdateProfile?: (updatedProfile: any) => void;
   onUpdateMatch?: (updatedMatch: any) => void;
   onUpdateDocument?: (updatedDocument: any) => void;
+  supportTickets?: any[];
+  setSupportTickets?: (tickets: any[] | ((previous: any[]) => any[])) => void;
 }
 
 type Section =
@@ -456,6 +478,8 @@ const ProfileSection = ({
   skillAssessmentResults = [],
   talentSkillAssessments = [],
   dashboardNotifications = [],
+  offers = [],
+  onRespondToOffer,
   setActiveSection,
   onOpenAssessment,
   onUpdateProfile,
@@ -469,6 +493,8 @@ const ProfileSection = ({
   skillAssessmentResults?: any[];
   talentSkillAssessments?: any[];
   dashboardNotifications?: any[];
+  offers?: any[];
+  onRespondToOffer?: (offerId: string, decision: 'accept' | 'decline', reason?: string) => Promise<boolean>;
   setActiveSection: (sec: Section) => void;
   onOpenAssessment?: (tsaId: string) => void;
   onUpdateProfile?: (updatedProfile: any) => void;
@@ -577,6 +603,45 @@ const ProfileSection = ({
           This profile has changed after vetting and requires admin re-review before core updates can be approved.
         </div>
       )}
+      {offers.filter((o: any) => o.canRespond).map((offer: any) => (
+        <div key={offer.id} style={{
+          background: 'rgba(16, 185, 129, 0.08)',
+          border: '1px solid rgba(16, 185, 129, 0.35)',
+          borderRadius: '16px',
+          padding: '18px 20px',
+        }}>
+          <div style={{ color: '#065F46', fontSize: '15px', fontWeight: 800 }}>
+            You have a job offer
+          </div>
+          <p style={{ margin: '6px 0 0 0', color: '#065F46', fontSize: '13px' }}>
+            {offer.role_title} at ${Number(offer.proposed_rate_usd || 0).toLocaleString()}
+            {offer.payment_period === 'weekly' ? ' per week' : ' per month'}
+            {offer.proposed_start_date ? `, starting ${new Date(offer.proposed_start_date).toLocaleDateString()}` : ''}
+          </p>
+          {offer.talent_response_deadline && (
+            <p style={{ margin: '4px 0 0 0', color: '#B91C1C', fontSize: '12px', fontWeight: 700 }}>
+              Respond by {new Date(offer.talent_response_deadline).toLocaleDateString()}
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => onRespondToOffer && onRespondToOffer(offer.id, 'accept')}
+              style={{ background: '#10B981', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}
+            >
+              Accept offer
+            </button>
+            <button
+              onClick={() => {
+                const reason = window.prompt('Let the team know why you are declining (optional):') || undefined;
+                if (onRespondToOffer) onRespondToOffer(offer.id, 'decline', reason);
+              }}
+              style={{ background: 'transparent', color: '#B91C1C', border: '1px solid rgba(185, 28, 28, 0.4)', borderRadius: '10px', padding: '10px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      ))}
       {pendingDocs.length > 0 && (
         <div style={{
           background: 'rgba(239, 68, 68, 0.08)',
@@ -745,8 +810,13 @@ const ProfileSection = ({
                   Live Behavioural Interview
                 </div>
                 <div style={{ fontSize: '13px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                  <span>📅 {new Date(activeVettingStage.interviewDate).toLocaleDateString()}</span>
-                  <span>🕒 {activeVettingStage.interviewTime} (Your Local Time)</span>
+                  <span>🕒 {whenForTalent({
+                    date: activeVettingStage.interviewDate,
+                    time: activeVettingStage.interviewTime,
+                    scheduled_time: activeVettingStage.interviewScheduledTime,
+                    scheduled_timezone: activeVettingStage.interviewTimezone,
+                    talent_timezone: profile?.timezone
+                  }, profile?.timezone).viewer}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -1179,7 +1249,7 @@ const MOCK_INTERVIEWS: Interview[] = [
     date: '2026-07-12',
     time: '10:00',
     status: 'Scheduled',
-    meetingLink: 'https://meet.google.com/abc-defg-hij',
+    meetingLink: undefined,
     createdAt: new Date().toISOString()
   },
   {
@@ -1199,7 +1269,7 @@ const MOCK_INTERVIEWS: Interview[] = [
   }
 ];
 
-const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[] }) => {
+const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { scheduledInterviews?: any[]; profile?: any; onRespond?: (interviewId: string, accept: boolean) => void }) => {
   const [activeTab, setActiveTab] = useState<'upcoming'|'reschedules'|'past'>('upcoming');
   const interviews = scheduledInterviews || MOCK_INTERVIEWS;
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
@@ -1214,10 +1284,25 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
     setEditingNotesId(null);
   };
 
-  const generateGoogleCalendarLink = (i: any) => {
-    const start = new Date(`${i.date}T${i.time}`).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    const end = new Date(new Date(`${i.date}T${i.time}`).getTime() + 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, "");
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Interview+-+${encodeURIComponent(i.title)}&dates=${start}/${end}&details=Meeting+Link:+${encodeURIComponent(i.meetingLink || '')}`;
+  /**
+   * Built from the stored instant, not the wall-clock text.
+   *
+   * There were three of these across the apps and they disagreed: two
+   * appended a literal Z to a zoneless local time, one did not, one went
+   * through a Date object. The same interview produced three different
+   * calendar times. This one is the only remaining builder on the talent
+   * side, and it returns null when the instant is unknown rather than a link
+   * to the wrong moment.
+   */
+  const generateGoogleCalendarLink = (i: any): string | null => {
+    const iso = interviewInstant(i);
+    if (!iso) return null;
+    const stamp = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const start = new Date(iso);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('Interview - ' + (i.title || ''))}` +
+      `&dates=${stamp(start)}/${stamp(end)}` +
+      `&details=${encodeURIComponent(i.meetingLink ? 'Joining link: ' + i.meetingLink : 'Joining details will follow before the call.')}`;
   };
 
   return (
@@ -1292,8 +1377,14 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {i.proposedNewDate ? new Date(i.proposedNewDate).toLocaleDateString() : 'TBD'}</span>
-                    <span>🕒 {i.proposedNewTime || 'TBD'} (Your Local Time)</span>
+                    <span>🕒 {whenForTalent({
+                      date: i.proposedNewDate,
+                      time: i.proposedNewTime,
+                      scheduled_time: i.proposedTime,
+                      scheduled_timezone: i.proposedTimezone,
+                      talent_timezone: i.talentTimezone || profile?.timezone,
+                      client_timezone: i.clientTimezone
+                    }, profile?.timezone).viewer}</span>
                   </div>
                   {i.rescheduleReason && (
                     <div style={{ marginTop: '12px', fontSize: '13px', color: '#475569', background: '#F8FAFC', padding: '8px 12px', borderRadius: '6px' }}>
@@ -1324,11 +1415,38 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
                     {i.title}
                   </div>
                   <div style={{ fontSize: '14px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
-                    <span>📅 {new Date(i.date).toLocaleDateString()}</span>
-                    <span>🕒 {i.time} (Your Local Time)</span>
+                    <span>🕒 {whenForTalent(i, profile?.timezone).viewer}</span>
                   </div>
+                  {whenForTalent(i, profile?.timezone).other && (
+                    <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '2px' }}>
+                      {whenForTalent(i, profile?.timezone).other}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  {/* A candidate could not accept or decline an interview at
+                      all. The client flow wrote Scheduled straight away, so
+                      the first they heard was a confirmation of a call they
+                      had never been asked about. */}
+                  {['Proposed', 'client_requested', 'sent_to_talent', 'pending_confirmation'].includes(String(i.status)) && onRespond && (
+                    <>
+                      <button onClick={() => onRespond(i.id, true)} style={{
+                        padding: '10px 16px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
+                      }}>
+                        Accept
+                      </button>
+                      <button onClick={() => onRespond(i.id, false)} style={{
+                        padding: '10px 16px', background: 'transparent', color: '#DC2626', border: '1px solid #DC2626', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
+                      }}>
+                        Decline
+                      </button>
+                    </>
+                  )}
+                  {String(i.status) === 'talent_accepted' && (
+                    <span style={{ padding: '8px 12px', background: '#D1FAE5', color: '#047857', borderRadius: '8px', fontSize: '12px', fontWeight: 800 }}>
+                      You confirmed this
+                    </span>
+                  )}
                   {i.meetingLink ? (
                     <a href={i.meetingLink} target="_blank" rel="noopener noreferrer" style={{
                       padding: '10px 16px', background: '#0047CC', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, display: 'inline-block'
@@ -1338,11 +1456,13 @@ const InterviewsSection = ({ scheduledInterviews }: { scheduledInterviews?: any[
                   ) : (
                     <span style={{ color: '#6B7A99', fontSize: '13px' }}>Link will be provided soon</span>
                   )}
-                  <a href={generateGoogleCalendarLink(i)} target="_blank" rel="noopener noreferrer" style={{
-                    padding: '10px 16px', background: '#F5F7FA', color: '#1A2340', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, display: 'inline-block'
-                  }}>
-                    Add to Calendar
-                  </a>
+                  {generateGoogleCalendarLink(i) && (
+                    <a href={generateGoogleCalendarLink(i) as string} target="_blank" rel="noopener noreferrer" style={{
+                      padding: '10px 16px', background: '#F5F7FA', color: '#1A2340', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, display: 'inline-block'
+                    }}>
+                      Add to Calendar
+                    </a>
+                  )}
                 </div>
               </div>
             </Card>
@@ -2144,69 +2264,61 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
 };
 
 // ─── Section 4: Contracts (KT-CONTRACTS) ─────────────────────────────────────────
-const MOCK_CONTRACTS: Contract[] = [
-  {
-    id: 'KNG-CON-20260701-0001',
-    reference_number: 'KNG-CON-20260701-0001',
-    matchId: 'm-1',
-    clientId: 'client-1',
-    clientName: 'Nexus Health Systems',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    role: 'Lead React Architect',
-    role_title: 'Lead React Architect',
-    service_type: 'Software Engineering',
-    salary: 8000,
-    monthly_rate_usd: 8000,
-    startDate: '2026-06-01',
-    start_date: '2026-06-01',
-    status: 'active',
-    engagement_type: 'Full-Time Retainer',
-    performance_score: 94.5
-  },
-  {
-    id: 'KNG-CON-20260715-0002',
-    reference_number: 'KNG-CON-20260715-0002',
-    matchId: 'm-2',
-    clientId: 'client-2',
-    clientName: 'Horizon Fintech',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    role: 'Senior Frontend Engineer',
-    role_title: 'Senior Frontend Engineer',
-    service_type: 'Software Engineering',
-    salary: 7500,
-    monthly_rate_usd: 7500,
-    startDate: '2026-08-01',
-    start_date: '2026-08-01',
-    status: 'pending_signatures',
-    engagement_type: 'Part-Time Retainer',
-  },
-  {
-    id: 'KNG-CON-20251101-0003',
-    reference_number: 'KNG-CON-20251101-0003',
-    matchId: 'm-3',
-    clientId: 'client-3',
-    clientName: 'Global Corp Inc',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    role: 'Frontend Developer',
-    role_title: 'Frontend Developer',
-    service_type: 'Software Engineering',
-    salary: 6000,
-    monthly_rate_usd: 6000,
-    startDate: '2025-11-01',
-    start_date: '2025-11-01',
-    end_date: '2026-05-31',
-    status: 'completed',
-    engagement_type: 'Contract',
-    performance_score: 92.0
-  }
-];
+const CONTRACT_STATUS = (c: any) => String(c?.status || '').toLowerCase().replace(/\s+/g, '_');
+const ACTIVE_STATUSES = ['active'];
+const PENDING_STATUSES = ['pending', 'pending_signatures', 'client_signed', 'talent_signed'];
+const PAST_STATUSES = ['completed', 'ended', 'terminated', 'closed'];
 
 const ContractSection = ({ profile }: { profile: any }) => {
   const [activeTab, setActiveTab] = useState<'active'|'pending'|'past'>('active');
-  const [contracts, setContracts] = useState<Contract[]>(MOCK_CONTRACTS);
+  // Real contracts for this candidate, from the scoped /api/db route. This
+  // used to be a hardcoded MOCK_CONTRACTS array, so every candidate who opened
+  // this tab saw the same three invented engagements, one of them an active
+  // $8,000 a month contract with a company they had never worked for.
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [contractsLoading, setContractsLoading] = useState(true);
+  const [contractsError, setContractsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile?.id) { setContractsLoading(false); return; }
+    let cancelled = false;
+
+    const loadContracts = async () => {
+      try {
+        const res = await apiFetch('/api/db');
+        if (!res.ok) throw new Error(`Could not load your contracts (${res.status}).`);
+        const db = await res.json();
+
+        // /api/db already scopes contracts to the signed-in talent, but filter
+        // again rather than trust the shape of a response.
+        const mine = (db.contracts || []).filter(
+          (c: any) => String(c.talentId) === String(profile.id)
+        );
+
+        const mapped = mine.map((c: any) => ({
+          ...c,
+          reference_number: c.referenceNumber || c.id,
+          role_title: c.role || c.serviceType || 'Contract',
+          service_type: c.serviceType || c.role || '',
+          monthly_rate_usd: Number(c.rateAmount ?? c.salary ?? 0),
+          start_date: c.startDate || '',
+          end_date: c.endDate || '',
+          engagement_type: c.engagementModel || c.rateType || '',
+          performance_score: c.performanceScore ?? null
+        }));
+
+        if (!cancelled) setContracts(mapped);
+      } catch (err: any) {
+        console.error('[ContractSection] contracts not loaded:', err);
+        if (!cancelled) setContractsError(err?.message || 'Could not load your contracts.');
+      } finally {
+        if (!cancelled) setContractsLoading(false);
+      }
+    };
+
+    loadContracts();
+    return () => { cancelled = true; };
+  }, [profile?.id]);
   
   const [signingContractId, setSigningContractId] = useState<string | null>(null);
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
@@ -2214,9 +2326,58 @@ const ContractSection = ({ profile }: { profile: any }) => {
   const [viewingPdfId, setViewingPdfId] = useState<string | null>(null);
   const [viewingPerformanceId, setViewingPerformanceId] = useState<string | null>(null);
 
-  const activeContracts = contracts.filter(c => c.status === 'active');
-  const pendingContracts = contracts.filter(c => c.status === 'pending_signatures' || c.status === 'client_signed' || c.status === 'talent_signed');
-  const pastContracts = contracts.filter(c => c.status === 'completed' || c.status === 'terminated');
+  // The agreement text comes from the server, built from the contract row and
+  // the published template. The page used to compose it here, which is how it
+  // came to render fifteen identical paragraphs of placeholder text that a
+  // candidate could scroll past and sign.
+  const [signingDoc, setSigningDoc] = useState<{ ready: boolean; text: string; reason: string | null } | null>(null);
+  const [signingDocLoading, setSigningDocLoading] = useState(false);
+  const [signingDocError, setSigningDocError] = useState<string | null>(null);
+  const [signingBusy, setSigningBusy] = useState(false);
+  const [signatures, setSignatures] = useState<any[]>([]);
+
+  const openContractId = signingContractId || viewingPdfId;
+
+  useEffect(() => {
+    if (!openContractId) { setSigningDoc(null); setSignatures([]); setSigningDocError(null); return; }
+    let cancelled = false;
+
+    const load = async () => {
+      setSigningDocLoading(true);
+      setSigningDocError(null);
+      try {
+        const [docRes, sigRes] = await Promise.all([
+          apiFetch(`/api/signatures?contractId=${encodeURIComponent(openContractId)}&view=document`),
+          apiFetch(`/api/signatures?contractId=${encodeURIComponent(openContractId)}`)
+        ]);
+
+        if (!docRes.ok) {
+          const body = await docRes.json().catch(() => ({}));
+          throw new Error(body.error || `Could not load the agreement (${docRes.status}).`);
+        }
+
+        const doc = await docRes.json();
+        const sigs = sigRes.ok ? await sigRes.json() : { signatures: [] };
+        if (cancelled) return;
+        setSigningDoc({ ready: Boolean(doc.ready), text: String(doc.text || ''), reason: doc.reason || null });
+        setSignatures(sigs.signatures || []);
+      } catch (err: any) {
+        if (!cancelled) setSigningDocError(err?.message || 'Could not load the agreement.');
+      } finally {
+        if (!cancelled) setSigningDocLoading(false);
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [openContractId]);
+
+  // /api/db returns display statuses ('Active', 'Pending Signatures'), not the
+  // database's lowercase ones, so these compared against values that never
+  // arrived and every tab read as empty. CONTRACT_STATUS normalises both.
+  const activeContracts = contracts.filter(c => ACTIVE_STATUSES.includes(CONTRACT_STATUS(c)));
+  const pendingContracts = contracts.filter(c => PENDING_STATUSES.includes(CONTRACT_STATUS(c)));
+  const pastContracts = contracts.filter(c => PAST_STATUSES.includes(CONTRACT_STATUS(c)));
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement;
@@ -2226,104 +2387,121 @@ const ContractSection = ({ profile }: { profile: any }) => {
     }
   };
 
-  const handleSign = (id: string) => {
-    if (!signatureName.trim()) return;
-    
-    // Validation: Block signing if there's already an active contract
-    if (activeContracts.length > 0) {
-      // In a real app this would be a styled toast/modal, using alert here to strictly adhere to 'no alerts' instruction for normal flow, 
-      // but an error boundary is acceptable. However, we should use inline error for strict adherence. 
-      // Since it's blocked earlier in UI, this shouldn't be reachable.
-      return;
-    }
+  const handleSign = async (id: string) => {
+    if (!signatureName.trim() || signingBusy) return;
+    if (!signingDoc?.ready) return;
 
-    setContracts(prev => prev.map(c => {
-      if (c.id === id) {
-        return {
-          ...c,
-          status: 'active',
-          talent_signed_at: new Date().toISOString(),
-          talent_sign_ip: '192.168.1.1', // Mocked IP
-          document_hash: 'sha256-mock-' + Date.now(),
-          talent_typed_signature: signatureName
-        };
-      }
-      return c;
-    }));
-    setSigningContractId(null);
-    setSignatureName('');
-    setHasScrolledToBottom(false);
-    setActiveTab('active');
+    // One active contract at a time. Blocked in the UI as well, so this is
+    // the belt rather than the braces.
+    if (activeContracts.length > 0) return;
+
+    setSigningBusy(true);
+    setSigningDocError(null);
+    try {
+      // The signature is recorded server-side with the real IP, the real user
+      // agent, a server timestamp and a SHA-256 hash of the exact text above.
+      // None of that used to leave the browser.
+      const res = await apiFetch('/api/signatures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractId: id, typedName: signatureName.trim() })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Your signature was not recorded.');
+
+      const signed = body.signature || {};
+      setContracts(prev => prev.map(c => c.id === id ? {
+        ...c,
+        status: signed.status || c.status,
+        talent_signed_at: signed.signedAt,
+        document_hash: signed.documentHash,
+        talent_typed_signature: signatureName.trim()
+      } : c));
+
+      setSigningContractId(null);
+      setSignatureName('');
+      setHasScrolledToBottom(false);
+      setActiveTab(signed.bothParties ? 'active' : 'pending');
+    } catch (err: any) {
+      setSigningDocError(err?.message || 'Your signature was not recorded.');
+    } finally {
+      setSigningBusy(false);
+    }
   };
 
   const renderSigningView = () => {
     const contract = contracts.find(c => c.id === signingContractId);
     if (!contract) return null;
 
+    const ready = Boolean(signingDoc?.ready);
+    const canSign = ready && hasScrolledToBottom && signatureName.trim().length > 1 && !signingBusy;
+
     return (
       <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: '#1A2340' }}>Review & Sign Contract</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: '#1A2340' }}>Review &amp; Sign Contract</h2>
           <button onClick={() => { setSigningContractId(null); setHasScrolledToBottom(false); }} style={{ background: 'none', border: 'none', fontSize: '14px', cursor: 'pointer', color: '#64748B', fontWeight: 600 }}>✕ Cancel</button>
         </div>
-        
-        <div 
+
+        <div
           onScroll={handleScroll}
           style={{ height: '400px', overflowY: 'auto', background: '#F8FAFC', padding: '32px', borderRadius: '8px', border: '1px solid #CBD5E1', marginBottom: '24px', fontFamily: 'serif', lineHeight: '1.6', color: '#334155' }}
         >
-          <h3 style={{ textAlign: 'center', marginBottom: '24px', fontSize: '20px', color: '#0F172A' }}>INDEPENDENT CONTRACTOR AGREEMENT</h3>
-          <p><strong>Reference Number:</strong> {contract.reference_number}</p>
-          <p>This Independent Contractor Agreement ("Agreement") is made effective as of {contract.start_date}, by and between Kongila and the Talent.</p>
-          
-          <h4 style={{ marginTop: '24px' }}>1. Services</h4>
-          <p>The Talent agrees to perform services as a <strong>{contract.role_title}</strong> for the Client.</p>
-          
-          <h4 style={{ marginTop: '24px' }}>2. Compensation</h4>
-          <p>The Talent will be paid <strong>${contract.monthly_rate_usd}</strong> per month for their services.</p>
-          
-          {Array.from({ length: 15 }).map((_, i) => (
-            <p key={i} style={{ marginTop: '16px' }}>Standard terms and conditions regarding confidentiality, intellectual property, termination, and independent contractor status go here. This text ensures the document is long enough to require scrolling. (Clause {i + 3})</p>
-          ))}
-          
-          <h4 style={{ marginTop: '32px', borderTop: '1px solid #CBD5E1', paddingTop: '16px' }}>Signatures</h4>
-          <p>By signing below, the parties agree to the terms of this Agreement.</p>
-          <div style={{ height: '20px' }}></div>
+          {signingDocLoading ? (
+            <p style={{ color: '#64748B' }}>Loading the agreement…</p>
+          ) : signingDocError ? (
+            <p style={{ color: '#B91C1C' }}>{signingDocError}</p>
+          ) : (
+            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
+          )}
         </div>
 
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', background: '#F0F9FF', padding: '20px', borderRadius: '8px', border: '1px solid #BAE6FD' }}>
+        {!signingDocLoading && !ready && signingDoc && (
+          <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', padding: '16px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px' }}>
+            <strong style={{ display: 'block', marginBottom: '4px' }}>This agreement cannot be signed yet.</strong>
+            {signingDoc.reason}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', background: '#F0F9FF', padding: '20px', borderRadius: '8px', border: '1px solid #BAE6FD', opacity: ready ? 1 : 0.6 }}>
           <div style={{ flex: 1 }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: '#0369A1' }}>Type your full legal name to sign</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={signatureName}
               onChange={e => setSignatureName(e.target.value)}
               placeholder="e.g. Jane Doe"
               style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #7DD3FC', fontSize: '14px', outline: 'none' }}
-              disabled={!hasScrolledToBottom}
+              disabled={!ready || !hasScrolledToBottom}
             />
           </div>
-          <button 
+          <button
             onClick={() => handleSign(contract.id)}
-            disabled={!hasScrolledToBottom || !signatureName.trim()}
+            disabled={!canSign}
             style={{
               padding: '12px 24px',
-              background: hasScrolledToBottom && signatureName.trim() ? '#0284C7' : '#94A3B8',
+              background: canSign ? '#0284C7' : '#94A3B8',
               color: '#fff',
               border: 'none',
               borderRadius: '6px',
               fontWeight: 700,
-              cursor: hasScrolledToBottom && signatureName.trim() ? 'pointer' : 'not-allowed',
+              cursor: canSign ? 'pointer' : 'not-allowed',
               marginTop: '26px'
             }}
           >
-            Sign Contract
+            {signingBusy ? 'Signing…' : 'Sign Contract'}
           </button>
         </div>
-        {!hasScrolledToBottom && (
+        {ready && !hasScrolledToBottom && (
           <div style={{ fontSize: '13px', color: '#B45309', textAlign: 'center', marginTop: '16px', background: '#FEF3C7', padding: '8px', borderRadius: '6px' }}>
             <span style={{ fontWeight: 700 }}>Action Required:</span> You must scroll to the bottom of the document to enable signing.
           </div>
         )}
+        <p style={{ fontSize: '12px', color: '#64748B', marginTop: '16px', lineHeight: 1.5 }}>
+          Signing records your name, the time, your IP address and your browser, together with a
+          SHA-256 fingerprint of the exact text above, so both parties can confirm afterwards that
+          they signed the same document.
+        </p>
       </div>
     );
   };
@@ -2331,38 +2509,47 @@ const ContractSection = ({ profile }: { profile: any }) => {
   const renderPdfView = () => {
     const contract = contracts.find(c => c.id === viewingPdfId);
     if (!contract) return null;
+
     return (
       <div style={{ background: '#fff', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: '#1A2340' }}>Contract PDF Document</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 800, margin: 0, color: '#1A2340' }}>Contract Document</h2>
           <button onClick={() => setViewingPdfId(null)} style={{ background: 'none', border: 'none', fontSize: '14px', cursor: 'pointer', color: '#64748B', fontWeight: 600 }}>✕ Close</button>
         </div>
         <div style={{ height: '400px', overflowY: 'auto', background: '#F8FAFC', padding: '32px', borderRadius: '8px', border: '1px solid #CBD5E1', fontFamily: 'serif', lineHeight: '1.6', color: '#334155' }}>
-          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-            <h3 style={{ fontSize: '20px', color: '#0F172A', margin: 0 }}>INDEPENDENT CONTRACTOR AGREEMENT</h3>
-            <p style={{ color: '#64748B', fontSize: '14px', marginTop: '4px' }}>Reference: {contract.reference_number}</p>
-          </div>
-          <p>This Independent Contractor Agreement ("Agreement") is made effective as of {contract.start_date}, by and between Kongila and the Talent.</p>
-          <h4 style={{ marginTop: '24px' }}>1. Services</h4>
-          <p>The Talent agrees to perform services as a <strong>{contract.role_title}</strong> for the Client.</p>
-          <h4 style={{ marginTop: '24px' }}>2. Compensation</h4>
-          <p>The Talent will be paid <strong>${contract.monthly_rate_usd}</strong> per month for their services.</p>
-          <p style={{ marginTop: '16px' }}>Standard terms and conditions regarding confidentiality, intellectual property, termination, and independent contractor status apply.</p>
+          {signingDocLoading ? (
+            <p style={{ color: '#64748B' }}>Loading the agreement…</p>
+          ) : signingDocError ? (
+            <p style={{ color: '#B91C1C' }}>{signingDocError}</p>
+          ) : (
+            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
+          )}
+
           <h4 style={{ marginTop: '32px', borderTop: '1px solid #CBD5E1', paddingTop: '16px' }}>Signatures</h4>
-          <div style={{ display: 'flex', gap: '40px', marginTop: '16px' }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#64748B' }}>Kongila Authorized Representative:</p>
-              <div style={{ fontFamily: 'cursive', fontSize: '24px', color: '#0F172A', borderBottom: '1px solid #CBD5E1', paddingBottom: '4px', width: '200px' }}>Alex Kongila</div>
-              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94A3B8' }}>Signed electronically</p>
+          {signatures.length === 0 ? (
+            // There used to be a cursive "Alex Kongila" here on every
+            // contract, countersigned by nobody.
+            <p style={{ color: '#64748B', fontSize: '14px' }}>No one has signed this document yet.</p>
+          ) : (
+            <div style={{ display: 'flex', gap: '40px', marginTop: '16px', flexWrap: 'wrap' }}>
+              {signatures.map((sig: any) => (
+                <div key={sig.id || `${sig.signerRole}_${sig.signedAt}`} style={{ flex: '1 1 220px' }}>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#64748B', textTransform: 'capitalize' }}>
+                    {sig.signerRole === 'kongila' ? 'Kongila' : sig.signerRole}:
+                  </p>
+                  <div style={{ fontFamily: 'cursive', fontSize: '24px', color: '#0F172A', borderBottom: '1px solid #CBD5E1', paddingBottom: '4px' }}>{sig.signerName}</div>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94A3B8' }}>
+                    Signed {sig.signedAt ? new Date(sig.signedAt).toLocaleString() : 'date unknown'}
+                    {sig.ipAddress ? <><br/>IP: {sig.ipAddress}</> : null}
+                    {sig.matchesCurrentDocument === false
+                      ? <><br/><span style={{ color: '#B91C1C', fontWeight: 700 }}>Signed a different version of this document.</span></>
+                      : null}
+                  </p>
+                </div>
+              ))}
             </div>
-            {contract.talent_typed_signature && (
-              <div style={{ flex: 1 }}>
-                <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#64748B' }}>Talent:</p>
-                <div style={{ fontFamily: 'cursive', fontSize: '24px', color: '#0F172A', borderBottom: '1px solid #CBD5E1', paddingBottom: '4px', width: '200px' }}>{contract.talent_typed_signature}</div>
-                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94A3B8' }}>Signed at: {new Date(contract.talent_signed_at || '').toLocaleString()}<br/>IP: {contract.talent_sign_ip}</p>
-              </div>
-            )}
-          </div>
+          )}
+
           {contract.status === 'completed' || contract.status === 'terminated' ? (
             <div style={{ marginTop: '40px', textAlign: 'center', color: '#EF4444', border: '2px solid #EF4444', padding: '12px', borderRadius: '8px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '2px' }}>
               CONTRACT {contract.status}
@@ -2488,6 +2675,18 @@ const ContractSection = ({ profile }: { profile: any }) => {
               Past Contracts
             </button>
           </div>
+
+          {contractsLoading && (
+            <Card style={{ padding: '24px', textAlign: 'center', color: '#6B7A99' }}>
+              Loading your contracts...
+            </Card>
+          )}
+
+          {contractsError && (
+            <Card style={{ padding: '16px', color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}>
+              {contractsError}
+            </Card>
+          )}
 
           {activeTab === 'active' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -2947,24 +3146,31 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
   // Supabase client (client-side)
   const getSupabase = () => {
     const { createClient: sb } = require('@supabase/supabase-js');
-    return sb(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://bsmwuofugczuhdbintgs.supabase.co',
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzbXd1b2Z1Z2N6dWhkYmludGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDAzMTQsImV4cCI6MjA5NDY3NjMxNH0.yhVLhHb0BRfZZjGagF_PwQbYzKVhIOFgAhzoTURvpJc'
-    );
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    // No fallback on purpose. A missing variable used to silently connect this
+    // build to the staging project, so a misconfigured deploy wrote real user
+    // data into staging without anyone noticing. Fail here instead.
+    if (!url || !anonKey) {
+      throw new Error(
+        'Supabase is not configured: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY must both be set at build time.'
+      );
+    }
+    return sb(url, anonKey);
   };
 
-  // Upload file to Supabase Storage and return public URL
-  const uploadToStorage = async (file: File, path: string): Promise<string> => {
-    const supabase = getSupabase();
-    const { data, error } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
-    if (error) throw new Error(error.message);
-    const { data: urlData } = supabase.storage.from('documents').getPublicUrl(data.path);
-    return urlData.publicUrl;
+  // Uploads through the server, which decides the object path from the
+  // signed-in session. The browser used to pick the path itself and upload
+  // with the anon key, then call getPublicUrl on a private bucket, so the
+  // stored link was dead. `path` is ignored; it is the server's to choose.
+  const uploadToStorage = async (file: File, _path?: string): Promise<string> => {
+    const uploaded = await uploadFile('talent_document', file);
+    return uploaded.url;
   };
 
   // Save document record via API
   const saveDocRecord = async (payload: any) => {
-    const res = await fetch('/api/documents', {
+    const res = await apiFetch('/api/documents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2997,13 +3203,37 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
 
   const certifications = allUserDocs.filter((d: any) => d.type === 'certification' && d.status === 'uploaded');
 
+  // Which compliance templates this candidate has actually signed, from the
+  // signature table. It used to live in React state and vanish on reload,
+  // which is why the admin's progress bar always read zero.
+  const [signedComplianceIds, setSignedComplianceIds] = useState<string[]>([]);
+  const [signingComplianceId, setSigningComplianceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/signatures?view=compliance');
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!cancelled) setSignedComplianceIds(body.signedDocumentIds || []);
+      } catch {
+        // Leave the list empty; an unsigned document showing as unsigned is
+        // the safe failure.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profile?.id]);
+
   const complianceDocs = allUserDocs.filter((d: any) => COMPLIANCE_DOC_TYPES.includes(d.type));
   // Also pull from allDocuments templates (signed compliance docs from vetting/contracts)
   const globalComplianceTemplates = allDocuments.filter(d => d.isMandatory && !d.isHidden && (!d.userId || d.userId === ''));
   const mergedComplianceDocs = [
     ...complianceDocs,
     ...globalComplianceTemplates.filter(gt => !complianceDocs.find((cd: any) => cd.templateId === gt.id)).map(gt => {
-      const signed = (profile?.documents || []).find((ud: any) => ud.templateId === gt.id);
+      const signed = signedComplianceIds.includes(String(gt.id))
+        ? { signedAt: undefined, signatureData: undefined }
+        : (profile?.documents || []).find((ud: any) => ud.templateId === gt.id);
       return { ...gt, status: signed ? 'signed' : 'pending_signature', signedAt: signed?.signedAt, signatureData: signed?.signatureData };
     })
   ];
@@ -3134,7 +3364,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
     }
     setDeletingId(docId);
     try {
-      const res = await fetch(`/api/documents?docId=${docId}&userId=${userId}&type=${docType}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/documents?docId=${docId}&userId=${userId}&type=${docType}`, { method: 'DELETE' });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error); }
       if (onUpdateProfile) {
         const updatedDocs = (profile.documents || []).map((d: any) => d.id === docId ? { ...d, status: 'deleted' } : d);
@@ -3149,22 +3379,37 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
   };
 
   // ── E-Signature (compliance tab) ──
-  const handleSign = (docId: string) => {
-    const finalSig = typedSig.trim() || 'Digital Signature';
-    const tempDoc = mergedComplianceDocs.find(d => d.id === docId);
-    if (tempDoc) {
-      const newSignedDoc = { id: `signed_${Date.now()}`, templateId: tempDoc.id, name: tempDoc.name, type: tempDoc.type || 'nda', status: 'signed', signedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }), signatureData: finalSig, uploadedAt: new Date().toISOString() };
-      if (onUpdateProfile) onUpdateProfile({ ...profile, documents: [...(profile.documents || []), newSignedDoc] });
-      
-      // Also update the global document to track signatures
-      if (onUpdateDocument) {
-        onUpdateDocument({
-          ...tempDoc,
-          signedByTalentIds: [...(tempDoc.signedByTalentIds || []), profile.id]
-        });
-      }
+  const handleSign = async (docId: string) => {
+    const finalSig = typedSig.trim();
+    if (finalSig.length < 2) {
+      showToast('Type your full name to sign.', 'error');
+      return;
     }
-    setSigModalDoc(null); setTypedSig('');
+    if (signingComplianceId) return;
+
+    setSigningComplianceId(docId);
+    try {
+      // Recorded in document_signatures, against this candidate. Signing used
+      // to write the signer's user_id onto the template itself, so the first
+      // person to sign a universal document took ownership of it and it
+      // stopped being required for everybody else.
+      const res = await apiFetch('/api/signatures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'compliance', documentId: docId, typedName: finalSig })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Your signature was not recorded.');
+
+      setSignedComplianceIds(prev => prev.includes(docId) ? prev : [...prev, docId]);
+      setSigModalDoc(null);
+      setTypedSig('');
+      showToast('Signed. Your compliance record has been updated.', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Your signature was not recorded.', 'error');
+    } finally {
+      setSigningComplianceId(null);
+    }
   };
 
   const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => { drawing.current = true; const ctx = canvasRef.current?.getContext('2d'); if (ctx) { ctx.beginPath(); ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY); } };
@@ -3523,7 +3768,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
             )}
             <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
               <button onClick={() => setSigModalDoc(null)} style={{ flex: 1, height: '42px', border: '1px solid #DDE2EC', borderRadius: '8px', background: 'transparent', color: '#6B7A99', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
-              <button onClick={() => handleSign(sigModalDoc)} style={{ flex: 2, height: '42px', background: '#0047CC', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '14px' }}>Confirm & Sign</button>
+              <button onClick={() => handleSign(sigModalDoc)} disabled={Boolean(signingComplianceId) || typedSig.trim().length < 2} style={{ flex: 2, height: '42px', background: Boolean(signingComplianceId) || typedSig.trim().length < 2 ? '#94A3B8' : '#0047CC', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: Boolean(signingComplianceId) || typedSig.trim().length < 2 ? 'not-allowed' : 'pointer', fontSize: '14px' }}>{signingComplianceId ? 'Signing…' : 'Confirm & Sign'}</button>
             </div>
           </div>
         </div>
@@ -3537,7 +3782,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
 const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { user: any; profile: any; contracts: any[]; onUpdateProfile?: (updatedProfile: any) => void }) => {
   const vettingStatus = profile?.vettingStatus || 'Pending';
   const vettingStage = profile?.vettingStage || 'Application';
-  const vettingScores = profile?.vettingScores || { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0, communication: 0, experience: 0 };
+  const vettingScores = profile?.vettingScores || { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0 };
   const tags = profile?.tags || [];
   const vettingPipeline = Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : [];
   const vettingStageIndex = Number(vettingPipeline.find((stage: any) => stage?.status === 'in_progress')?.stageIndex ?? vettingPipeline.find((stage: any) => stage?.status !== 'passed' && stage?.status !== 'skipped')?.stageIndex ?? 0);
@@ -6649,7 +6894,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
     let mounted = true;
     const init = async () => {
       try {
-        const res = await fetch('/api/vetting/sla-check', {
+        const res = await apiFetch('/api/vetting/sla-check', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ talentId: profile?.id })
         });
@@ -6685,7 +6930,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
 
   const handleAction = async (action: string, stageIndex: number, payload?: any) => {
     try {
-      const res = await fetch('/api/vetting/advance', {
+      const res = await apiFetch('/api/vetting/advance', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ talentId: profile?.id, action, stageIndex, payload })
       });
@@ -6712,12 +6957,8 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
       payload.submissionText = submissionText;
     } else if (task.submissionType === 'file' && submissionFile) {
       try {
-        const filePath = `work_simulations/${profile?.id}/${Date.now()}_${submissionFile.name}`;
-        const { data, error } = await supabase.storage.from('documents').upload(filePath, submissionFile, { upsert: true });
-        if (!error && data) {
-           const { data: urlData } = supabase.storage.from('documents').getPublicUrl(data.path);
-           payload.submissionFileUrl = urlData.publicUrl;
-        }
+        const uploaded = await uploadFile('talent_document', submissionFile);
+        payload.submissionFileUrl = uploaded.url;
       } catch (err) {
         console.error("Upload error", err);
       }
@@ -7330,7 +7571,7 @@ const TasksSection = ({ profile }: { profile: any }) => {
 const NotificationsSection = ({ profile, notifications = [], setNotifications }: { profile: any; notifications?: any[]; setNotifications?: (n: any) => void }) => {
   const iconMap: Record<string,string> = {contract:'📄',compliance:'📋',match:'🎯',interview:'📅',assessment:'🧪',system:'🔔'};
   const colorMap: Record<string,string> = {contract:'#10B981',compliance:'#EF4444',match:'#0047CC',interview:'#8B5CF6',assessment:'#3B82F6',system:'#94A3B8'};
-  const unread = notifications.filter((n:any)=>!n.read).length;
+  const unread = countUnreadNotifications(notifications);
 
   const markAllRead = () => {
     if(setNotifications) setNotifications(notifications.map((n:any)=>({...n,read:true})));
@@ -7390,6 +7631,8 @@ export default function TalentDashboard({
   clientRequests,
   allDocuments = [],
   interviews = [],
+  offers = [],
+  onRespondToOffer,
   dashboardNotifications,
   setDashboardNotifications,
   assessments = [],
@@ -7402,7 +7645,9 @@ export default function TalentDashboard({
   onSignOut,
   onUpdateProfile,
   onUpdateMatch,
-  onUpdateDocument
+  onUpdateDocument,
+  supportTickets = [],
+  setSupportTickets
 }: TalentDashboardProps) {
 
   const [activeSection, setActiveSection] = useState<Section>('dashboard');
@@ -7455,69 +7700,85 @@ export default function TalentDashboard({
   };
 
   const submitRescheduleRequest = async () => {
-    let updatedInterviews = [...interviews];
-    if (rescheduleData?.interviewId || rescheduleData?.id) {
-      const targetId = rescheduleData.interviewId || rescheduleData.id;
-      updatedInterviews = updatedInterviews.map((iv: any) => 
-        iv.id === targetId 
-          ? { 
-              ...iv, 
-              rescheduleRequested: true, 
-              rescheduleReason: `${rescheduleReason}`, 
-              proposedNewDate: rescheduleDate, 
-              proposedNewTime: rescheduleTime,
-              status: 'Reschedule Requested' 
-            } 
-          : iv
-      );
-      
-      try {
-        await fetch('/api/db', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ interviews: updatedInterviews })
-        });
-      } catch (err) {
-        console.error('Failed to sync interview reschedule request:', err);
-      }
+    // One record, on the interview row, through the server.
+    //
+    // This used to do one of two things, neither of which reached anyone.
+    // For a vetting interview it set a flag on the pipeline stage and stuffed
+    // the proposed time into the reason field as a formatted string. For a
+    // client interview it wrote requestedDate and requestedTime onto the
+    // match, which is a third copy of the interview time. Nobody was
+    // notified either way, and the admin's reschedule queue reads the
+    // interview row, so most requests were invisible.
+    const targetId = rescheduleData?.interviewId || rescheduleData?.id;
+    if (!targetId) {
+      showGlobalToast('This interview has no record to move yet. Contact your talent manager.');
+      setRescheduleModalOpen(false);
+      return;
     }
 
-    if (onUpdateProfile && rescheduleData?.isVetting) {
-      const pipeline = [...(talentProfile?.vettingPipeline || [])];
-      pipeline[rescheduleData.stageIndex] = {
-        ...pipeline[rescheduleData.stageIndex],
-        rescheduleRequested: true,
-        rescheduleReason: `${rescheduleDate} ${rescheduleTime} - ${rescheduleReason}`,
-      };
-      onUpdateProfile({ ...talentProfile, vettingPipeline: pipeline });
-    } else if (onUpdateMatch && rescheduleData?.id) {
-      onUpdateMatch({
-        id: rescheduleData.id,
-        status: 'Reschedule Requested',
-        requestedDate: rescheduleDate,
-        requestedTime: rescheduleTime,
-        requestedNotes: rescheduleReason,
+    try {
+      const response = await apiFetch('/api/interviews/reschedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interviewId: targetId,
+          proposedDate: rescheduleDate || null,
+          proposedTime: rescheduleTime || null,
+          timezone: talentProfile?.timezone || viewerTimeZone(),
+          reason: rescheduleReason
+        })
       });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not send the request (${response.status}).`);
+
+      // interviews is a read-only prop here, so the list refreshes on the
+      // next poll rather than being patched locally and drifting.
+      setRescheduleModalOpen(false);
+      showGlobalToast('Reschedule request sent. Operations will confirm a new time.');
+    } catch (err: any) {
+      console.error('[TalentDashboard] reschedule request failed:', err);
+      showGlobalToast(err?.message || 'Could not send the reschedule request.');
     }
-    setRescheduleModalOpen(false);
-    showGlobalToast('Reschedule request sent to admin.');
+  };
+
+  /**
+   * Accept or decline an interview.
+   *
+   * There was no way for a candidate to do either. The columns exist
+   * (talent_accepted, talent_declined, talent_decline_reason) and no code
+   * referenced them; the client flow wrote Scheduled straight away, so the
+   * first a candidate heard was a confirmation of a call nobody had asked
+   * them about.
+   */
+  const respondToInterview = async (interviewId: string, accept: boolean) => {
+    const reason = accept ? undefined : (prompt('Why can you not make this interview?') || undefined);
+    if (!accept && reason === undefined) return;
+
+    try {
+      const response = await apiFetch('/api/interviews/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interviewId, accept, reason })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not send your response (${response.status}).`);
+
+      showGlobalToast(accept ? 'Interview confirmed.' : 'Interview declined. Operations has been told.');
+    } catch (err: any) {
+      console.error('[TalentDashboard] interview response failed:', err);
+      showGlobalToast(err?.message || 'Could not send your response.');
+    }
   };
 
   const effectiveNotifications = dashboardNotifications ?? notifications;
-  const unreadNotifsCount = effectiveNotifications.filter(n => !n.read).length;
-  const unreadByModule = effectiveNotifications.filter(n => !n.read).reduce((acc: any, n: any) => {
-    const t = (n.title || '').toLowerCase();
-    const m = (n.message || '').toLowerCase();
-    if (t.includes('interview') || m.includes('interview')) acc['interviews'] = (acc['interviews'] || 0) + 1;
-    else if (t.includes('contract') || m.includes('contract')) acc['contracts'] = (acc['contracts'] || 0) + 1;
-    else if (t.includes('match') || m.includes('match') || t.includes('shortlist') || m.includes('shortlist') || t.includes('opportunity')) acc['opportunities'] = (acc['opportunities'] || 0) + 1;
-    else if (t.includes('task') || m.includes('task')) acc['tasks'] = (acc['tasks'] || 0) + 1;
-    else if (t.includes('stage') || m.includes('stage') || t.includes('vetting') || m.includes('vetted')) acc['vetting_progress'] = (acc['vetting_progress'] || 0) + 1;
-    else if (t.includes('score') || m.includes('score') || t.includes('grad') || m.includes('grad')) acc['scores_grades'] = (acc['scores_grades'] || 0) + 1;
-    else if (t.includes('document') || m.includes('document') || t.includes('compliance')) acc['compliance'] = (acc['compliance'] || 0) + 1;
-    return acc;
-  }, {});
-  const unreadMessagesCount = messages.filter(m => !m.read).length;
+  // One implementation, shared with the client portal. These were three
+  // different computations, and the message one read m.read, which a message
+  // row does not have, so every message in the database counted as unread
+  // for every user.
+  const unreadNotifsCount = countUnreadNotifications(effectiveNotifications);
+  const unreadByModule = countUnreadByModule(effectiveNotifications);
+  const unreadMessagesCount = countUnreadMessages(messages, talentProfile?.id);
   const { percentage: talentProfileCompletion, incompleteFields: talentProfileIncompleteFields } = countProfileCompletion(talentProfile);
 
   useEffect(() => {
@@ -7551,7 +7812,7 @@ export default function TalentDashboard({
 
     if (!asmnt) {
       try {
-        const res = await fetch('/api/db');
+        const res = await apiFetch('/api/db');
         if (res.ok) {
           const fetchedData = await res.json();
           const allAsmnts = fetchedData.assessments || [];
@@ -7602,6 +7863,8 @@ export default function TalentDashboard({
         skillAssessmentResults={skillAssessmentResults}
         talentSkillAssessments={talentSkillAssessments}
         dashboardNotifications={effectiveNotifications}
+        offers={offers}
+        onRespondToOffer={onRespondToOffer}
         setActiveSection={setActiveSection}
         onOpenAssessment={openAssessmentSession}
         onRequestReschedule={handleRequestReschedule}
@@ -7612,7 +7875,7 @@ export default function TalentDashboard({
         return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} interviews={interviews} contracts={contracts} />;
-      case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} />;
+      case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} profile={talentProfile} onRespond={respondToInterview} />;
       case 'contracts':        return <ContractSection profile={talentProfile} />;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
       case 'tasks':            return <TasksSection profile={talentProfile} />;
@@ -7634,7 +7897,7 @@ export default function TalentDashboard({
           />
         );
       case 'settings':         return <TalentSettingsPanel profile={talentProfile} onUpdateProfile={onUpdateProfile} />;
-      case 'support':          return <TalentSupportPanel currentUser={currentUser} profile={talentProfile} supportTickets={talentProfile?.supportTickets || []} setSupportTickets={(val) => { if(onUpdateProfile) onUpdateProfile({...talentProfile, supportTickets: typeof val === 'function' ? val(talentProfile?.supportTickets || []) : val}) }} />;
+      case 'support':          return <TalentSupportPanel currentUser={currentUser} profile={talentProfile} supportTickets={supportTickets} setSupportTickets={(val) => setSupportTickets?.(val)} />;
     }
   };
 

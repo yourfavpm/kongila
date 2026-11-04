@@ -67,7 +67,11 @@ export interface VettingStageRecord {
   rescheduleRequested?: boolean;
   rescheduleReason?: string;
   interviewDate?: string;  // ISO date for the scheduled interview
-  interviewTime?: string;  // Time string for the scheduled interview
+  interviewTime?: string;
+  /** The instant the interview starts, in UTC. interviewDate/Time are naive wall clock. */
+  interviewScheduledTime?: string;
+  /** IANA zone interviewDate and interviewTime were entered in. */
+  interviewTimezone?: string;  // Time string for the scheduled interview
   meetingLink?: string;    // Video meeting link for the interview
   taskId?: string;         // Reference to a WorkSimulationTask
   personalityLink?: string; // Link to the external personality test
@@ -83,8 +87,22 @@ export interface TalentScores {
   personality: number;
   remoteReadiness: number;
   workSimulation: number;
-  communication: number;
-  experience: number;
+
+  /**
+   * @deprecated Dropped from the vetting model on 2 November 2026.
+   *
+   * Neither of these was ever measured: no vetting stage produced a score,
+   * no admin field set one, nothing wrote them. They are kept optional so
+   * profiles saved before the decision still read back, but nothing should
+   * write them and they carry no weight in the composite grade.
+   *
+   * Communication is observed in the behavioural interview rubric, which
+   * feeds `behavioral`. Years of experience is screened at Application
+   * Screening, which is pass or fail by design.
+   */
+  communication?: number;
+  /** @deprecated See `communication`. */
+  experience?: number;
 }
 
 export interface TalentProfile {
@@ -296,6 +314,17 @@ export interface RoleCount {
   count: number;
 }
 
+/**
+ * The canonical lifecycle of a client request.
+ *
+ * These are internal operations stages and the only values ever stored. What
+ * a client sees is a shorter journey derived from these: see
+ * CLIENT_STATUS_VIEW in @kongila/workflows. Never store a client-facing label.
+ *
+ * 'Closed' is terminal and reachable from any other state. It backs the
+ * Closed/Cancelled tab in the client portal, which previously filtered on
+ * statuses that did not exist and so could never populate.
+ */
 export type RequestStatus =
   | 'New Request'
   | 'Reviewing'
@@ -303,7 +332,8 @@ export type RequestStatus =
   | 'Candidates Ready'
   | 'Client Interview'
   | 'Offer Accepted'
-  | 'Onboarding';
+  | 'Onboarding'
+  | 'Closed';
 
 export interface ServiceRequest {
   id: string; // request_id UUID
@@ -641,6 +671,8 @@ export interface Document {
   expirationDate?: string; // added for Expiry Monitor
   // Compliance tracking for universal documents
   signedByTalentIds?: string[];
+  /** A universal template every candidate signs, rather than one person's file. */
+  isTemplate?: boolean;
   lastUpdatedBy?: string;
   lastUpdatedAt?: string;
   // Legacy fields used by existing compliance flow
@@ -879,7 +911,21 @@ export interface Interview {
   title: string;
   date: string;
   time: string;
-  status: 'Proposed' | 'Scheduled' | 'Rescheduled' | 'Completed' | 'Cancelled';
+  /**
+   * The five original values did not include the states the product can
+   * actually reach. 'Reschedule Requested' is what the reader returns when
+   * the reschedule_requested flag is set, and the two talent_ values are the
+   * candidate's answer, which until now nothing could record.
+   */
+  status:
+    | 'Proposed'
+    | 'Scheduled'
+    | 'Rescheduled'
+    | 'Completed'
+    | 'Cancelled'
+    | 'Reschedule Requested'
+    | 'talent_accepted'
+    | 'talent_declined';
   meetingLink?: string;
   notes?: string;
   talentNotes?: string;

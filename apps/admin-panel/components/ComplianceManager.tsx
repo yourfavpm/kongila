@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../lib/apiFetch';
 import { GlassCard, Chip } from '@kongila/ui';
 import { formatDate } from '@kongila/utils';
 
@@ -6,7 +7,6 @@ export default function ComplianceManager({
   documents,
   talents,
   auditLogs,
-  saveToDb,
   setDocuments,
   setAuditLogs
 }: any) {
@@ -28,54 +28,64 @@ export default function ComplianceManager({
     setSaving(true);
     
     const isNew = !docForm.id;
-    let newDoc: any;
-    let updated: any;
 
-    if (isNew) {
-      newDoc = { 
-        ...docForm, 
-        id: `cdoc_${Date.now()}`, 
-        uploadedAt: new Date().toISOString(), 
-        lastUpdatedAt: new Date().toISOString(),
-        lastUpdatedBy: 'Super Admin',
-        signedByTalentIds: []
-      };
-      updated = [newDoc, ...documents];
-    } else {
-      newDoc = {
-        ...docForm,
-        lastUpdatedAt: new Date().toISOString(),
-        lastUpdatedBy: 'Super Admin'
-      };
-      updated = documents.map((d: any) => d.id === docForm.id ? { ...d, ...newDoc } : d);
+    // Through the server. This used to rewrite the local documents array
+    // and post all of it through /api/db, which upserts every document in
+    // the payload, and stamp lastUpdatedBy as the literal string 'Super
+    // Admin' whoever was signed in. The audit entry went the same way, to
+    // a table that denies browser writes.
+    try {
+      const res = await apiFetch('/api/compliance', {
+        method: isNew ? 'POST' : 'PUT',
+        body: JSON.stringify({
+          id: docForm.id || undefined,
+          name: docForm.name,
+          type: docForm.type,
+          isMandatory: docForm.isMandatory
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That document was not saved.');
+        setSaving(false);
+        return;
+      }
+
+      setDocuments(isNew
+        ? [result, ...documents]
+        : documents.map((d: any) => d.id === docForm.id ? { ...d, ...result } : d));
+      setShowDocModal(false);
+    } catch (e: any) {
+      console.error('Failed to save compliance document', e);
+      alert(e?.message || 'That document was not saved.');
     }
 
-    const newLog = {
-      id: `audit_${Date.now()}`, actor: 'Super Admin', action: isNew ? 'Create Compliance Document' : 'Update Compliance Document',
-      details: `${newDoc.name} (${newDoc.type})`, timestamp: new Date().toISOString()
-    };
-
-    setDocuments(updated);
-    setAuditLogs([newLog, ...auditLogs]);
-    setShowDocModal(false);
-    
-    await saveToDb({ documents: updated, auditLogs: [newLog, ...auditLogs] });
     setSaving(false);
   };
 
   const handleHideDoc = async (docId: string) => {
     if (!confirm('Are you sure you want to hide this compliance document? It will no longer be mandatory for talents.')) return;
     setSaving(true);
-    const updated = documents.map((d: any) => d.id === docId ? { ...d, isHidden: true, lastUpdatedAt: new Date().toISOString(), lastUpdatedBy: 'Super Admin' } : d);
-    
-    const newLog = {
-      id: `audit_${Date.now()}`, actor: 'Super Admin', action: 'Hide Compliance Document',
-      details: `Document ${docId} hidden`, timestamp: new Date().toISOString()
-    };
 
-    setDocuments(updated);
-    setAuditLogs([newLog, ...auditLogs]);
-    await saveToDb({ documents: updated, auditLogs: [newLog, ...auditLogs] });
+    // The hide path in the route was unreachable: there were two
+    // `if (req.method === 'PUT')` blocks and this one was the second. It
+    // never ran, so nothing was ever hidden in the database.
+    try {
+      const res = await apiFetch(`/api/compliance?id=${encodeURIComponent(docId)}`, {
+        method: 'DELETE'
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That document was not hidden.');
+        setSaving(false);
+        return;
+      }
+      setDocuments(documents.map((d: any) => d.id === docId ? { ...d, isHidden: true } : d));
+    } catch (e: any) {
+      console.error('Failed to hide compliance document', e);
+      alert(e?.message || 'That document was not hidden.');
+    }
+
     setSaving(false);
   };
 

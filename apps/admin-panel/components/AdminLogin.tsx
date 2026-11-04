@@ -3,7 +3,10 @@ import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
 
 interface AdminLoginProps {
-  onLoginSuccess: () => void;
+  // The verified role and the id it belongs to. The portal decides what
+  // this operator may do from the role, so passing nothing left it
+  // undefined on every login.
+  onLoginSuccess: (role: string, userId: string) => void;
 }
 
 const ADMIN_PORTAL_ROLES = new Set([
@@ -67,7 +70,7 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           throw new Error('Access denied. You do not have admin privileges.');
         }
 
-        onLoginSuccess();
+        onLoginSuccess(role, data.user.id);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Login failed. Please check your credentials.');

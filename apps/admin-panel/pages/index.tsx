@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import React, { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, AreaChart, Area, Cell, PieChart, Pie, Sector } from 'recharts';
 import { supabase } from '../lib/supabaseClient';
@@ -8,31 +9,51 @@ import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
 import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
-import { formatCurrency, formatDate, getGradeColor } from '@kongila/utils';
-import { normalizeRequestStatus } from '@kongila/workflows';
-import { calculateCompositeVettingGrade, generateMatchesForRequest, VETTING_STAGES, advanceTalentStage, buildDefaultVettingPipeline } from '@kongila/matching-engine';
+import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, interviewInstant, formatInstantInZone } from '@kongila/utils';
+import { coerceRequestStatus } from '@kongila/workflows';
+import { calculateCompositeVettingGrade, calculateMatchScore, reconcileMatchesForRequest, VETTING_STAGES, advanceTalentStage, validateStageDecision, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
 import {
   TalentProfile, ServiceRequest, Match, AuditLog, AgentLog, Interview, RehireRequest,
-  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment, WorkflowInstance
+  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment
 } from '@kongila/shared-types';
 import AssessmentWizard from '../components/AssessmentWizard';
+import {
+  resolveRole,
+  isAdminRole,
+  canAccessTab,
+  canManageUsers,
+  ADMIN_ROLES,
+  ROLE_LABELS,
+  ROLE_DESCRIPTIONS
+} from '@kongila/auth';
 
-const ADMIN_PORTAL_ROLES = new Set([
-  'super_admin',
-  'superadmin',
-  'admin',
-  'account_manager',
-  'operations_manager',
-  'ops_manager',
-  'talent_manager',
-]);
+// The role model lives in @kongila/auth, with its own tests. This file used
+// to keep its own list of seven accepted strings, the database CHECK allowed
+// twelve, and none of it was enforced: every accepted role opened the same
+// thirteen tabs.
+const normalizeAdminRole = (role: any) => resolveRole(role) || '';
 
-const normalizeAdminRole = (role: any) =>
-  String(role || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
+// Supabase Auth IDs are UUIDs, while the staging seed uses stable IDs in
+// public.users. Resolve the role by Auth ID first, then by the verified email
+// so the session listener does not immediately sign seeded demo admins out.
+async function getAdminRoleForSession(user: any): Promise<string> {
+  let { data: userData } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (!userData && user.email) {
+    ({ data: userData } = await supabase
+      .from('users')
+      .select('role')
+      .eq('email', user.email)
+      .maybeSingle());
+  }
+
+  return normalizeAdminRole(userData?.role || user.user_metadata?.role || user.app_metadata?.role || '');
+}
 
 // ─── TYPE DEFINITIONS ───────────────────────────────────────────────────────
 
@@ -44,13 +65,18 @@ type AdminTab =
   | 'interviews'
   | 'vetting'
   | 'matching'
+  | 'offers'
   | 'contracts'
   | 'compliance'
   | 'assessments'
   | 'support'
   | 'audit'
+  | 'notifications'
+  | 'users'
+  | 'messages'
+  | 'settings'
   | 'finance'
-  | 'workflows'
+  | 'payroll'
   | 'remotan-overview'
   | 'remotan-clients'
   | 'remotan-talent'
@@ -176,12 +202,17 @@ const KONGILA_NAV = [
   { key: 'client-pipeline', label: 'Client Pipeline' },
   { key: 'hiring-requests', label: 'Hiring Requests' },
   { key: 'interviews', label: 'Interviews' },
-  { key: 'contracts', label: 'Contracts & Offers' },
+  { key: 'offers', label: 'Offer Queue' },
+  { key: 'contracts', label: 'Contracts' },
   { key: 'compliance', label: 'Compliance Docs' },
   { key: 'assessments', label: 'Skill Assessments' },
   { key: 'finance', label: 'Financial System' },
   { key: 'support', label: 'Support Center' },
-  { key: 'workflows', label: 'Provisioning Queue' },
+  { key: 'payroll', label: 'Payroll' },
+  { key: 'messages', label: 'Messages' },
+  { key: 'users', label: 'Users & Roles' },
+  { key: 'settings', label: 'Platform Settings' },
+  { key: 'notifications', label: 'Notifications' },
   { key: 'audit', label: 'Audit Logs' },
 ] as const;
 
@@ -196,6 +227,9 @@ const REMOTAN_NAV = [
 
 export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // The signed-in operator's role, which decides every tab they can reach.
+  const [currentRole, setCurrentRole] = useState<string>('');
+  const [currentAdminId, setCurrentAdminId] = useState<string>('');
   const [authChecking, setAuthChecking] = useState(true);
 
   // ── Core data
@@ -204,6 +238,41 @@ export default function AdminPanel() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [contracts, setContracts] = useState<any[]>([]);
   const [contractTemplates, setContractTemplates] = useState<any[]>([]);
+  // Offer queue. Read from its own endpoint rather than readDbAsync, which
+  // does not read the offers table at all.
+  const [offers, setOffers] = useState<any[]>([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+
+  const loadOffers = async () => {
+    setOffersLoading(true);
+    try {
+      const res = await apiFetch('/api/offers');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console.error('[offers] load failed:', data?.error);
+        return;
+      }
+      setOffers(data.offers || []);
+    } finally {
+      setOffersLoading(false);
+    }
+  };
+
+  const decideOffer = async (offerId: string, action: string, note?: string) => {
+    const res = await apiFetch('/api/offers/decide', {
+      method: 'POST',
+      body: JSON.stringify({ offerId, action, note })
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result?.ok) {
+      alert(result?.error || 'Could not update the offer.');
+      return;
+    }
+    if (result.respondBy) {
+      alert(`Offer sent. The candidate has until ${new Date(result.respondBy).toLocaleDateString()} to respond.`);
+    }
+    await loadOffers();
+  };
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -232,7 +301,6 @@ export default function AdminPanel() {
   const [skillAssessments, setSkillAssessments] = useState<any[]>([]);
   const [talentSkillAssessments, setTalentSkillAssessments] = useState<any[]>([]);
   const [workSimulationTasks, setWorkSimulationTasks] = useState<any[]>([]);
-  const [workflows, setWorkflows] = useState<WorkflowInstance[]>([]);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
 
@@ -253,11 +321,18 @@ export default function AdminPanel() {
   const [requestSearchQuery, setRequestSearchQuery] = useState('');
 
   // ── Vetting form
-  const [editScores, setEditScores] = useState({ technical: 90, workSimulation: 90, behavioral: 85, communication: 85, personality: 80, remoteReadiness: 90, experience: 80 });
+  // Five dimensions, matching the five that a vetting stage actually scores.
+  // communication and experience were dropped from the model on 2 Nov 2026.
+  const [editScores, setEditScores] = useState({ technical: 90, workSimulation: 90, behavioral: 85, personality: 80, remoteReadiness: 90 });
 
   // ── Vetting pipeline state
   const [activeVettingStageIdx, setActiveVettingStageIdx] = useState<number | null>(null);
-  const [stageScoreInput, setStageScoreInput] = useState<number>(80);
+  // Starts empty, not 80. It used to default to 80, and three buttons
+  // submitted that 80 as a real technical or personality score with no
+  // assessment behind it. An admin who deliberately typed 80 was also
+  // ignored, because the code used `!== 80` to mean "the admin typed
+  // something". undefined means nothing has been entered.
+  const [stageScoreInput, setStageScoreInput] = useState<number | undefined>(undefined);
   const [stageRubricScores, setStageRubricScores] = useState<Record<string, number>>({});
   const [stageNotesInput, setStageNotesInput] = useState<string>('');
   const [stageDeadlineInput, setStageDeadlineInput] = useState<string>('');
@@ -309,43 +384,55 @@ export default function AdminPanel() {
     try {
       const [
         res,
-        { data: supabaseOrgs },
-        { data: supabaseRequests },
-        { data: supabaseClientProfiles },
-        { data: supabaseAuditLogs },
+        requestRes,
+        supportRes,
         ivRes
       ] = await Promise.all([
-        fetch('/api/db'),
-        supabase.from('organizations').select('*'),
-        supabase.from('talent_requests').select('*').order('created_at', { ascending: false }),
-        supabase.from('client_profiles').select('*'),
-        supabase.from('audit_logs').select('*').order('timestamp', { ascending: false }),
-        fetch('/api/interviews')
+        apiFetch('/api/db'),
+        apiFetch('/api/requests'),
+        apiFetch('/api/support'),
+        apiFetch('/api/interviews')
       ]);
 
+      // organizations, client_profiles, audit_logs and matches used to be
+      // read straight from the tables here with the anon key, alongside
+      // the /api/db call that already carries all four. Reading them
+      // directly is exactly what RLS on those tables has to allow, so it
+      // was the thing standing between here and turning RLS on.
+
       if (!res.ok) {
-        const errText = await res.text();
-        alert(`API /api/db failed! Status: ${res.status}. Error: ${errText}`);
-        console.error('API /api/db failed', errText);
+        // A 401 on first paint is expected: the poll can run before the
+        // Supabase session has restored and a token is available. The next
+        // tick picks the data up. Anything else is a real failure worth a dialog.
+        if (res.status === 401) {
+          console.info('[api/db] not authenticated yet, retrying on next sync');
+        } else {
+          const errText = await res.text();
+          alert(`API /api/db failed! Status: ${res.status}. Error: ${errText}`);
+          console.error('API /api/db failed', errText);
+        }
       }
 
       if (res.ok) {
         const db = await res.json();
+        const requestApiBody = requestRes.ok ? await requestRes.json().catch(() => ({})) : {};
+        const supportApiBody = supportRes.ok ? await supportRes.json().catch(() => ({})) : {};
         const freshTalents = db.talents || [];
         setTalents(freshTalents);
 
-        setOrganizations(supabaseOrgs || []);
+        // The browser-side organizations query is subject to client RLS. For
+        // seeded admin accounts the public.users ID can differ from the Auth
+        // UUID, so that query may legitimately return no rows even though the
+        // authenticated admin API has the data. Prefer the admin API snapshot.
+        setOrganizations(db.organizations || []);
 
         const localRequests = (db.clientRequests || []).map((request: any) => ({
           ...request,
-          status: normalizeRequestStatus(request.status)
+          status: coerceRequestStatus(request.status)
         }));
-        const remoteRequests = (supabaseRequests || []).map((r: any) => ({
-          ...(r.payload || {}),
-          status: normalizeRequestStatus(r.payload?.status),
-          // Promote dedicated columns so Kanban cards can display AM/TM badge correctly
-          assignedAccountManagerId: r.account_manager_id || r.payload?.assignedAccountManagerId || '',
-          assignedTalentManagerId: r.talent_manager_id || r.payload?.assignedTalentManagerId || '',
+        const remoteRequests = (requestApiBody.requests || []).map((request: any) => ({
+          ...request,
+          status: coerceRequestStatus(request.status),
         }));
         const mergedRequests = new Map<string, any>();
         for (const request of localRequests) {
@@ -357,7 +444,7 @@ export default function AdminPanel() {
         setRequests(Array.from(mergedRequests.values()));
 
         // ── Load matches from Supabase (primary source) so admin always sees submitted candidates ──
-        const { data: supaMatches } = await supabase.from('matches').select('*').order('created_at', { ascending: false });
+        const supaMatches = db.matches;
         if (supaMatches && supaMatches.length > 0) {
           setMatches(supaMatches.map((m: any) => ({
             ...m,
@@ -367,8 +454,8 @@ export default function AdminPanel() {
         } else {
           setMatches(db.matches || []);
         }
-        setClientProfiles(supabaseClientProfiles || []);
-        setAuditLogs(supabaseAuditLogs || []);
+        setClientProfiles(db.clientProfiles || []);
+        setAuditLogs(db.auditLogs || []);
         
         setContracts(db.contracts || []);
         setContractTemplates(db.contractTemplates || []);
@@ -376,8 +463,8 @@ export default function AdminPanel() {
         setRehireRequests(db.rehireRequests || []);
         setUsers(db.users || []);
         setDocuments(db.documents || []);
-        setSupportTickets(db.supportTickets || []);
-        setSupportMessages(db.supportMessages || []);
+        setSupportTickets(supportApiBody.tickets || db.supportTickets || []);
+        setSupportMessages(supportApiBody.messages || db.supportMessages || []);
         setAssessments(db.assessments || []);
         setAssessmentCategories(db.assessmentCategories || []);
         setAssessmentQuestions(db.assessmentQuestions || []);
@@ -434,41 +521,41 @@ export default function AdminPanel() {
     if (typeof window !== 'undefined' && sessionStorage.getItem('kongila_admin_loaded')) {
       setLoading(false);
     }
-    if (typeof window !== 'undefined' && sessionStorage.getItem('kongila_admin_auth')) {
-      setAuthChecking(false);
-      setIsAuthenticated(true);
-    }
-    
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    const sessionCheck = Promise.race([
+      supabase.auth.getSession(),
+      new Promise<any>(resolve => setTimeout(() => resolve({ data: { session: null } }), 5000))
+    ]);
+
+    sessionCheck.then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
-          const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
-          const role = normalizeAdminRole(userData?.role || session.user.user_metadata?.role || session.user.app_metadata?.role || '');
-          if (ADMIN_PORTAL_ROLES.has(role)) {
+          const role = await getAdminRoleForSession(session.user);
+          // Admin access comes from an existing role in public.users and nothing
+          // else. This branch used to auto-provision: any @kongila.co address
+          // with no users row was written one with role 'admin' from the
+          // browser, and admin@kongila.co was additionally given super_admin.
+          // Anyone able to register on that domain became an administrator.
+          // Admin accounts are now created deliberately, server-side or in the
+          // SQL editor.
+          if (isAdminRole(role)) {
             setIsAuthenticated(true);
-            if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
-          } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
-            // Auto-provision admin row for @kongila.co email if missing from public.users
-            await supabase.from('users').upsert({
-              id: session.user.id,
-              email: session.user.email,
-              password_hash: 'auth_managed',
-              role: 'admin',
-              status: 'active',
-              email_verified: true
-            }, { onConflict: 'id' });
-            if (session.user.email.toLowerCase() === 'admin@kongila.co') {
-              await supabase.from('user_roles').upsert({
-                id: `ur_${session.user.id}_super_admin`,
-                user_id: session.user.id,
-                role_id: 'super_admin',
-              }, { onConflict: 'id' });
-            }
-            setIsAuthenticated(true);
+            // Remembered, because every tab check needs it. The portal used
+            // to show the same thirteen tabs to all seven accepted roles.
+            setCurrentRole(role);
+            setCurrentAdminId(session.user.id);
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else {
             await supabase.auth.signOut();
+            setIsAuthenticated(false);
+            setCurrentRole('');
+            setCurrentAdminId('');
+            if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
           }
+        } else {
+          setIsAuthenticated(false);
+          setCurrentRole('');
+          setCurrentAdminId('');
+          if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
         }
       } catch (err) {
         console.error('Auth check failed', err);
@@ -482,44 +569,39 @@ export default function AdminPanel() {
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        const { data: userData } = await supabase.from('users').select('role').eq('id', session.user.id).maybeSingle();
-        const role = normalizeAdminRole(userData?.role || session.user.user_metadata?.role || session.user.app_metadata?.role || '');
-        if (ADMIN_PORTAL_ROLES.has(role)) {
+        const role = await getAdminRoleForSession(session.user);
+        // No auto-provisioning here either. See the note on the getSession
+        // branch above.
+        if (isAdminRole(role)) {
           setIsAuthenticated(true);
-        } else if (!userData && session.user.email?.endsWith('@kongila.co')) {
-          await supabase.from('users').upsert({
-            id: session.user.id,
-            email: session.user.email,
-            password_hash: 'auth_managed',
-            role: 'admin',
-            status: 'active',
-            email_verified: true
-          }, { onConflict: 'id' });
-          if (session.user.email.toLowerCase() === 'admin@kongila.co') {
-            await supabase.from('user_roles').upsert({
-              id: `ur_${session.user.id}_super_admin`,
-              user_id: session.user.id,
-              role_id: 'super_admin',
-            }, { onConflict: 'id' });
-          }
-          setIsAuthenticated(true);
+          setCurrentRole(role);
+          setCurrentAdminId(session.user.id);
         } else {
           await supabase.auth.signOut();
           setIsAuthenticated(false);
+          setCurrentRole('');
         }
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
+        setCurrentRole('');
+        setCurrentAdminId('');
+        if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
       }
     });
 
+    return () => authListener.subscription.unsubscribe();
+  }, []);
+
+  // Do not call protected APIs until authentication has completed. Previously
+  // this ran on the login screen and repeatedly produced /api/interviews 401s.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     syncFromDb();
-    const interval = setInterval(syncFromDb, 4000);
-    
-    // Realtime subscriptions
+    const interval = setInterval(() => syncFromDb(), 4000);
     const reqChannel = supabase.channel('admin_talent_requests')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'talent_requests' }, () => syncFromDb())
       .subscribe();
-      
     const orgChannel = supabase.channel('admin_organizations')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations' }, () => syncFromDb())
       .subscribe();
@@ -528,9 +610,10 @@ export default function AdminPanel() {
       clearInterval(interval);
       supabase.removeChannel(reqChannel);
       supabase.removeChannel(orgChannel);
-      authListener.subscription.unsubscribe();
     };
-  }, []);
+    // syncFromDb is intentionally the current render's authenticated loader.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (selectedTalent) {
@@ -538,10 +621,8 @@ export default function AdminPanel() {
         technical: selectedTalent.vettingScores.technical,
         workSimulation: selectedTalent.vettingScores.workSimulation,
         behavioral: selectedTalent.vettingScores.behavioral,
-        communication: selectedTalent.vettingScores.communication,
         personality: selectedTalent.vettingScores.personality,
         remoteReadiness: selectedTalent.vettingScores.remoteReadiness,
-        experience: selectedTalent.vettingScores.experience,
       });
     }
   }, [selectedTalent]);
@@ -552,34 +633,238 @@ export default function AdminPanel() {
     }
   }, [router.query.tab]);
 
-  // ─── METRICS ────────────────────────────────────────────────────────────────
+  // ── Messaging ───────────────────────────────────────────────────────────
+  // The admin portal had none, so a candidate or client writing to support
+  // was writing into a void.
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [convoMessages, setConvoMessages] = useState<any[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>('');
+  const [messageDraft, setMessageDraft] = useState('');
+  const [messagingLoading, setMessagingLoading] = useState(false);
 
-  const metrics = computePlatformMetrics(talents, requests, matches, contracts);
-  const mrrTotal = metrics.totalRevenue;
-  const utilizationRate = metrics.utilizationRate;
-  const activeTalentCount = metrics.activeTalentCount;
-
-  // ─── HANDLERS ───────────────────────────────────────────────────────────────
-
-  const saveToDb = async (updatedDb: any) => {
+  const loadMessaging = async () => {
+    setMessagingLoading(true);
     try {
-      const res = await fetch('/api/db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedDb),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        alert(`Database Save Error: ${err.error || 'Failed to sync with Supabase'}`);
-      }
-    } catch (e) {
-      console.error('Failed to save DB', e);
-      alert('Failed to save to Database. Check console for details.');
+      const response = await apiFetch('/api/messages');
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not load messages (${response.status}).`);
+      setConversations(payload.conversations || []);
+      setConvoMessages(payload.messages || []);
+    } catch (err) {
+      console.error('[admin] messages not loaded:', err);
+    } finally {
+      setMessagingLoading(false);
     }
   };
 
+  const sendAdminMessage = async () => {
+    if (!messageDraft.trim() || !activeConversationId) return;
+    const text = messageDraft.trim();
+    setMessageDraft('');
+    try {
+      const response = await apiFetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: activeConversationId, content: text })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Your message was not sent.');
+      await loadMessaging();
+    } catch (err: any) {
+      setMessageDraft(text);
+      alert(err?.message || 'Your message was not sent.');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'messages' && isAuthenticated) loadMessaging();
+  }, [activeTab, isAuthenticated]);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    apiFetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'markRead', conversationId: activeConversationId })
+    }).catch(err => console.error('[admin] could not mark messages read:', err));
+  }, [activeConversationId]);
+
+  // ── Platform settings ───────────────────────────────────────────────────
+  const [platformSettings, setPlatformSettings] = useState<any[]>([]);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  const loadPlatformSettings = async () => {
+    setSettingsLoading(true);
+    try {
+      const response = await apiFetch('/api/settings');
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not load settings (${response.status}).`);
+      setPlatformSettings(payload.settings || []);
+    } catch (err) {
+      console.error('[admin] settings not loaded:', err);
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const saveSetting = async (key: string, raw: string) => {
+    let value: any;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      // A bare string the operator typed without quotes.
+      value = raw;
+    }
+    try {
+      const response = await apiFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'That setting was not saved.');
+      await loadPlatformSettings();
+    } catch (err: any) {
+      alert(err?.message || 'That setting was not saved.');
+      await loadPlatformSettings();
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'settings' && isAuthenticated) loadPlatformSettings();
+  }, [activeTab, isAuthenticated]);
+
+  // ── Operator accounts ───────────────────────────────────────────────────
+  const [operators, setOperators] = useState<any[]>([]);
+  const [operatorsLoading, setOperatorsLoading] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteRole, setInviteRole] = useState<string>('ops_manager');
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  const loadOperators = async () => {
+    setOperatorsLoading(true);
+    try {
+      const response = await apiFetch('/api/users');
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not load operators (${response.status}).`);
+      setOperators(payload.operators || []);
+    } catch (err: any) {
+      console.error('[admin] operators not loaded:', err);
+      alert(err?.message || 'Could not load operators.');
+    } finally {
+      setOperatorsLoading(false);
+    }
+  };
+
+  const callUsersApi = async (body: any, successMessage: string) => {
+    try {
+      const response = await apiFetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `That did not work (${response.status}).`);
+      alert(successMessage);
+      await loadOperators();
+      return true;
+    } catch (err: any) {
+      alert(err?.message || 'That did not work.');
+      return false;
+    }
+  };
+
+  const submitInvite = async () => {
+    if (!inviteEmail.trim()) return;
+    setInviteBusy(true);
+    const sent = await callUsersApi(
+      { action: 'invite', email: inviteEmail.trim(), name: inviteName.trim(), role: inviteRole },
+      `Invitation sent to ${inviteEmail.trim()}. They set their own password from the link.`
+    );
+    if (sent) { setInviteEmail(''); setInviteName(''); }
+    setInviteBusy(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'users' && isAuthenticated) loadOperators();
+  }, [activeTab, isAuthenticated]);
+
+  // The operations inbox. The admin portal never read the notifications
+  // table, so everything addressed to operations — a replacement request, a
+  // candidate declining an offer, a client rejecting a whole shortlist — was
+  // written and then seen by nobody.
+  const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
+  const [adminNotificationsLoading, setAdminNotificationsLoading] = useState(false);
+
+  const loadAdminNotifications = async () => {
+    setAdminNotificationsLoading(true);
+    try {
+      const response = await apiFetch('/api/notifications');
+      if (!response.ok) throw new Error(`Could not load notifications (${response.status}).`);
+      const payload = await response.json();
+      setAdminNotifications(payload.notifications || []);
+    } catch (err) {
+      console.error('[admin] notifications not loaded:', err);
+    } finally {
+      setAdminNotificationsLoading(false);
+    }
+  };
+
+  const markAdminNotificationsRead = async (ids?: string[]) => {
+    const target = ids || adminNotifications.filter(n => !n.read).map(n => n.id);
+    if (target.length === 0) return;
+    setAdminNotifications(adminNotifications.map(n =>
+      target.includes(n.id) ? { ...n, read: true } : n
+    ));
+    try {
+      await apiFetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markRead: true, notificationIds: target })
+      });
+    } catch (err) {
+      console.error('[admin] could not mark notifications read:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'notifications' && isAuthenticated) loadAdminNotifications();
+  }, [activeTab, isAuthenticated]);
+
+  // Refresh the offer queue when its tab is opened. It is not part of the
+  // four-second whole-database poll, so it does not add to that load.
+  //
+  // This has to live up here with the other hooks. It was below the
+  // `if (loading) return` guard, so on a render where loading was true React
+  // saw one hook fewer than the render before and threw "Rendered more hooks
+  // than during the previous render", taking the whole admin console down.
+  useEffect(() => {
+    if (activeTab === 'offers' && isAuthenticated) loadOffers();
+  }, [activeTab, isAuthenticated]);
+
+  // ─── METRICS ────────────────────────────────────────────────────────────────
+
+  const metrics = computePlatformMetrics(talents, requests, matches, contracts);
+  // Contract value under management, not "revenue". Revenue needs a
+  // platform fee rate, which is not configured anywhere, so the old figure
+  // was contract value times a hardcoded 1.25 presented as money earned.
+  const mrrTotal = metrics.monthlyContractValue;
+  const utilizationRate = metrics.utilizationRate;
+  const activeTalentCount = metrics.activeTalentCount;
+  /** Renders a metric that may not be computable, rather than showing 0. */
+  const orNotAvailable = (value: number | null, suffix = '') =>
+    value === null ? 'Not available' : `${value}${suffix}`;
+
+  // ─── HANDLERS ───────────────────────────────────────────────────────────────
+
+  // saveToDb is gone. It posted the browser's whole in-memory copy of the
+  // database to /api/db, which upserts about twenty tables from it, so any
+  // one action rewrote every row the screen was holding. Every write now
+  // goes to the route that owns that thing.
+
   const updateRequestCollections = (requestId: string, nextStatus: string, patch: Record<string, any> = {}) => {
-    const normalizedStatus = normalizeRequestStatus(nextStatus);
+    const normalizedStatus = coerceRequestStatus(nextStatus);
     const updatedRequests = requests.map(request => (
       request.id === requestId
         ? { ...request, ...patch, status: normalizedStatus }
@@ -595,25 +880,40 @@ export default function AdminPanel() {
     return updatedRequests;
   };
 
-  const persistTalentRequestStatus = async (requestId: string, status: string, patch: Record<string, any> = {}) => {
+  /**
+   * Status changes go through the server, which checks the move is legal
+   * before writing and records who made it. A refused move returns 409 with
+   * an explanation and nothing is written.
+   *
+   * Returns true when the status landed, so callers can avoid showing a
+   * success message for a change that did not happen.
+   */
+  const persistTalentRequestStatus = async (requestId: string, status: string, patch: Record<string, any> = {}): Promise<boolean> => {
     const request = requests.find(r => r.id === requestId);
-    if (!request) return;
-    const updatedPayload = { ...request, ...patch, status: normalizeRequestStatus(status) };
-    // Re-read the row to get current dedicated columns so we never overwrite them with null
-    const { data: currentRow } = await supabase
-      .from('talent_requests')
-      .select('*')
-      .eq('payload->>id', requestId)
-      .maybeSingle();
-    await supabase
-      .from('talent_requests')
-      .update({
-        payload: updatedPayload,
-        // Only write columns if they already have a value (don't null them out)
-        ...(currentRow?.talent_manager_id ? {} : (updatedPayload.assignedTalentManagerId ? { talent_manager_id: updatedPayload.assignedTalentManagerId } : {})),
-        ...(currentRow?.account_manager_id ? {} : (updatedPayload.assignedAccountManagerId ? { account_manager_id: updatedPayload.assignedAccountManagerId } : {})),
+    if (!request) return false;
+
+    const res = await apiFetch('/api/requests/status', {
+      method: 'POST',
+      body: JSON.stringify({
+        requestId,
+        status,
+        patch: {
+          assignedAccountManagerId: patch.assignedAccountManagerId,
+          assignedTalentManagerId: patch.assignedTalentManagerId,
+          accountManagerNotes: patch.accountManagerNotes,
+          talentManagerNotes: patch.talentManagerNotes
+        }
       })
-      .eq('payload->>id', requestId);
+    });
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      console.error('[requests] status change refused:', result?.error);
+      alert(result?.error || 'Could not update the request status.');
+      return false;
+    }
+
+    return true;
   };
 
   // Vetting
@@ -621,20 +921,87 @@ export default function AdminPanel() {
     e.preventDefault();
     if (!selectedTalent) return;
     setSaving(true);
-    const calculation = calculateCompositeVettingGrade(editScores);
-    const updatedTalents = talents.map(t =>
-      t.id === selectedTalent.id
-        ? { ...t, vettingScores: editScores, grade: calculation.grade, vettingStatus: calculation.grade === 'Reject' ? 'Review' as const : 'Vetted' as const }
-        : t
-    );
-    const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Update Vetting Scores', details: `Recalculated vetting score for ${selectedTalent.name}. Grade: ${calculation.grade} (${calculation.score}%)`, timestamp: new Date().toISOString() };
-    const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Compliance Agent', message: `Audit completed: ${selectedTalent.name} composite score locked at ${calculation.score}%.`, timestamp: new Date().toISOString(), type: calculation.grade === 'Reject' ? 'error' : 'success' };
-    setTalents(updatedTalents);
-    setAuditLogs([newAuditLog, ...auditLogs]);
-    setAgentLogs([newAgentLog, ...agentLogs]);
-    setSelectedTalent(updatedTalents.find(t => t.id === selectedTalent.id) || null);
-    await saveToDb({ talents: updatedTalents, clientRequests: requests, matches, contracts, auditLogs: [newAuditLog, ...auditLogs], agentLogs: [newAgentLog, ...agentLogs], interviews, rehireRequests, tasks: [] });
+    // Through the server. The grade and vetting status used to be computed
+    // in the browser and posted with the whole talents array through
+    // /api/db, which upserts every candidate's row from whatever the screen
+    // was holding. The grade is computed server side from the scores now,
+    // and only this candidate's row is written.
+    try {
+      const res = await apiFetch('/api/vetting', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'scores', talentId: selectedTalent.id, scores: editScores })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'Those scores were not saved.');
+        setSaving(false);
+        return;
+      }
+
+      const updatedTalents = talents.map(t =>
+        t.id === selectedTalent.id
+          ? { ...t, vettingScores: result.scores, grade: result.grade, vettingStatus: result.vettingStatus }
+          : t
+      );
+      setTalents(updatedTalents);
+      setSelectedTalent(updatedTalents.find(t => t.id === selectedTalent.id) || null);
+    } catch (e: any) {
+      console.error('Failed to save vetting scores', e);
+      alert(e?.message || 'Those scores were not saved.');
+    }
+
     setSaving(false);
+  };
+
+  /**
+   * Tells both sides of an interview what happened, each in their own zone.
+   *
+   * Nothing used to notify anyone about a reschedule. The candidate set a
+   * flag, the admin queue read it, and whatever the admin decided went back
+   * into the database with no message to either party.
+   */
+  const notifyBothPartiesOfInterview = async (
+    interview: any,
+    kind: 'scheduled' | 'rescheduled' | 'declined'
+  ) => {
+    const iso = interviewInstant(interview);
+    const recipients: Array<{ userId: string; zone: string | null }> = [];
+    if (interview.talentId) {
+      recipients.push({ userId: interview.talentId, zone: interview.talentTimezone || null });
+    }
+    if (interview.clientId) {
+      recipients.push({ userId: interview.clientId, zone: interview.clientTimezone || null });
+    }
+    if (recipients.length === 0) return;
+
+    // Through the server. The insert that used to be here wrote to the
+    // notifications table from the browser, where RLS is on with no policy,
+    // so every write was denied and neither side was ever told. The route
+    // sends the email too, in each person's own timezone.
+    const event = kind === 'rescheduled' ? 'interview_rescheduled' : 'interview_scheduled';
+
+    try {
+      const response = await apiFetch('/api/notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          event,
+          userIds: recipients.map(r => r.userId),
+          context: {
+            roleTitle: interview.title || undefined,
+            when: iso ? formatInstantInZone(iso, 'UTC') + ' (UTC)' : undefined,
+            talentName: interview.talentName || undefined,
+            joiningDetails: interview.meetingLink || undefined,
+            reason: kind === 'declined' ? 'The reschedule request was declined.' : undefined
+          }
+        })
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        console.error('[interviews] notification not sent:', detail?.error);
+      }
+    } catch (e) {
+      console.error('[interviews] notification not sent:', e);
+    }
   };
 
   // Stage-level vetting decision handler
@@ -646,9 +1013,26 @@ export default function AdminPanel() {
       return;
     }
 
+    // Personality Test, Remote Readiness and Work Simulation used to pass with
+    // no score. Between them they are 40% of the composite grade, so a
+    // candidate who passed every stage reached 60 and was graded Reject.
+    const currentPipelineForCheck: VettingStageRecord[] = normalizeVettingPipeline(selectedTalent.vettingPipeline);
+    const scoreProblem = validateStageDecision(stageIdx, decision, score, currentPipelineForCheck);
+    if (scoreProblem) {
+      alert(scoreProblem);
+      return;
+    }
+
     setSaving(true);
     const currentPipeline: VettingStageRecord[] = normalizeVettingPipeline(selectedTalent.vettingPipeline);
-    const updatedPipeline = advanceTalentStage(currentPipeline, stageIdx, decision, score, notes);
+    let updatedPipeline: VettingStageRecord[];
+    try {
+      updatedPipeline = advanceTalentStage(currentPipeline, stageIdx, decision, score, notes);
+    } catch (err: any) {
+      setSaving(false);
+      alert(err?.message || 'That stage decision could not be applied.');
+      return;
+    }
     if (!updatedPipeline[stageIdx]) {
       updatedPipeline[stageIdx] = { ...buildDefaultVettingPipeline()[stageIdx], status: 'in_progress' };
     }
@@ -683,7 +1067,56 @@ export default function AdminPanel() {
         setTalentSkillAssessments(payload.talentSkillAssessments);
       }
       if (stageIdx === 2 && stageInterviewDate && stageInterviewTime) {
-        // Schedule Interview
+        // The operator enters a wall-clock time in their own zone. Record the
+        // instant it refers to, and which zone that was, so both portals can
+        // show their own party the right time.
+        const adminZone = viewerTimeZone();
+        const newInstant = wallClockToUtc(stageInterviewDate, stageInterviewTime, adminZone);
+        const existingId = currentPipeline[stageIdx]?.interviewId;
+        const existing = existingId
+          ? (payload.interviews || interviews).find((i: any) => i.id === existingId)
+          : null;
+
+        if (existing) {
+          // Rescheduling. This used to fall through to the create branch
+          // below, so approving a reschedule minted a second interview row
+          // and left the first one Scheduled forever — the admin queue showed
+          // two live interviews for one conversation and the candidate got
+          // two calendar entries.
+          const moved = {
+            ...existing,
+            date: stageInterviewDate,
+            time: stageInterviewTime,
+            scheduledTime: newInstant,
+            scheduledTimezone: adminZone,
+            talentTimezone: existing.talentTimezone || (selectedTalent as any).timezone || null,
+            rescheduledFrom: existing.scheduledTime || null,
+            status: 'Rescheduled',
+            meetingLink: stageInterviewLink || existing.meetingLink,
+            rescheduleRequested: false,
+            rescheduleReason: null,
+            rescheduleRequestedBy: null,
+            rescheduleRequestedAt: null,
+            proposedNewDate: null,
+            proposedNewTime: null,
+            proposedTime: null,
+            proposedTimezone: null
+          };
+          payload.interviews = (payload.interviews || interviews).map((i: any) =>
+            i.id === existingId ? moved : i
+          );
+          setInterviews(payload.interviews);
+          updatedPipeline[stageIdx].interviewDate = stageInterviewDate;
+          updatedPipeline[stageIdx].interviewTime = stageInterviewTime;
+          updatedPipeline[stageIdx].interviewScheduledTime = newInstant || undefined;
+          updatedPipeline[stageIdx].interviewTimezone = adminZone;
+          updatedPipeline[stageIdx].meetingLink = stageInterviewLink || updatedPipeline[stageIdx].meetingLink;
+          updatedPipeline[stageIdx].rescheduleRequested = false;
+          updatedPipeline[stageIdx].rescheduleReason = undefined;
+          notifyBothPartiesOfInterview(moved, 'rescheduled');
+        } else {
+
+        // Scheduling for the first time.
         const interview = {
           id: `int_${Date.now()}`,
           talentId: selectedTalent.id,
@@ -692,10 +1125,15 @@ export default function AdminPanel() {
           title: `Behavioural Interview: ${selectedTalent.name}`,
           date: stageInterviewDate,
           time: stageInterviewTime,
+          scheduledTime: newInstant,
+          scheduledTimezone: adminZone,
+          talentTimezone: (selectedTalent as any).timezone || null,
           status: 'Scheduled',
           meetingLink: stageInterviewLink,
           createdAt: timestamp
         };
+        updatedPipeline[stageIdx].interviewScheduledTime = newInstant || undefined;
+        updatedPipeline[stageIdx].interviewTimezone = adminZone;
         updatedPipeline[stageIdx].interviewId = interview.id;
         // Store these on the stage record so the waiting UI can display them
         updatedPipeline[stageIdx].interviewDate = stageInterviewDate;
@@ -705,6 +1143,8 @@ export default function AdminPanel() {
         updatedPipeline[stageIdx].rescheduleReason = undefined;
         payload.interviews = [...interviews, interview];
         setInterviews(payload.interviews);
+        notifyBothPartiesOfInterview(interview, 'scheduled');
+        }
       }
       if (stageIdx === 3 && stagePersonalityLink) {
         // Stage 4: Personality Test Link
@@ -755,10 +1195,25 @@ export default function AdminPanel() {
       : decision === 'Reject' ? 'Application Screening' : 'Final Review';
 
     const calculation = calculateCompositeVettingGrade(updatedVettingScores);
+
+    // Final Review used to grant Vetted unconditionally, so a composite below
+    // the Reject line still produced a deployable candidate. A candidate who
+    // finishes the pipeline below grade is held at Review for a human to look
+    // at, not quietly passed.
+    const passedFinalReview = stageIdx === 6 && calculation.grade !== 'Reject';
     const newVettingStatus = decision === 'Reject'
       ? 'Review' as const
-      : stageIdx === 6 ? 'Vetted' as const
-      : selectedTalent.vettingStatus;
+      : stageIdx === 6
+        ? (passedFinalReview ? 'Vetted' as const : 'Review' as const)
+        : selectedTalent.vettingStatus;
+
+    if (stageIdx === 6 && !passedFinalReview) {
+      alert(
+        `${selectedTalent.name} finished vetting with a composite of ${calculation.score}%, ` +
+        `which grades as Reject. The pipeline is complete but the candidate is held at ` +
+        `Review rather than marked Vetted. Reopen a stage to re-assess, or reject.`
+      );
+    }
 
     const updatedTalent: any = {
       ...selectedTalent,
@@ -769,21 +1224,21 @@ export default function AdminPanel() {
       grade: calculation.grade,
     };
 
-    // AC-T-012 & AC-T-014: Fire notification
-    fetch('/api/notifications', {
+    // AC-T-012 & AC-T-014: tell the candidate.
+    //
+    // The body sent here was { talentId, type, stage, isRejection, subject,
+    // message }, and the route reads { event, userIds, context }. Nothing
+    // matched, so `event is required` came back and every stage transition
+    // notification was dropped.
+    apiFetch('/api/notifications', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        talentId: selectedTalent.id,
-        type: 'stage_transition',
-        stage: VETTING_STAGES[stageIdx]?.name,
-        isRejection: decision === 'Reject',
-        subject: decision === 'Reject' 
-          ? `Update on your ${VETTING_STAGES[stageIdx]?.name}`
-          : `You've advanced to ${newVettingStage}!`,
-        message: decision === 'Reject' 
-          ? `We have reviewed your profile and unfortunately cannot proceed with your application at this time. Reason: ${notes}`
-          : `Congratulations, your status has been updated. Please log in to your dashboard to view the next steps.`
+        event: decision === 'Reject' ? 'application_rejected' : 'stage_advanced',
+        userIds: [selectedTalent.id],
+        context: {
+          stageName: VETTING_STAGES[stageIdx]?.name,
+          reason: decision === 'Reject' ? notes : undefined
+        }
       })
     }).catch(e => console.error("Notification failed:", e));
 
@@ -803,13 +1258,35 @@ export default function AdminPanel() {
       type: decision === 'Reject' ? 'error' : decision === 'Proceed' ? 'success' : 'warning',
     };
 
+    // This candidate's grade or vetting status may have just changed, so
+    // every request they appear on is rescored and, if they are no longer
+    // eligible, they come off the shortlist. Matches used to be built once at
+    // intake and never revisited, so a candidate rejected at vetting stayed
+    // in front of the client indefinitely.
+    let reconciledMatches = matches;
+    const affectedRequestIds = Array.from(new Set(
+      matches.filter(m => m.talentId === selectedTalent.id).map(m => m.requestId)
+    ));
+    for (const reqId of affectedRequestIds) {
+      const req = requests.find(r => r.id === reqId);
+      if (!req) continue;
+      const result = reconcileMatchesForRequest(req, updatedTalents, reconciledMatches);
+      reconciledMatches = result.matches as typeof matches;
+      if (result.removed > 0 || result.rescored > 0) {
+        console.info(
+          `[matching] request ${reqId}: ${result.rescored} rescored, ${result.removed} removed, ${result.added} added`
+        );
+      }
+    }
+    setMatches(reconciledMatches);
+
     setTalents(updatedTalents);
     setSelectedTalent(updatedTalent as TalentProfile);
     setAuditLogs([newAuditLog, ...auditLogs]);
     setAgentLogs([newAgentLog, ...agentLogs]);
     setActiveVettingStageIdx(null);
     setStageNotesInput('');
-    setStageScoreInput(80);
+    setStageScoreInput(undefined);
     setStageRubricScores({});
     setStageAssessmentId('');
     setStageInterviewDate('');
@@ -823,134 +1300,115 @@ export default function AdminPanel() {
     setPendingRejection(null);
     setRejectionReasonInput('');
 
-    await saveToDb({
-      talents: updatedTalents,
-      clientRequests: requests,
-      matches,
-      contracts,
-      auditLogs: [newAuditLog, ...auditLogs],
-      agentLogs: [newAgentLog, ...agentLogs],
-      interviews: payload.interviews || interviews,
-      rehireRequests,
-      talentSkillAssessments: payload.talentSkillAssessments || talentSkillAssessments,
-      workSimulationTasks: payload.workSimulationTasks || workSimulationTasks,
-      tasks: [],
-    });
+    // Through the server. This used to post the whole talents array, every
+    // request, every match, the interviews and the assessments back through
+    // /api/db, which upserts all of them. One stage decision rewrote the
+    // entire database from browser state, repacking every candidate's bio
+    // envelope on the way.
+    try {
+      const res = await apiFetch('/api/vetting', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'pipeline',
+          talentId: selectedTalent.id,
+          pipeline: updatedPipeline,
+          vettingStage: newVettingStage,
+          vettingStatus: newVettingStatus,
+          scores: updatedVettingScores,
+          auditAction: `Stage Decision: ${VETTING_STAGES[stageIdx]?.name}`,
+          auditDetails: `Decision: ${decision}. Score: ${score ?? 'none'}. Notes: ${notes || 'none'}.`
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That decision was not saved.');
+        setSaving(false);
+        return;
+      }
+    } catch (e: any) {
+      console.error('Failed to save stage decision', e);
+      alert(e?.message || 'That decision was not saved.');
+      setSaving(false);
+      return;
+    }
+
     setSaving(false);
   };
 
-  const handleGlobalApproveReschedule = async (iv: any) => {
+  /**
+   * Approving or declining a reschedule, through the server.
+   *
+   * Both of these used to patch the interviews array in the browser and push
+   * it through saveToDb. That route could not check for a clash at the new
+   * time, told neither party, and moved only the wall-clock text while
+   * leaving the stored timestamp on the original slot, so the two disagreed.
+   */
+  const decideRescheduleRequest = async (iv: any, approve: boolean) => {
     setSaving(true);
     try {
-      const updatedInterviews = interviews.map((i: any) =>
-        i.id === iv.id
-          ? {
-              ...i,
-              status: 'Scheduled',
-              date: i.proposedNewDate || i.date,
-              time: i.proposedNewTime || i.time,
-              rescheduleRequested: false,
-              rescheduleReason: null,
-              proposedNewDate: null,
-              proposedNewTime: null,
-            }
-          : i
-      );
+      const response = await apiFetch('/api/interviews/reschedule-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interviewId: iv.id,
+          approve,
+          scheduledTime: approve ? (iv.proposedTime || null) : null,
+          date: approve ? (iv.proposedNewDate || null) : null,
+          time: approve ? (iv.proposedNewTime || null) : null,
+          timezone: iv.proposedTimezone || iv.scheduledTimezone || null
+        })
+      });
 
-      let updatedTalents = talents;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(payload?.error || `Could not apply that decision (${response.status}).`);
+        return;
+      }
+
+      const updated = payload.interview;
+      setInterviews(interviews.map((i: any) => (i.id === iv.id ? { ...i, ...updated } : i)));
+
+      if (payload.warnings?.length) {
+        console.warn('[admin] reschedule decision warnings:', payload.warnings);
+      }
+
+      // The pipeline stage holds a pointer, so clearing the flag there keeps
+      // the vetting drawer in step. The time itself lives on the interview.
       if (iv.talentId) {
         const talent = talents.find((t: any) => t.id === iv.talentId);
-        if (talent && talent.vettingPipeline) {
-          const newPipeline = talent.vettingPipeline.map((stage: any) => {
-            if (stage.interviewId === iv.id) {
-              return {
-                ...stage,
-                interviewDate: iv.proposedNewDate || stage.interviewDate,
-                interviewTime: iv.proposedNewTime || stage.interviewTime,
-                rescheduleRequested: false,
-                rescheduleReason: undefined,
-              };
-            }
-            return stage;
-          });
+        if (talent?.vettingPipeline) {
+          const newPipeline = talent.vettingPipeline.map((stage: any) =>
+            stage.interviewId === iv.id
+              ? { ...stage, rescheduleRequested: false, rescheduleReason: undefined }
+              : stage
+          );
           const updatedTalent = { ...talent, vettingPipeline: newPipeline };
-          updatedTalents = talents.map((t: any) => (t.id === talent.id ? updatedTalent : t));
-          if (selectedTalent?.id === talent.id) {
-            setSelectedTalent(updatedTalent as TalentProfile);
+          const updatedTalents = talents.map((t: any) => (t.id === talent.id ? updatedTalent : t));
+          setTalents(updatedTalents);
+          if (selectedTalent?.id === talent.id) setSelectedTalent(updatedTalent as TalentProfile);
+          const res = await apiFetch('/api/vetting', {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'pipeline',
+              talentId: talent.id,
+              pipeline: newPipeline,
+              auditAction: 'Clear Reschedule Flag',
+              auditDetails: `Reschedule flag cleared on interview ${iv.id}.`
+            })
+          });
+          if (!res.ok) {
+            const detail = await res.json().catch(() => ({}));
+            console.error('[vetting] pipeline not saved:', detail?.error);
           }
         }
       }
-
-      let updatedMatches = matches;
-      if (iv.matchId) {
-        updatedMatches = matches.map((m: any) =>
-          m.id === iv.matchId ? { ...m, status: 'Interview Scheduled' as const } : m
-        );
-      }
-
-      setInterviews(updatedInterviews);
-      setTalents(updatedTalents);
-      setMatches(updatedMatches);
-      
-      await saveToDb({
-        interviews: updatedInterviews,
-        talents: updatedTalents,
-        matches: updatedMatches,
-      });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleGlobalRejectReschedule = async (iv: any) => {
-    setSaving(true);
-    try {
-      const updatedInterviews = interviews.map((i: any) =>
-        i.id === iv.id
-          ? {
-              ...i,
-              status: 'Scheduled',
-              rescheduleRequested: false,
-              rescheduleReason: null,
-              proposedNewDate: null,
-              proposedNewTime: null,
-            }
-          : i
-      );
-
-      let updatedTalents = talents;
-      if (iv.talentId) {
-        const talent = talents.find((t: any) => t.id === iv.talentId);
-        if (talent && talent.vettingPipeline) {
-          const newPipeline = talent.vettingPipeline.map((stage: any) => {
-            if (stage.interviewId === iv.id) {
-              return {
-                ...stage,
-                rescheduleRequested: false,
-                rescheduleReason: undefined,
-              };
-            }
-            return stage;
-          });
-          const updatedTalent = { ...talent, vettingPipeline: newPipeline };
-          updatedTalents = talents.map((t: any) => (t.id === talent.id ? updatedTalent : t));
-          if (selectedTalent?.id === talent.id) {
-            setSelectedTalent(updatedTalent as TalentProfile);
-          }
-        }
-      }
-
-      setInterviews(updatedInterviews);
-      setTalents(updatedTalents);
-      
-      await saveToDb({
-        interviews: updatedInterviews,
-        talents: updatedTalents,
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleGlobalApproveReschedule = (iv: any) => decideRescheduleRequest(iv, true);
+  const handleGlobalRejectReschedule = (iv: any) => decideRescheduleRequest(iv, false);
 
   const handleRejectReschedule = async () => {
     if (!selectedTalent) return;
@@ -966,7 +1424,27 @@ export default function AdminPanel() {
     
     setTalents(updatedTalents);
     setSelectedTalent(updatedTalent as TalentProfile);
-    await saveToDb({ talents: updatedTalents });
+
+    try {
+      const res = await apiFetch('/api/vetting', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'pipeline',
+          talentId: selectedTalent.id,
+          pipeline: currentPipeline,
+          auditAction: 'Reject Reschedule Request',
+          auditDetails: `Reschedule request declined for ${selectedTalent.name}.`
+        })
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        alert(detail?.error || 'That decision was not saved.');
+      }
+    } catch (e: any) {
+      console.error('Failed to save pipeline', e);
+      alert(e?.message || 'That decision was not saved.');
+    }
+
     setSaving(false);
   };
 
@@ -990,22 +1468,34 @@ export default function AdminPanel() {
     };
     const updatedTalents = talents.map(t => t.id === selectedTalent.id ? updatedTalent : t);
     
-    const newAuditLog: AuditLog = {
-      id: `audit_${Date.now()}`,
-      actor: 'Ops Lead',
-      action: `Ops Override: Re-Assess Stage ${stageIdx + 1}`,
-      details: `Re-opened stage ${stageIdx + 1} for re-assessment. Subsequent stages reset to pending.`,
-      timestamp: new Date().toISOString(),
-    };
-
     setTalents(updatedTalents);
     setSelectedTalent(updatedTalent as TalentProfile);
-    setAuditLogs([newAuditLog, ...auditLogs]);
 
-    await saveToDb({
-      talents: updatedTalents,
-      auditLogs: [newAuditLog, ...auditLogs],
-    });
+    // Through the server. This used to post the whole talents array and an
+    // audit entry attributed to 'Ops Lead' through /api/db.
+    try {
+      const res = await apiFetch('/api/vetting', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'pipeline',
+          talentId: selectedTalent.id,
+          pipeline: updatedPipeline,
+          vettingStage: newVettingStage,
+          auditAction: `Re-assess Stage ${stageIdx + 1}`,
+          auditDetails: `Reopened stage ${stageIdx + 1} for ${selectedTalent.name}.`
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That stage was not reopened.');
+        setSaving(false);
+        return;
+      }
+    } catch (e: any) {
+      console.error('Failed to reopen stage', e);
+      alert(e?.message || 'That stage was not reopened.');
+    }
+
     setSaving(false);
   };
 
@@ -1028,42 +1518,86 @@ export default function AdminPanel() {
       return;
     }
 
-    const updatedMatches = matches.map(m => m.id === matchId ? { ...m, status: 'Shortlisted' as const } : m);
     const talentName = talents.find(t => t.id === targetMatch.talentId)?.name || 'Contractor';
-    const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Push Match Shortlist', details: `Shortlisted candidate ${talentName} pushed to client dashboard.`, timestamp: new Date().toISOString() };
-    const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Matching Agent', message: `Candidate ${talentName} pushed to client shortlist deck.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
-    const linkedRequest = requests.find(r => r.id === targetMatch.requestId);
-    const updatedRequests = linkedRequest
-      ? updateRequestCollections(
-          linkedRequest.id,
-          'Candidates Ready',
-          linkedRequest
-        )
-      : requests;
-    if (linkedRequest) {
-      await persistTalentRequestStatus(linkedRequest.id, 'Candidates Ready', linkedRequest);
+
+    // Through the matching route, which writes the match as 'proposed',
+    // moves the request and tells the client. This used to set the status
+    // to 'Shortlisted' in title case, which matches_status_check does not
+    // allow, and post the whole database through /api/db: the candidate's
+    // notification went to a table that denies browser writes, and the
+    // client id fell back to the literal string 'usr_horizon'.
+    try {
+      const res = await apiFetch('/api/matching/submit', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId: targetMatch.requestId,
+          candidates: [{
+            talentId: targetMatch.talentId,
+            score: (targetMatch as any).score,
+            breakdown: (targetMatch as any).breakdown
+          }]
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || `${talentName} was not pushed to the client.`);
+        return;
+      }
+
+      setMatches(matches.map(m => m.id === matchId ? { ...m, status: 'proposed' as any } : m));
+      if (result.warnings?.length) console.warn('[matching]', result.warnings.join(' '));
+      alert(`${talentName} is now in front of the client.`);
+    } catch (e: any) {
+      console.error('Failed to push match', e);
+      alert(e?.message || `${talentName} was not pushed to the client.`);
     }
-    setMatches(updatedMatches);
-    setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      contracts,
-      notifications: [{
-        id: `notif_${Date.now()}`,
-        userId: linkedRequest?.clientId || 'usr_horizon',
-        title: 'New Matches Shortlisted',
-        message: `${talentName} has been pushed to your shortlist!`,
-        read: false,
-        createdAt: new Date().toISOString()
-      }],
-      auditLogs: [newAuditLog, ...auditLogs],
-      agentLogs: [newAgentLog, ...agentLogs],
-      interviews,
-      rehireRequests,
-      tasks: []
-    });
+  };
+
+  const handleRecordResult = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    const payload = { type: 'result', ...resultForm, score: Number(resultForm.score) };
+    try {
+      const res = await apiFetch('/api/assessments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (res.ok) {
+        setShowResultModal(false);
+        setResultForm({ assessmentId: '', talentId: '', score: '', passed: true });
+        await syncFromDb();
+      }
+    } catch (e) { console.error(e); }
+    setSaving(false);
+  };
+
+  const handleArchiveAssessment = async (assessmentId: string) => {
+    try {
+      await apiFetch('/api/assessments', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: assessmentId, status: 'archived' }) });
+      await syncFromDb();
+    } catch (e) { console.error(e); }
+  };
+
+  // Support
+  const handleSupportReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTicket || !supportReply.trim()) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch('/api/support', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'message', ticketId: selectedTicket.id, senderName: 'Admin Support', senderRole: 'Support', text: supportReply }) });
+      if (res.ok) {
+        setSupportReply('');
+        await syncFromDb();
+      }
+    } catch (e) { console.error(e); }
+    setSaving(false);
+  };
+
+  const handleUpdateTicketStatus = async (ticketId: string, newStatus: string) => {
+    try {
+      const res = await apiFetch('/api/support', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ticketId, status: newStatus }) });
+      if (res.ok) {
+        await syncFromDb();
+        if (selectedTicket?.id === ticketId) setSelectedTicket({ ...selectedTicket, status: newStatus });
+      }
+    } catch (e) { console.error(e); }
   };
 
   const handleShortlistCandidate = async (talentId: string) => {
@@ -1080,37 +1614,54 @@ export default function AdminPanel() {
 
     const talent = talents.find(t => t.id === talentId);
     if (!talent) return;
-    const newMatch: Match = { id: `match_${Date.now()}_${talentId}`, requestId: selectedRequest.id, talentId, score: Math.floor(Math.random() * 15) + 84, breakdown: { skillFit: Math.floor(Math.random() * 15) + 80, behaviourFit: Math.floor(Math.random() * 15) + 80, personalityFit: Math.floor(Math.random() * 15) + 80, availability: Math.floor(Math.random() * 15) + 80, pastPerformance: Math.floor(Math.random() * 15) + 80 }, status: 'Shortlisted' };
-    const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Shortlist Candidate', details: `Manually shortlisted ${talent.name} for request ${selectedRequest.serviceType}.`, timestamp: new Date().toISOString() };
-    const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Matching Agent', message: `Candidate ${talent.name} shortlisted. Score: ${newMatch.score}% Fit.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
-    const updatedMatches = [...matches, newMatch];
-    const currentStatus = normalizeRequestStatus(selectedRequest.status);
-    const nextStatus = currentStatus === 'Candidates Ready' || currentStatus === 'Client Interview' || currentStatus === 'Offer Accepted' || currentStatus === 'Onboarding'
-      ? currentStatus
-      : 'Sourcing Talent';
-    const updatedRequests = updateRequestCollections(selectedRequest.id, nextStatus, selectedRequest);
-    await persistTalentRequestStatus(selectedRequest.id, nextStatus, selectedRequest);
-    setMatches(updatedMatches);
-    setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      contracts,
-      notifications: [{
-        id: `notif_${Date.now()}`,
-        userId: selectedRequest.clientId || 'usr_horizon',
-        title: 'Candidate Shortlisted',
-        message: `"${talent.name}" shortlisted for "${selectedRequest.serviceType}"!`,
-        read: false,
-        createdAt: new Date().toISOString()
-      }],
-      auditLogs: [newAuditLog, ...auditLogs],
-      agentLogs: [newAgentLog, ...agentLogs],
-      interviews,
-      rehireRequests,
-      tasks: []
-    });
+
+    // A candidate who has changed something material since being vetted is
+    // not shortlistable until an operator has looked again.
+    if ((talent as any).requiresReReview) {
+      alert(`${talent.name} has edited their profile since being vetted and is flagged for re-review. Clear the flag before shortlisting them.`);
+      return;
+    }
+    // Was a random number between 84 and 98, with random breakdown bars to
+    // match, shown to the client as a match score. It is now the real score
+    // from the one scoring function, the same number automatic matching and
+    // the matching screen produce.
+    const { score: matchScore, breakdown: matchBreakdown } = calculateMatchScore(talent, selectedRequest);
+    const newMatch: Match = {
+      id: `match_${selectedRequest.id}_${talentId}`,
+      requestId: selectedRequest.id,
+      talentId,
+      score: matchScore,
+      breakdown: matchBreakdown,
+      status: 'Shortlisted'
+    };
+    // Through the matching route. This built a match with status
+    // 'Shortlisted' in title case, which matches_status_check does not
+    // allow, and posted the whole database through /api/db: the client's
+    // notification went to a table that denies browser writes, and the
+    // client id fell back to the literal string 'usr_horizon'. The route
+    // writes the match as 'proposed', which is what operations submitting
+    // a candidate means, and tells the client.
+    try {
+      const res = await apiFetch('/api/matching/submit', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId: selectedRequest.id,
+          candidates: [{ talentId, score: matchScore, breakdown: matchBreakdown }]
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || `${talent.name} was not shortlisted.`);
+        return;
+      }
+      setMatches([...matches, ...(result.matches || [])]);
+      if (result.warnings?.length) console.warn('[matching]', result.warnings.join(' '));
+    } catch (e: any) {
+      console.error('Failed to shortlist candidate', e);
+      alert(e?.message || `${talent.name} was not shortlisted.`);
+      return;
+    }
+
     alert(`${talent.name} has been shortlisted successfully.`);
   };
 
@@ -1121,160 +1672,98 @@ export default function AdminPanel() {
     if (!talent) return;
     const proposedDate = (match as any).requestedDate || new Date().toISOString().split('T')[0];
     const proposedTime = (match as any).requestedTime || '10:00';
-    const confCode = `${Math.random().toString(36).substring(2, 5)}-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 5)}`;
-    const meetingLink = `https://meet.google.com/${confCode}`;
-    const calEventId = `gcal_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const calendarTitle = encodeURIComponent(`${selectedRequest.serviceType} - Interview with ${talent.name}`);
-    const googleCalendarLink = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${calendarTitle}&dates=${proposedDate.replace(/-/g, '')}T${proposedTime.replace(':', '')}00Z/${proposedDate.replace(/-/g, '')}T${proposedTime.replace(':', '')}00Z&location=${encodeURIComponent(meetingLink)}`;
-    const newInterview: Interview = { id: `interview_${Date.now()}`, requestId: selectedRequest.id, matchId: match.id, talentId: match.talentId, talentName: talent.name, talentAvatar: talent.avatar || '', clientName: selectedRequest.clientName || '', title: `${selectedRequest.serviceType} - Interview with ${talent.name}`, date: proposedDate, time: proposedTime, status: 'Scheduled', meetingLink, googleCalendarEventId: calEventId, googleCalendarLink, notes: (match as any).requestedNotes || '', createdAt: new Date().toISOString() };
-    const updatedMatches = matches.map(m => m.id === matchId ? { ...m, status: 'Interview Scheduled' as const } : m);
-    const updatedInterviews = [newInterview, ...interviews];
-    const newAuditLog: AuditLog = { id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Confirm Interview', details: `Scheduled interview for ${talent.name} on ${proposedDate} at ${proposedTime}.`, timestamp: new Date().toISOString() };
-    const newAgentLog: AgentLog = { id: `alog_${Date.now()}`, agentName: 'Workflow Agent', message: `Interview confirmed with ${talent.name}. Calendar synced.`, timestamp: new Date().toLocaleTimeString(), type: 'success' };
-    const updatedRequests = updateRequestCollections(selectedRequest.id, 'Client Interview', selectedRequest);
-    await persistTalentRequestStatus(selectedRequest.id, 'Client Interview', selectedRequest);
-    setMatches(updatedMatches);
-    setInterviews(updatedInterviews);
-    setAuditLogs([newAuditLog, ...auditLogs]);
-    await saveToDb({
-      talents,
-      clientRequests: updatedRequests,
-      matches: updatedMatches,
-      contracts,
-      notifications: [{
-        id: `notif_${Date.now()}`,
-        userId: selectedRequest.clientId || 'usr_horizon',
-        title: 'Interview Confirmed',
-        message: `Interview with "${talent.name}" confirmed for ${proposedDate} at ${proposedTime}!`,
-        read: false,
-        createdAt: new Date().toISOString()
-      }],
-      auditLogs: [newAuditLog, ...auditLogs],
-      agentLogs: [newAgentLog, ...agentLogs],
-      interviews: updatedInterviews,
-      rehireRequests,
-      tasks: []
+    const adminZone = viewerTimeZone();
+    const interviewResponse = await apiFetch('/api/interviews', {
+      method: 'POST',
+      body: JSON.stringify({
+        requestId: selectedRequest.id,
+        matchId: match.id,
+        talentId: match.talentId,
+        clientId: selectedRequest.clientId,
+        talentName: talent.name,
+        talentAvatar: talent.avatar || null,
+        clientName: selectedRequest.clientName || null,
+        title: `${selectedRequest.serviceType} - Interview with ${talent.name}`,
+        date: proposedDate,
+        time: proposedTime,
+        timezone: adminZone,
+        talentTimezone: (talent as any).timezone || null,
+        meetingLink: null,
+        notes: (match as any).requestedNotes || null
+      })
     });
+    const interviewBody = await interviewResponse.json().catch(() => ({}));
+    if (!interviewResponse.ok || !interviewBody.interview) {
+      alert(`Failed to schedule interview: ${interviewBody.error || interviewResponse.status}`);
+      return;
+    }
+    setMatches(matches.map(m => m.id === matchId ? { ...m, status: 'Interview Scheduled' as const } : m));
+    setInterviews([interviewBody.interview, ...interviews]);
+    await persistTalentRequestStatus(selectedRequest.id, 'Client Interview', selectedRequest);
     alert(`Interview with ${talent.name} scheduled successfully.`);
+    return;
   };
 
   const handleApproveRehire = async (rehireId: string) => {
     const rehire = rehireRequests.find(r => r.id === rehireId);
     if (!rehire) return;
-    const newContract: any = { id: `cnt_rehire_${Date.now()}`, matchId: `match_rehire_${Date.now()}`, clientId: rehire.clientId, clientName: rehire.clientName, talentId: rehire.talentId, talentName: rehire.talentName, role: rehire.role, salary: Number(rehire.proposedRate || 12400), startDate: rehire.proposedStartDate, status: 'Signed', signedAt: new Date().toISOString() };
-    const updatedRehires = rehireRequests.map(r => r.id === rehireId ? { ...r, status: 'Approved' as const } : r);
-    const updatedContracts = [...contracts, newContract];
-    setRehireRequests(updatedRehires);
-    setContracts(updatedContracts);
-    await saveToDb({ talents, clientRequests: requests, matches, contracts: updatedContracts, notifications: [{ id: `notif_${Date.now()}`, userId: rehire.clientId, title: 'Re-hire Approved!', message: `Your re-hire request for "${rehire.talentName}" has been approved!`, read: false, createdAt: new Date().toISOString() }], auditLogs: [{ id: `audit_${Date.now()}`, actor: 'Admin Operator', action: 'Approve Re-hire', details: `Approved re-hire of ${rehire.talentName} as ${rehire.role}.`, timestamp: new Date().toISOString() }, ...auditLogs], agentLogs, interviews, rehireRequests: updatedRehires, tasks: [] });
-    alert(`Re-hire for ${rehire.talentName} approved!`);
-  };
 
-  // Compliance
-  const handleUpdateDocStatus = async (docId: string, newStatus: string) => {
+    // Through the contract route. This used to mint a contract in the
+    // browser with an id from a timestamp, a salary defaulting to 12400 and
+    // status 'Signed', which contracts_status_check does not allow, then
+    // post the whole database through /api/db. The contract was refused by
+    // Postgres and the client's notification went to a table that denies
+    // browser writes, so approving a re-hire did nothing at all.
     try {
-      const res = await fetch('/api/compliance', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: docId, status: newStatus }) });
-      if (res.ok) await syncFromDb();
-    } catch (e) { console.error(e); }
-  };
-
-  // Assessments
-  const handleCreateAssessment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    const payload = { ...assessmentForm, skillTags: assessmentForm.skillTags.split(',').map(s => s.trim()).filter(Boolean), questionCount: Number(assessmentForm.questionCount), timeLimit: Number(assessmentForm.timeLimit), passingScore: Number(assessmentForm.passingScore) };
-    try {
-      const res = await fetch('/api/assessments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) {
-        setShowAssessmentModal(false);
-        setAssessmentForm({ title: '', description: '', skillTags: '', questionCount: '10', timeLimit: '60', passingScore: '70', assignedTalents: [] });
-        await syncFromDb();
+      const res = await apiFetch('/api/contracts/status', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create',
+          talentId: rehire.talentId,
+          clientId: rehire.clientId,
+          serviceType: rehire.role,
+          rateType: 'Monthly',
+          rateAmount: rehire.proposedRate,
+          startDate: rehire.proposedStartDate
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || `The re-hire for ${rehire.talentName} was not approved.`);
+        return;
       }
-    } catch (e) { console.error(e); }
-    setSaving(false);
-  };
 
-  const handleRecordResult = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    const payload = { type: 'result', ...resultForm, score: Number(resultForm.score) };
-    try {
-      const res = await fetch('/api/assessments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (res.ok) {
-        setShowResultModal(false);
-        setResultForm({ assessmentId: '', talentId: '', score: '', passed: true });
-        await syncFromDb();
-      }
-    } catch (e) { console.error(e); }
-    setSaving(false);
-  };
+      setContracts([...contracts, result]);
+      setRehireRequests(rehireRequests.map(r =>
+        r.id === rehireId ? { ...r, status: 'Approved' as const } : r));
 
-  const handleArchiveAssessment = async (assessmentId: string) => {
-    try {
-      await fetch('/api/assessments', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: assessmentId, status: 'archived' }) });
-      await syncFromDb();
-    } catch (e) { console.error(e); }
-  };
+      // The request behind the re-hire moves on with it.
+      await persistTalentRequestStatus(rehire.id, 'Onboarding');
 
-  // Support
-  const handleSupportReply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTicket || !supportReply.trim()) return;
-    setSaving(true);
-    try {
-      const res = await fetch('/api/support', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'message', ticketId: selectedTicket.id, senderName: 'Admin Support', senderRole: 'Support', text: supportReply }) });
-      if (res.ok) {
-        setSupportReply('');
-        await syncFromDb();
-      }
-    } catch (e) { console.error(e); }
-    setSaving(false);
-  };
-
-  const handleUpdateTicketStatus = async (ticketId: string, newStatus: string) => {
-    try {
-      const res = await fetch('/api/support', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ticketId, status: newStatus }) });
-      if (res.ok) {
-        await syncFromDb();
-        if (selectedTicket?.id === ticketId) setSelectedTicket({ ...selectedTicket, status: newStatus });
-      }
-    } catch (e) { console.error(e); }
+      alert(`Re-hire for ${rehire.talentName} approved. The contract is drafted and waiting for signature.`);
+    } catch (e: any) {
+      console.error('Failed to approve re-hire', e);
+      alert(e?.message || `The re-hire for ${rehire.talentName} was not approved.`);
+    }
   };
 
   const handleUpdateRequestStatus = async (requestId: string, newStatus: string) => {
     const targetRequest = requests.find(r => r.id === requestId);
     if (!targetRequest) return;
-    const normalizedStatus = normalizeRequestStatus(newStatus);
-    const updatedRequest = { ...targetRequest, status: normalizedStatus };
-    
-    // Sync to Supabase
-    try {
-      await supabase
-        .from('talent_requests')
-        .update({ payload: updatedRequest })
-        .eq('payload->>id', requestId);
-    } catch (err) {
-      console.error('Failed to sync status update to Supabase:', err);
-    }
+    // The server decides whether this move is allowed and writes it. The
+    // local collections are only updated once it has.
+    const landed = await persistTalentRequestStatus(requestId, newStatus);
+    if (!landed) return;
 
-    const updatedRequests = updateRequestCollections(requestId, normalizedStatus, targetRequest);
-    await saveToDb({
-      talents,
-      clientRequests: updatedRequests,
-      matches,
-      contracts,
-      auditLogs: [{
-        id: `audit_${Date.now()}`,
-        actor: 'Admin Operator',
-        action: 'Update Request Status',
-        details: `Request ${requestId} updated to "${normalizedStatus}".`,
-        timestamp: new Date().toISOString()
-      }, ...auditLogs],
-      agentLogs,
-      interviews,
-      rehireRequests,
-      tasks: []
-    });
+    const normalizedStatus = coerceRequestStatus(newStatus);
+    updateRequestCollections(requestId, normalizedStatus, targetRequest);
+
+    // The whole-database save that used to follow is gone. The status was
+    // already written by the route above, which also records the audit
+    // entry against the administrator who made the change; this posted the
+    // browser's copy of every talent, request, match and contract back
+    // through /api/db on top of it, with the audit entry attributed to
+    // 'Admin Operator'.
   };
 
   // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -1313,6 +1802,17 @@ export default function AdminPanel() {
 
   const clientUsers = users.filter(u => u.role === 'client');
   const talentUsers = users.filter(u => u.role === 'talent');
+  const ticketSource = (ticket: SupportTicket) => {
+    if (ticket.clientId) {
+      const client = users.find((u: any) => u.id === ticket.clientId);
+      return `Client${client?.name ? ` · ${client.name}` : ''}`;
+    }
+    if (ticket.talentId) {
+      const talent = talents.find((t: any) => t.id === ticket.talentId);
+      return `Talent${talent?.name ? ` · ${talent.name}` : ''}`;
+    }
+    return 'Unknown source';
+  };
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
 
@@ -1325,7 +1825,43 @@ export default function AdminPanel() {
     return `${c}18`;
   };
 
-  if (loading) {
+  // Payroll hooks must run before the loading guard below on every render.
+  const [payrollPeriod, setPayrollPeriod] = useState(() => {
+    const now = new Date();
+    const month = now.getUTCMonth();
+    return month === 0
+      ? `${now.getUTCFullYear() - 1}-12`
+      : `${now.getUTCFullYear()}-${String(month).padStart(2, '0')}`;
+  });
+  const [payrollRun, setPayrollRun] = useState<any>(null);
+  const [payrollBusy, setPayrollBusy] = useState(false);
+  const [payrollError, setPayrollError] = useState<string | null>(null);
+  const [payrollNotice, setPayrollNotice] = useState<string | null>(null);
+
+  const loadPayroll = async (period: string) => {
+    setPayrollBusy(true);
+    setPayrollError(null);
+    try {
+      const res = await apiFetch(`/api/payroll?period=${encodeURIComponent(period)}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setPayrollError(body.error || 'Could not load the run.'); return; }
+      setPayrollRun(body);
+    } catch (e: any) {
+      setPayrollError(e?.message || 'Could not load the run.');
+    } finally {
+      setPayrollBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'payroll') loadPayroll(payrollPeriod);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, payrollPeriod]);
+
+  // Never hide the sign-in screen behind the data loader. If there is no
+  // verified session, the user must be able to authenticate even when an API
+  // request is slow or unavailable.
+  if (authChecking || (isAuthenticated && loading)) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-primary)' }}>
         <div style={{ textAlign: 'center' }}>
@@ -1336,124 +1872,264 @@ export default function AdminPanel() {
     );
   }
 
-  const handleRetryWorkflow = async (instanceId: string) => {
+  // ── PAYROLL ────────────────────────────────────────────────────────────────
+  //
+  // This replaces the workflow orchestration tab, which drove
+  // `/api/workflows`: a mock hardcoded to fail every talent_onboarding run
+  // at step 3 with "Network timeout contacting WhatsApp API". It
+  // orchestrated Remotan, which is not in this launch, and the failures it
+  // showed operators were invented.
+
+  const runPayrollAction = async (action: 'generate' | 'approve') => {
+    setPayrollBusy(true);
+    setPayrollError(null);
+    setPayrollNotice(null);
     try {
-      const res = await fetch('/api/workflows', {
+      const res = await apiFetch('/api/payroll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'retry', workflow_instance_id: instanceId })
+        body: JSON.stringify({ action, period: payrollPeriod })
       });
-      if (res.ok) {
-        syncFromDb();
-        alert('Workflow retry initiated successfully.');
-      } else {
-        alert('Failed to retry workflow.');
-      }
-    } catch (e) {
-      console.error(e);
-      alert('Error retrying workflow.');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setPayrollError(body.error || 'The action failed.'); return; }
+
+      setPayrollNotice([body.summary, ...(body.warnings || [])].filter(Boolean).join(' '));
+      await loadPayroll(payrollPeriod);
+    } catch (e: any) {
+      setPayrollError(e?.message || 'The action failed.');
+    } finally {
+      setPayrollBusy(false);
     }
   };
 
-  const renderWorkflowsTab = () => {
-    const failedWorkflows = workflows.filter(w => w.state === 'failed');
-    
+  const renderPayrollTab = () => {
+    const run = payrollRun;
+    const money = (amount: number, currency = run?.currency || 'USD') =>
+      `${currency === 'MIXED' ? '' : currency + ' '}${Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
     return (
       <div>
         <div className="page-header">
           <div>
-            <h1 className="page-title">Workflow Orchestration Engine</h1>
-            <p className="page-subtitle">Multi-step business processes spanning Kongila and Remotan (REM-WORKFLOW).</p>
+            <h1 className="page-title">Payroll</h1>
+            <p className="page-subtitle">
+              Monthly run for managed and outsourced contracts. Placement and project
+              engagements are not paid here: a placement candidate is employed by the
+              client, and a project is paid against its project fee.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <input
+              type="month"
+              value={payrollPeriod}
+              onChange={e => setPayrollPeriod(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-glass)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+            />
+            <button onClick={() => runPayrollAction('generate')} disabled={payrollBusy} className="btn-secondary">
+              {payrollBusy ? 'Working...' : run ? 'Regenerate' : 'Generate'}
+            </button>
+            {run?.status === 'draft' && (
+              <button onClick={() => runPayrollAction('approve')} disabled={payrollBusy} className="btn-primary">Approve run</button>
+            )}
+            {run && run.status !== 'draft' && (
+              <a href={`/api/payroll?period=${encodeURIComponent(payrollPeriod)}&view=export`} className="btn-secondary" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>Export CSV</a>
+            )}
           </div>
         </div>
 
-        {failedWorkflows.length > 0 && (
-          <div style={{ marginBottom: '32px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: '#EF4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span className="pulse-dot" style={{ background: '#EF4444' }}></span>
-              Failed Workflow Queue
-            </h2>
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Workflow ID</th>
-                    <th>Type</th>
-                    <th>Trigger Entity</th>
-                    <th>Failed At Step</th>
-                    <th>Failure Reason</th>
-                    <th>Last Updated</th>
-                    <th style={{ textAlign: 'right' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {failedWorkflows.map(wf => (
-                    <tr key={wf.workflow_instance_id}>
-                      <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-secondary)' }}>{wf.workflow_instance_id.slice(0, 8)}...</td>
-                      <td style={{ fontWeight: 600 }}>{wf.workflow_type.replace(/_/g, ' ')}</td>
-                      <td>{wf.trigger_entity_id}</td>
-                      <td>Step {wf.failed_at_step || wf.last_step_completed + 1}</td>
-                      <td style={{ color: '#EF4444', maxWidth: '300px' }} className="truncate" title={wf.failure_reason}>{wf.failure_reason}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{new Date(wf.updated_at).toLocaleDateString()}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: '12px', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#EF4444' }} onClick={() => handleRetryWorkflow(wf.workflow_instance_id)}>
-                          Retry Step
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        {payrollError && (
+          <div style={{ background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>{payrollError}</div>
+        )}
+        {payrollNotice && (
+          <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', color: '#0C4A6E', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>{payrollNotice}</div>
         )}
 
-        <div>
-          <h2 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '16px', color: 'var(--text-primary)' }}>Workflow Monitor</h2>
-          <div className="data-table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Workflow ID</th>
-                  <th>Type</th>
-                  <th>State</th>
-                  <th>Trigger Entity</th>
-                  <th>Step Progress</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {workflows.map(wf => (
-                  <tr key={wf.workflow_instance_id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-secondary)' }}>{wf.workflow_instance_id.slice(0, 8)}...</td>
-                    <td style={{ fontWeight: 600 }}>{wf.workflow_type.replace(/_/g, ' ')}</td>
-                    <td>
-                      <span className={`status-pill status-${wf.state.replace(/_/g, '-')}`}>
-                        {wf.state.replace(/_/g, ' ').toUpperCase()}
-                      </span>
-                    </td>
-                    <td>{wf.trigger_entity_id}</td>
-                    <td>{wf.last_step_completed} steps completed</td>
-                    <td style={{ color: 'var(--text-muted)' }}>{new Date(wf.created_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-                {workflows.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-                      No workflow instances found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        {!run ? (
+          <GlassCard>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: 0 }}>
+              No run exists for {payrollPeriod}. Generate one to see who is owed what.
+            </p>
+          </GlassCard>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              {[
+                { label: 'Status', value: run.status },
+                { label: 'People', value: String(run.entryCount ?? run.entries.length) },
+                { label: 'Gross', value: money(run.totalGross) },
+                { label: 'Commission', value: money(run.totalCommission) },
+                { label: 'Net to pay', value: money(run.totalNet) }
+              ].map(tile => (
+                <GlassCard key={tile.label}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{tile.label}</div>
+                  <div style={{ fontSize: '22px', fontWeight: 700 }}>{tile.value}</div>
+                </GlassCard>
+              ))}
+            </div>
+
+            {run.currency === 'MIXED' && (
+              <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
+                This run spans more than one currency, so the totals above are a sum of
+                different units. Check each entry before paying.
+              </div>
+            )}
+
+            {run.skipped?.length > 0 && (
+              <GlassCard style={{ marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '12px', color: '#B45309' }}>
+                  Left out of this run ({run.skipped.length})
+                </h3>
+                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {run.skipped.map((entry: any, index: number) => (
+                    <li key={index} style={{ marginBottom: '6px' }}>
+                      <strong>{entry.talentName || entry.contractId}</strong>: {entry.reason}
+                    </li>
+                  ))}
+                </ul>
+              </GlassCard>
+            )}
+
+            <GlassCard>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}>
+                      <th style={{ padding: '10px 8px' }}>Talent</th>
+                      <th style={{ padding: '10px 8px' }}>Client</th>
+                      <th style={{ padding: '10px 8px' }}>Rate</th>
+                      <th style={{ padding: '10px 8px' }}>Days</th>
+                      <th style={{ padding: '10px 8px' }}>Gross</th>
+                      <th style={{ padding: '10px 8px' }}>Commission</th>
+                      <th style={{ padding: '10px 8px' }}>Net</th>
+                      <th style={{ padding: '10px 8px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {run.entries.map((entry: any) => (
+                      <tr key={entry.id} style={{ borderBottom: '1px solid var(--border-glass)', opacity: entry.status === 'on_hold' ? 0.65 : 1 }}>
+                        <td style={{ padding: '10px 8px', fontWeight: 600 }}>{entry.talentName}</td>
+                        <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>{entry.clientName || '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>{money(entry.monthlyRate, entry.currency)}</td>
+                        <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>
+                          {entry.daysWorked}/{entry.daysInPeriod}
+                          {entry.daysWorked !== entry.daysInPeriod && (
+                            <span style={{ color: '#B45309', marginLeft: '4px' }}>prorated</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>{money(entry.grossAmount, entry.currency)}</td>
+                        <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>
+                          {money(entry.commissionAmount, entry.currency)}
+                          <span style={{ fontSize: '11px', marginLeft: '4px' }}>
+                            ({(Number(entry.commissionPct) * 100).toFixed(2).replace(/\.00$/, '')}%)
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px 8px', fontWeight: 700 }}>{money(entry.netAmount, entry.currency)}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          {entry.status}
+                          {entry.holdReason && (
+                            <div style={{ color: '#DC2626', fontSize: '11px', marginTop: '4px', maxWidth: '260px' }}>{entry.holdReason}</div>
+                          )}
+                          {entry.failureReason && (
+                            <div style={{ color: '#DC2626', fontSize: '11px', marginTop: '4px' }}>{entry.failureReason}</div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {run.entries.length === 0 && (
+                      <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>Nobody is owed anything for {payrollPeriod}.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </GlassCard>
+          </>
+        )}
       </div>
     );
   };
 
   const renderTab = () => {
     switch (activeTab) {
+
+      // ── OFFER QUEUE ────────────────────────────────────────────────────────
+      case 'offers': return (
+        <div>
+          <div className="page-header">
+            <div>
+              <h1 className="page-title">Offer Queue</h1>
+              <p className="page-subtitle">Offers submitted by clients, awaiting Kongila approval before they reach a candidate.</p>
+            </div>
+            <button onClick={loadOffers} className="btn-secondary">
+              {offersLoading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+
+          {offers.length === 0 ? (
+            <div style={{ padding: '32px', textAlign: 'center', color: '#64748B' }}>
+              {offersLoading ? 'Loading offers...' : 'No offers waiting. Submitted offers appear here.'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {offers.map((offer: any) => (
+                <div key={offer.id} style={{
+                  background: '#fff',
+                  border: offer.isOverdue ? '1px solid rgba(185,28,28,0.4)' : '1px solid rgba(15,23,42,0.1)',
+                  borderRadius: '14px',
+                  padding: '18px 20px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '15px', color: '#0F172A' }}>
+                        {offer.talentName} for {offer.role_title}
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px' }}>
+                        {offer.clientName} · {offer.service_type} · ${Number(offer.proposed_rate_usd || 0).toLocaleString()}
+                        {offer.payment_period === 'weekly' ? ' per week' : ' per month'}
+                      </div>
+                      {offer.client_note_to_admin && (
+                        <div style={{ fontSize: '12px', color: '#64748B', marginTop: '6px', fontStyle: 'italic' }}>
+                          Client note: {offer.client_note_to_admin}
+                        </div>
+                      )}
+                      {offer.talent_response_deadline && (
+                        <div style={{ fontSize: '12px', marginTop: '6px', fontWeight: 700, color: offer.isOverdue ? '#B91C1C' : '#64748B' }}>
+                          {offer.isOverdue ? 'Response overdue since ' : 'Candidate must respond by '}
+                          {new Date(offer.talent_response_deadline).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#334155', whiteSpace: 'nowrap' }}>
+                      {String(offer.status).replace(/_/g, ' ')}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '14px', flexWrap: 'wrap' }}>
+                    {['submitted', 'revision_requested'].includes(offer.status) && (
+                      <button onClick={() => decideOffer(offer.id, 'approve')} className="btn-secondary">Approve</button>
+                    )}
+                    {['submitted', 'admin_approved', 'revision_requested'].includes(offer.status) && (
+                      <>
+                        <button onClick={() => decideOffer(offer.id, 'send')} className="btn-primary">Send to candidate</button>
+                        <button onClick={() => {
+                          const note = window.prompt('What needs changing?') || undefined;
+                          if (note) decideOffer(offer.id, 'request_revision', note);
+                        }} className="btn-secondary">Request revision</button>
+                        <button onClick={() => {
+                          const note = window.prompt('Why are you declining this offer?') || undefined;
+                          decideOffer(offer.id, 'decline', note);
+                        }} className="btn-secondary">Decline</button>
+                      </>
+                    )}
+                    {offer.status === 'sent_to_talent' && (
+                      <span style={{ fontSize: '12px', color: '#64748B' }}>Waiting on the candidate.</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
 
       // ── DASHBOARD ──────────────────────────────────────────────────────────
       case 'overview': return (
@@ -1471,7 +2147,7 @@ export default function AdminPanel() {
           <div className="stats-card-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
             {[
               { label: 'Total Talents', val: talents.length, sub: `${activeTalentCount} active`, color: 'var(--accent-cyan)' },
-              { label: 'Gross MRR', val: formatCurrency(mrrTotal), sub: '25% EOR markup', color: 'var(--accent-green)' },
+              { label: 'Contract Value', val: formatCurrency(mrrTotal), sub: `${metrics.activeContractCount} active contracts`, color: 'var(--accent-green)' },
               { label: 'Active Contracts', val: contracts.filter(c => c.status === 'Signed' || c.status === 'Active').length, sub: 'Running now', color: 'var(--kongila-blue)' },
               { label: 'Open Requests', val: requests.filter(r => r.status === 'New Request').length, sub: `${requests.length} total`, color: 'var(--accent-gold)' },
               { label: 'Interviews', val: interviews.filter(iv => iv.status === 'Scheduled').length, sub: 'Scheduled', color: '#7C3AED' },
@@ -1740,7 +2416,10 @@ export default function AdminPanel() {
           return true;
         });
 
-        const columns = ['New Request', 'Reviewing', 'Sourcing Talent', 'Candidates Ready', 'Client Interview', 'Offer Accepted'];
+        // Onboarding is the terminal working stage: a request reaches it once
+        // the contract is signed. It was missing, so any request moved there
+        // vanished from the board entirely.
+        const columns = ['New Request', 'Reviewing', 'Sourcing Talent', 'Candidates Ready', 'Client Interview', 'Offer Accepted', 'Onboarding'];
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -1985,7 +2664,7 @@ export default function AdminPanel() {
                         setSelectedTalent(t);
                         setActiveVettingStageIdx(null);
                         setStageNotesInput('');
-                        setStageScoreInput(80);
+                        setStageScoreInput(undefined);
                         setStageRubricScores({});
                       }}>
                         <td style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2378,8 +3057,8 @@ export default function AdminPanel() {
                                     <input 
                                       type="number" 
                                       min="0" max="100" 
-                                      value={stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80)} 
-                                      onChange={e => setStageScoreInput(parseInt(e.target.value) || 0)} 
+                                      value={stageScoreInput ?? stageRecord.assessmentScore ?? ''} 
+                                      onChange={e => setStageScoreInput(e.target.value === '' ? undefined : (parseInt(e.target.value) || 0))} 
                                       className="form-input" 
                                       style={{ width: '100%', fontSize: '16px', fontWeight: 800, padding: '12px', border: '2px solid var(--kongila-blue)' }} 
                                       placeholder="e.g. 85" 
@@ -2387,8 +3066,8 @@ export default function AdminPanel() {
                                   </div>
 
                                   <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Proceed', stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80), stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Confirm Score & Move to Interview</button>
-                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', stageScoreInput !== 80 ? stageScoreInput : (stageRecord.assessmentScore ?? 80), stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Proceed', stageScoreInput ?? stageRecord.assessmentScore, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Confirm Score & Move to Interview</button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', stageScoreInput ?? stageRecord.assessmentScore, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
                                   </div>
                                 </>
                               )}
@@ -2536,11 +3215,45 @@ export default function AdminPanel() {
                                   <div style={{ fontSize: '36px', marginBottom: '12px' }}>⏳</div>
                                   <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>Test Link Sent — Awaiting Candidate Completion</div>
                                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '20px' }}>The candidate can see this test in their dashboard. This stage will auto-advance when the provider sends results.</div>
-                                  <a href={stageRecord.personalityLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', background: '#10B981', color: '#fff', padding: '10px 20px', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
+                                  <a href={stageRecord.personalityLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', background: '#10B981', color: '#fff', padding: '10px 20px', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 700, marginBottom: '20px' }}>
                                     🔗 View Test Link
                                   </a>
-                                  <button disabled={saving} onClick={() => handleStageDecision(3, 'Proceed', stageScoreInput, 'Results received manually.')} style={{ padding: '10px 20px', borderRadius: '8px', border: '1px solid #10B981', cursor: 'pointer', background: 'transparent', color: '#10B981', fontSize: '13px', fontWeight: 700 }}>
-                                    ✅ Mark Result Received
+
+                                  {/* The personality test is administered outside Kongila, so
+                                      somebody has to type the result in. There was no field:
+                                      "Mark Result Received" submitted whatever stageScoreInput
+                                      happened to hold, which used to be a default 80 and is
+                                      now undefined, so the stage guard refuses it. */}
+                                  <div style={{ maxWidth: '320px', margin: '0 auto 16px', textAlign: 'left' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '6px', display: 'block' }}>
+                                      Personality score from the provider (0–100)
+                                    </label>
+                                    <input
+                                      type="number" min="0" max="100"
+                                      value={stageScoreInput ?? ''}
+                                      onChange={e => setStageScoreInput(e.target.value === '' ? undefined : (parseInt(e.target.value) || 0))}
+                                      placeholder="Enter the score from the provider's report"
+                                      className="form-input"
+                                      style={{ width: '100%', fontSize: '14px', padding: '10px' }}
+                                    />
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                                      This is 10% of the composite grade. The stage cannot be passed without it.
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    disabled={saving || stageScoreInput === undefined}
+                                    onClick={() => handleStageDecision(3, 'Proceed', stageScoreInput, stageNotesInput || 'Result entered from the provider report.')}
+                                    style={{
+                                      padding: '10px 20px', borderRadius: '8px',
+                                      border: `1px solid ${stageScoreInput === undefined ? 'var(--border-glass)' : '#10B981'}`,
+                                      cursor: stageScoreInput === undefined ? 'not-allowed' : 'pointer',
+                                      background: 'transparent',
+                                      color: stageScoreInput === undefined ? 'var(--text-muted)' : '#10B981',
+                                      fontSize: '13px', fontWeight: 700
+                                    }}
+                                  >
+                                    ✅ Record result and move on
                                   </button>
                                 </div>
                               ) : (
@@ -2575,7 +3288,7 @@ export default function AdminPanel() {
                                 <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                                   <span>Remote Readiness Score (0–100)</span>
                                 </label>
-                                <input type="number" min="0" max="100" value={stageScoreInput} onChange={e => setStageScoreInput(parseInt(e.target.value) || 0)} className="form-input" style={{ width: '100%', fontSize: '14px' }} placeholder="0-100" />
+                                <input type="number" min="0" max="100" value={stageScoreInput ?? ''} onChange={e => setStageScoreInput(e.target.value === '' ? undefined : (parseInt(e.target.value) || 0))} className="form-input" style={{ width: '100%', fontSize: '14px' }} placeholder="0-100" />
                               </div>
                               <div>
                                 <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Notes</label>
@@ -2622,16 +3335,81 @@ export default function AdminPanel() {
                                 </>
                               ) : (
                                 <>
-                                  <div style={{ background: '#F9731610', borderRadius: '10px', padding: '16px', border: '1px solid #F9731630' }}>
-                                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#F97316', marginBottom: '4px' }}>📝 Task Assigned — Awaiting Submission</div>
-                                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Task ID: {stageRecord.taskId}{stageRecord.deadline && ` · Deadline: ${new Date(stageRecord.deadline).toLocaleDateString()}`}</div>
-                                  </div>
+                                  {/* The candidate's submission.
+                                      advance.ts writes it to the stage record as
+                                      submissionData and nothing anywhere read it, so a
+                                      reviewer was asked to score work they could not see
+                                      and the screen said "Awaiting Submission" even when
+                                      one had arrived. */}
+                                  {(() => {
+                                    const submission = (stageRecord as any).submissionData;
+                                    if (!submission) {
+                                      return (
+                                        <div style={{ background: '#F9731610', borderRadius: '10px', padding: '16px', border: '1px solid #F9731630' }}>
+                                          <div style={{ fontSize: '12px', fontWeight: 700, color: '#F97316', marginBottom: '4px' }}>📝 Task Assigned — Awaiting Submission</div>
+                                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                            Task ID: {stageRecord.taskId}{stageRecord.deadline && ` · Deadline: ${new Date(stageRecord.deadline).toLocaleDateString()}`}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    const text = submission.text || submission.essay || submission.response || submission.notes;
+                                    const link = submission.link || submission.url || submission.submissionUrl;
+                                    const file = submission.fileUrl || submission.file_url || submission.attachmentUrl;
+                                    const submittedAt = submission.submittedAt || submission.submitted_at || stageRecord.completedAt;
+
+                                    return (
+                                      <div style={{ background: '#10B98110', borderRadius: '10px', padding: '18px', border: '1px solid #10B98130' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                          <div style={{ fontSize: '12px', fontWeight: 800, color: '#047857' }}>✅ Submission received</div>
+                                          {submittedAt && (
+                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                              {new Date(submittedAt).toLocaleString()}
+                                              {stageRecord.deadline && new Date(submittedAt) > new Date(stageRecord.deadline) && (
+                                                <span style={{ color: '#DC2626', fontWeight: 700 }}> · after the deadline</span>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {link && (
+                                          <div style={{ marginBottom: '10px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>Submitted link</div>
+                                            <a href={link} target="_blank" rel="noopener noreferrer" style={{ fontSize: '13px', color: 'var(--kongila-blue)', wordBreak: 'break-all' }}>{link}</a>
+                                          </div>
+                                        )}
+
+                                        {file && (
+                                          <div style={{ marginBottom: '10px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>Submitted file</div>
+                                            <a href={file} target="_blank" rel="noopener noreferrer" style={{ fontSize: '13px', color: 'var(--kongila-blue)', wordBreak: 'break-all' }}>Open the file</a>
+                                          </div>
+                                        )}
+
+                                        {text && (
+                                          <div>
+                                            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>Written response</div>
+                                            <div style={{ fontSize: '13px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+                                              {text}
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {!link && !file && !text && (
+                                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                            The candidate submitted, but the response is empty. Ask them to resubmit before scoring.
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                                       <span>Work Simulation Score (0–100)</span>
-                                      <span style={{ color: '#F97316', fontWeight: 800 }}>{stageScoreInput}</span>
+                                      <span style={{ color: '#F97316', fontWeight: 800 }}>{stageScoreInput ?? '\u2014'}</span>
                                     </label>
-                                    <input type="range" min="0" max="100" value={stageScoreInput} onChange={e => setStageScoreInput(parseInt(e.target.value))} style={{ width: '100%', accentColor: '#F97316' }} />
+                                    <input type="range" min="0" max="100" value={stageScoreInput ?? 0} onChange={e => setStageScoreInput(parseInt(e.target.value))} style={{ width: '100%', accentColor: '#F97316' }} />
                                   </div>
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Reviewer Notes</label>
@@ -2832,9 +3610,27 @@ export default function AdminPanel() {
                             setEditScoresMode(true);
                           } else {
                             setSaving(true);
-                            const updatedTalent = { ...selectedTalent, vettingScores: editScores, grade: calculateCompositeVettingGrade(editScores).grade };
-                            fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ talents: talents.map(t => t.id === selectedTalent.id ? updatedTalent : t) }) })
-                              .then(() => {
+                            // Through the vetting route, which computes
+                            // the grade from the scores. This posted the
+                            // whole talents array to /api/db with a grade
+                            // worked out in the browser.
+                            apiFetch('/api/vetting', {
+                              method: 'POST',
+                              body: JSON.stringify({ action: 'scores', talentId: selectedTalent.id, scores: editScores })
+                            })
+                              .then(async (res) => {
+                                const result = await res.json().catch(() => ({}));
+                                if (!res.ok) {
+                                  alert(result?.error || 'Those scores were not saved.');
+                                  setSaving(false);
+                                  return;
+                                }
+                                const updatedTalent = {
+                                  ...selectedTalent,
+                                  vettingScores: result.scores,
+                                  grade: result.grade,
+                                  vettingStatus: result.vettingStatus
+                                } as any;
                                 setTalents(prev => prev.map(t => t.id === selectedTalent.id ? updatedTalent : t));
                                 setSelectedTalent(updatedTalent);
                                 setEditScoresMode(false);
@@ -3022,7 +3818,6 @@ export default function AdminPanel() {
           talents={talents}
           organizations={organizations}
           requests={requests}
-          saveToDb={saveToDb}
           auditLogs={auditLogs}
           setContracts={setContracts}
           setContractTemplates={setContractTemplates}
@@ -3031,7 +3826,7 @@ export default function AdminPanel() {
       );
 
       // ── FINANCE MANAGER ────────────────────────────────────────────────────
-      case 'workflows': return renderWorkflowsTab();
+      case 'payroll': return renderPayrollTab();
       case 'finance': return (
         <FinanceManager
           invoices={invoices}
@@ -3042,7 +3837,6 @@ export default function AdminPanel() {
           contracts={contracts}
           documents={documents}
           syncFromDb={syncFromDb}
-          saveToDb={saveToDb}
         />
       );
 
@@ -3405,7 +4199,7 @@ export default function AdminPanel() {
                     <div style={{ display: 'flex', gap: '4px' }}><Chip label={ticket.status} /><Chip label={ticket.priority} /></div>
                   </div>
                   <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '4px' }}>{ticket.subject}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{ticket.category} · {formatDate(ticket.createdAt)}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{ticket.category} · {ticketSource(ticket)} · {formatDate(ticket.createdAt)}</div>
                 </div>
               ))}
             </div>
@@ -3423,7 +4217,7 @@ export default function AdminPanel() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: '14px' }}>{selectedTicket.subject}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{selectedTicket.id} · {selectedTicket.category} · {formatDate(selectedTicket.createdAt)}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{selectedTicket.id} · {ticketSource(selectedTicket)} · {selectedTicket.category} · {formatDate(selectedTicket.createdAt)}</div>
                       </div>
                       <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                         <Chip label={selectedTicket.status} /><Chip label={selectedTicket.priority} />
@@ -3432,7 +4226,6 @@ export default function AdminPanel() {
                     <div style={{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
                       {selectedTicket.status !== 'In Progress' && <button onClick={() => handleUpdateTicketStatus(selectedTicket.id, 'In Progress')} style={{ padding: '3px 10px', borderRadius: '6px', background: 'rgba(61,127,255,0.1)', color: '#3D7FFF', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>In Progress</button>}
                       {selectedTicket.status !== 'Resolved' && <button onClick={() => handleUpdateTicketStatus(selectedTicket.id, 'Resolved')} style={{ padding: '3px 10px', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', color: 'var(--accent-green)', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>Resolve</button>}
-                      {selectedTicket.status !== 'Closed' && <button onClick={() => handleUpdateTicketStatus(selectedTicket.id, 'Closed')} style={{ padding: '3px 10px', borderRadius: '6px', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', border: '1px solid var(--border-glass)', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}>Close</button>}
                     </div>
                   </div>
 
@@ -3468,6 +4261,395 @@ export default function AdminPanel() {
       );
 
       // ── AUDIT LOGS ─────────────────────────────────────────────────────────
+      case 'messages': return (
+        <div>
+          <div style={{ marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>Messages</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              Threads with candidates and clients. Operations is a participant in every conversation.
+            </p>
+          </div>
+
+          {messagingLoading && <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>Loading...</div>}
+
+          {!messagingLoading && conversations.length === 0 && (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-glass)', borderRadius: '12px' }}>
+              No conversations yet.
+            </div>
+          )}
+
+          {conversations.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '16px', height: '560px' }}>
+              <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', overflowY: 'auto' }}>
+                {conversations.map(convo => {
+                  const threadMessages = convoMessages.filter(m => m.conversationId === convo.id);
+                  const last = threadMessages[threadMessages.length - 1];
+                  const unread = threadMessages.filter(m => !m.isRead && m.senderId !== currentAdminId).length;
+                  return (
+                    <div
+                      key={convo.id}
+                      onClick={() => setActiveConversationId(convo.id)}
+                      style={{
+                        padding: '12px 14px',
+                        borderBottom: '1px solid var(--border-glass)',
+                        cursor: 'pointer',
+                        background: activeConversationId === convo.id ? 'var(--bg-tertiary)' : 'transparent'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                          {String(convo.type || '').replace(/_/g, ' ')}
+                        </div>
+                        {unread > 0 && (
+                          <span style={{ background: 'var(--kongila-blue)', color: '#fff', borderRadius: '10px', padding: '1px 6px', fontSize: '10px', fontWeight: 700 }}>{unread}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {last?.content || 'No messages yet'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', display: 'flex', flexDirection: 'column' }}>
+                {!activeConversationId ? (
+                  <div style={{ margin: 'auto', color: 'var(--text-secondary)', fontSize: '13px' }}>Pick a conversation.</div>
+                ) : (
+                  <>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {convoMessages.filter(m => m.conversationId === activeConversationId).map(m => {
+                        const mine = m.senderId === currentAdminId;
+                        return (
+                          <div key={m.id} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
+                            <div style={{
+                              padding: '10px 14px', borderRadius: '12px', fontSize: '13px',
+                              background: mine ? 'var(--kongila-blue)' : 'var(--bg-tertiary)',
+                              color: mine ? '#fff' : 'var(--text-primary)'
+                            }}>
+                              {m.content}
+                              {m.attachmentUrl && (
+                                <div style={{ marginTop: '6px' }}>
+                                  <a href={m.attachmentUrl} target="_blank" rel="noopener noreferrer" style={{ color: mine ? '#fff' : 'var(--kongila-blue)', fontSize: '12px' }}>
+                                    {m.attachmentName || 'Attachment'}
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '3px', textAlign: mine ? 'right' : 'left' }}>
+                              {m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ borderTop: '1px solid var(--border-glass)', padding: '12px', display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        value={messageDraft}
+                        onChange={e => setMessageDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') sendAdminMessage(); }}
+                        placeholder="Write a reply"
+                        className="form-input"
+                        style={{ flex: 1, fontSize: '13px' }}
+                      />
+                      <button
+                        onClick={sendAdminMessage}
+                        disabled={!messageDraft.trim()}
+                        style={{
+                          padding: '8px 16px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 700,
+                          cursor: messageDraft.trim() ? 'pointer' : 'not-allowed',
+                          background: messageDraft.trim() ? 'var(--kongila-blue)' : 'var(--bg-tertiary)',
+                          color: messageDraft.trim() ? '#fff' : 'var(--text-muted)'
+                        }}
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+
+      case 'settings': return (
+        <div>
+          <div style={{ marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>Platform Settings</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              Numbers the product used to hardcode. Only a super admin can change them, and every change is audited.
+            </p>
+          </div>
+
+          {settingsLoading && <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>Loading...</div>}
+
+          {!settingsLoading && platformSettings.length === 0 && (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-glass)', borderRadius: '12px' }}>
+              No settings found. Run migration 2026-11-02d, which creates the table and its seed values.
+            </div>
+          )}
+
+          {['finance', 'vetting', 'interviews', 'notifications', 'general'].map(category => {
+            const inCategory = platformSettings.filter(s => s.category === category);
+            if (inCategory.length === 0) return null;
+            return (
+              <div key={category} style={{ marginBottom: '24px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
+                  {category}
+                </div>
+                {inCategory.map(setting => (
+                  <div key={setting.key} style={{ border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{setting.key}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{setting.description}</div>
+                        {setting.updatedBy && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                            Last changed by {setting.updatedBy}{setting.updatedAt ? ` on ${new Date(setting.updatedAt).toLocaleDateString()}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ width: '260px' }}>
+                        <input
+                          type="text"
+                          defaultValue={JSON.stringify(setting.value)}
+                          onBlur={e => {
+                            if (e.target.value !== JSON.stringify(setting.value)) {
+                              saveSetting(setting.key, e.target.value);
+                            }
+                          }}
+                          disabled={!canManageUsers(currentRole)}
+                          className="form-input"
+                          style={{ width: '100%', fontSize: '12px', fontFamily: 'monospace' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+
+          {!canManageUsers(currentRole) && platformSettings.length > 0 && (
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Read only: changing a platform setting needs a super admin.
+            </p>
+          )}
+        </div>
+      );
+
+      case 'users': return (
+        <div>
+          <div style={{ marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>Users & Roles</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              Operators are invited by email and set their own password. Nobody types another person's password.
+            </p>
+          </div>
+
+          {/* Invite */}
+          <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '20px', marginBottom: '24px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 800, marginBottom: '12px', color: 'var(--text-primary)' }}>Invite an operator</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.2fr auto', gap: '10px', alignItems: 'end' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Email</label>
+                <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="name@kongila.co" className="form-input" style={{ width: '100%', fontSize: '13px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Name</label>
+                <input type="text" value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Optional" className="form-input" style={{ width: '100%', fontSize: '13px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Role</label>
+                <select value={inviteRole} onChange={e => setInviteRole(e.target.value)} className="form-input" style={{ width: '100%', fontSize: '13px' }}>
+                  {ADMIN_ROLES.map(role => (
+                    <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={submitInvite}
+                disabled={inviteBusy || !inviteEmail.trim()}
+                style={{
+                  padding: '10px 18px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 800,
+                  cursor: inviteBusy || !inviteEmail.trim() ? 'not-allowed' : 'pointer',
+                  background: inviteBusy || !inviteEmail.trim() ? 'var(--bg-tertiary)' : 'var(--kongila-blue)',
+                  color: inviteBusy || !inviteEmail.trim() ? 'var(--text-muted)' : '#fff'
+                }}
+              >
+                {inviteBusy ? 'Sending...' : 'Send invitation'}
+              </button>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '10px' }}>
+              {ROLE_DESCRIPTIONS[inviteRole as keyof typeof ROLE_DESCRIPTIONS]}
+            </div>
+          </div>
+
+          {/* The list */}
+          {operatorsLoading && <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>Loading...</div>}
+
+          {!operatorsLoading && operators.length === 0 && (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-glass)', borderRadius: '12px' }}>
+              No operator accounts yet.
+            </div>
+          )}
+
+          {operators.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <th style={{ padding: '8px' }}>Name</th>
+                  <th style={{ padding: '8px' }}>Email</th>
+                  <th style={{ padding: '8px' }}>Role</th>
+                  <th style={{ padding: '8px' }}>Status</th>
+                  <th style={{ padding: '8px' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operators.map(op => (
+                  <tr key={op.id} style={{ borderTop: '1px solid var(--border-glass)' }}>
+                    <td style={{ padding: '10px 8px', fontWeight: 600 }}>{op.name || '—'}</td>
+                    <td style={{ padding: '10px 8px', color: 'var(--text-secondary)' }}>{op.email}</td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <select
+                        value={op.role || ''}
+                        onChange={e => callUsersApi(
+                          { action: 'changeRole', userId: op.id, role: e.target.value },
+                          `${op.email} is now ${ROLE_LABELS[e.target.value as keyof typeof ROLE_LABELS]}.`
+                        )}
+                        className="form-input"
+                        style={{ fontSize: '12px', padding: '4px 8px' }}
+                      >
+                        {ADMIN_ROLES.map(role => (
+                          <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <span style={{
+                        fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px',
+                        background: op.status === 'suspended' ? '#FEE2E2' : '#D1FAE5',
+                        color: op.status === 'suspended' ? '#B91C1C' : '#047857'
+                      }}>
+                        {op.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 8px', display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => callUsersApi({ action: 'resendInvite', userId: op.id }, `Invitation resent to ${op.email}.`)}
+                        style={{ fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      >
+                        Resend invite
+                      </button>
+                      <button
+                        onClick={() => {
+                          const next = op.status === 'suspended' ? 'active' : 'suspended';
+                          if (next === 'suspended' && !confirm(`Suspend ${op.email}? They will not be able to sign in.`)) return;
+                          callUsersApi(
+                            { action: 'setStatus', userId: op.id, status: next },
+                            `${op.email} ${next === 'suspended' ? 'suspended' : 'restored'}.`
+                          );
+                        }}
+                        style={{
+                          fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px',
+                          border: `1px solid ${op.status === 'suspended' ? '#10B981' : '#DC2626'}`,
+                          background: 'transparent',
+                          color: op.status === 'suspended' ? '#10B981' : '#DC2626',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {op.status === 'suspended' ? 'Restore' : 'Suspend'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '20px' }}>
+            Accounts are suspended, never deleted: a deleted operator takes their history out of the audit log with them.
+          </p>
+        </div>
+      );
+
+      case 'notifications': return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>Notifications</h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                Everything addressed to operations. Until now this table was written to and never read.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={loadAdminNotifications} className="btn-secondary" style={{ padding: '8px 14px', fontSize: '13px', fontWeight: 700 }}>
+                Refresh
+              </button>
+              <button
+                onClick={() => markAdminNotificationsRead()}
+                disabled={adminNotifications.every(n => n.read)}
+                style={{
+                  padding: '8px 14px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', border: 'none',
+                  cursor: adminNotifications.every(n => n.read) ? 'not-allowed' : 'pointer',
+                  background: adminNotifications.every(n => n.read) ? 'var(--bg-tertiary)' : 'var(--kongila-blue)',
+                  color: adminNotifications.every(n => n.read) ? 'var(--text-muted)' : '#fff'
+                }}
+              >
+                Mark all read
+              </button>
+            </div>
+          </div>
+
+          {adminNotificationsLoading && (
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading...</div>
+          )}
+
+          {!adminNotificationsLoading && adminNotifications.length === 0 && (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--border-glass)', borderRadius: '12px' }}>
+              Nothing for operations yet.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {adminNotifications.map(n => (
+              <div
+                key={n.id}
+                onClick={() => !n.read && markAdminNotificationsRead([n.id])}
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-glass)',
+                  background: n.read ? 'transparent' : 'var(--bg-tertiary)',
+                  cursor: n.read ? 'default' : 'pointer',
+                  display: 'flex',
+                  gap: '12px',
+                  alignItems: 'flex-start'
+                }}
+              >
+                {!n.read && (
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--kongila-blue)', marginTop: '6px', flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '14px', fontWeight: n.read ? 600 : 800, color: 'var(--text-primary)' }}>
+                    {n.title}
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {n.message}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', gap: '10px' }}>
+                    {n.module && <span style={{ textTransform: 'capitalize' }}>{n.module}</span>}
+                    <span>{n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+
       case 'audit': return (
         <div>
           <div className="page-header"><div><h1 className="page-title">Audit Logs</h1><p className="page-subtitle">Full chronological audit trail of all platform actions.</p></div></div>
@@ -3509,7 +4691,7 @@ export default function AdminPanel() {
             {[
               { label: 'EOR Talent Pool', val: talents.length, sub: 'Globally managed', color: 'var(--accent-teal)' },
               { label: 'Active EOR Contracts', val: contracts.filter(c => c.status === 'Signed' || c.status === 'Active').length, sub: 'Running now', color: 'var(--accent-green)' },
-              { label: 'Monthly EOR Revenue', val: formatCurrency(mrrTotal), sub: 'Gross with markup', color: 'var(--accent-teal)' },
+              { label: 'Monthly Contract Value', val: formatCurrency(mrrTotal), sub: metrics.monthlyRevenue === null ? 'Revenue needs a fee rate' : `Revenue ${formatCurrency(metrics.monthlyRevenue)}`, color: 'var(--accent-teal)' },
               { label: 'Active Clients', val: organizations.length, sub: 'Client orgs', color: '#7C3AED' },
             ].map(({ label, val, sub, color }) => (
               <GlassCard key={label}>
@@ -3779,6 +4961,7 @@ export default function AdminPanel() {
             <polyline points="16 11 18 13 22 9" />
           </svg>
         );
+      case 'offers':
       case 'contracts':
         return (
           <svg {...props}>
@@ -3794,6 +4977,15 @@ export default function AdminPanel() {
           <svg {...props}>
             <line x1="12" y1="1" x2="12" y2="23" />
             <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+          </svg>
+        );
+      case 'payroll':
+        return (
+          <svg {...props}>
+            <rect x="2" y="5" width="20" height="14" rx="2" />
+            <circle cx="12" cy="12" r="3" />
+            <line x1="6" y1="12" x2="6" y2="12" />
+            <line x1="18" y1="12" x2="18" y2="12" />
           </svg>
         );
       case 'compliance':
@@ -3815,6 +5007,35 @@ export default function AdminPanel() {
         return (
           <svg {...props}>
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        );
+      case 'messages':
+        return (
+          <svg {...props}>
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+          </svg>
+        );
+      case 'settings':
+        return (
+          <svg {...props}>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        );
+      case 'users':
+        return (
+          <svg {...props}>
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        );
+      case 'notifications':
+        return (
+          <svg {...props}>
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
           </svg>
         );
       case 'audit':
@@ -3865,7 +5086,7 @@ export default function AdminPanel() {
       <div className="sidebar-menu">
         {/* KONGILA Section */}
         <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 8px 6px', marginTop: '4px' }}>KONGILA</div>
-        {KONGILA_NAV.map(({ key, label }) => {
+        {KONGILA_NAV.filter(({ key }) => canAccessTab(currentRole, key)).map(({ key, label }) => {
           let badge = 0;
           if (key === 'interviews') {
             const rescheduleCount = interviews.filter((iv: any) => iv.rescheduleRequested).length;
@@ -3892,7 +5113,7 @@ export default function AdminPanel() {
 
         {/* REMOTAN Section */}
         <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--accent-teal)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '12px 8px 6px', marginTop: '8px', borderTop: '1px solid var(--border-glass)' }}>REMOTAN</div>
-        {REMOTAN_NAV.map(({ key, label }) => (
+        {REMOTAN_NAV.filter(({ key }) => canAccessTab(currentRole, key)).map(({ key, label }) => (
           <div key={key} className={`menu-item ${activeTab === key ? 'active' : ''}`} onClick={() => { setActiveTab(key as AdminTab); setMobileSidebarOpen(false); }} style={{ color: activeTab === key ? 'var(--accent-teal)' : undefined, background: activeTab === key ? 'rgba(10,191,188,0.08)' : undefined, borderColor: activeTab === key ? 'rgba(10,191,188,0.2)' : undefined }}>
             <span style={{ fontSize: '15px', display: 'flex', alignItems: 'center' }}>{renderSidebarIcon(key)}</span>
             <span>{label}</span>
@@ -3902,7 +5123,10 @@ export default function AdminPanel() {
 
       <div className="sidebar-footer">
         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Logged in as</div>
-        <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>Super Admin</div>
+        {/* Was hardcoded "Super Admin" for everyone, whatever they actually were. */}
+        <div style={{ fontSize: '13px', fontWeight: 600, marginTop: '2px' }}>
+          {ROLE_LABELS[currentRole as keyof typeof ROLE_LABELS] || 'Operator'}
+        </div>
         <div style={{ fontSize: '11px', color: 'var(--accent-teal)', marginTop: '2px' }}>Kongila + Remotan</div>
         <button
           onClick={async () => {
@@ -3937,7 +5161,16 @@ export default function AdminPanel() {
   }
 
   if (!isAuthenticated) {
-    return <AdminLogin onLoginSuccess={() => setIsAuthenticated(true)} />;
+    return (
+      <AdminLogin
+        onLoginSuccess={(role, userId) => {
+          setIsAuthenticated(true);
+          setCurrentRole(role);
+          setCurrentAdminId(userId);
+          if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
+        }}
+      />
+    );
   }
 
   return (

@@ -1,7 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, getSupabaseClient } from '@kongila/database';
+import { readDbAsync, getSupabaseClient, getRequestUser } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Admin portal route. A talent or client session is a valid session and
+  // still has no business here, so check the kind, not just that someone is
+  // signed in. This runs before any database read.
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  if (actor.kind !== 'admin') {
+    console.warn('[api/assessments] refused ' + actor.kind + ' ' + actor.userId);
+    return res.status(403).json({ error: 'Not authorised' });
+  }
+
   const rawDb = await readDbAsync();
   const db = rawDb as any;
   if (!db.assessments) db.assessments = [];
