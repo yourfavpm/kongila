@@ -61,20 +61,29 @@ export default function ClientProfileView() {
 
   const fetchClientData = async () => {
     try {
-      // Everything on this page comes from /api/db now. The six table
-      // reads that used to be here ran with the anon key, and `users` in
-      // particular handed the browser every email, role and account
-      // status on the platform. They are also what RLS on those tables
-      // would have to permit.
-      const snapshot = await apiFetch('/api/db').then(res => res.json());
-      const org = (snapshot.organizations || []).find((o: any) => String(o.id) === String(id)) || null;
+      // Through /api/clients, the resource route for this module. It used
+      // to read the whole database through /api/db and filter in the
+      // browser: every organisation, every client profile, every request,
+      // contract, invoice and payment on the platform, to render one page.
+      const [detailRes, managersRes] = await Promise.all([
+        apiFetch(`/api/clients?id=${encodeURIComponent(String(id))}`),
+        apiFetch('/api/clients?view=managers')
+      ]);
 
+      if (!detailRes.ok) {
+        const detail = await detailRes.json().catch(() => ({}));
+        console.error('[clients] detail not loaded:', detail?.error);
+        setLoading(false);
+        return;
+      }
+
+      const payload = await detailRes.json();
+      const org = payload.organization;
       if (!org) {
         setLoading(false);
         return;
       }
 
-      // 1. Immediately render the core CRM page and cache it
       setClient(org);
       if (typeof window !== 'undefined') {
         sessionStorage.setItem(`kongila_client_${id}`, JSON.stringify(org));
@@ -89,42 +98,25 @@ export default function ClientProfileView() {
         supabase.auth.getUser()
       ]);
 
-      const db = snapshot;
-      const admins = snapshot.users || [];
-      const roles = snapshot.roles || [];
-      const userRoles = snapshot.userRoles || [];
-
+      const managers = managersRes.ok ? await managersRes.json() : { users: [], roles: [] };
       setAdminUsers(
         mergeAuthenticatedUserIntoAssignableUsers(
-          enrichUsersWithRoleAssignments(admins || [], roles || [], userRoles || []),
+          enrichUsersWithRoleAssignments(
+            managers.users || [],
+            managers.roles || [],
+            (managers.users || []).flatMap((u: any) =>
+              (u.roleIds || []).map((roleId: string) => ({ user_id: u.id, role_id: roleId }))
+            )
+          ),
           authUser || session?.user,
         ).filter(isAccountManagerAssignable)
       );
-        
-      // Fetch client profiles
-      const profiles = (snapshot.clientProfiles || []).filter(
-        (cp: any) => String(cp.organizationId ?? cp.organization_id) === String(org.id)
-      );
-      const orgUserIds = profiles.map((cp: any) => cp.userId ?? cp.user_id);
-        
-      // Fetch real requests
-      let requests: any[] = [];
-      if (orgUserIds.length > 0) {
-        const supabaseRequests = (snapshot.clientRequests || []).filter(
-          (r: any) => orgUserIds.includes(r.clientId ?? r.client_id)
-        );
-        if (supabaseRequests) {
-          // /api/db already flattens the jsonb payload and resolves the
-          // two ids, so there is nothing left to unpack here.
-          requests = supabaseRequests.map((r: any) => ({ ...r, dbId: r.rowId ?? r.id }));
-        }
-      }
-        
-      const contracts = (db.contracts || []).filter((c: any) => orgUserIds.includes(c.clientId));
-      const invoices = (db.invoices || []).filter((i: any) => orgUserIds.includes(i.clientId));
-      const invoiceIds = invoices.map((i: any) => i.id);
-      const payments = (db.payments || []).filter((p: any) => invoiceIds.includes(p.invoiceId));
-        
+
+      const requests = payload.requests || [];
+      const contracts = payload.contracts || [];
+      const invoices = payload.invoices || [];
+      const payments = payload.payments || [];
+
       setClientRequests(requests);
       setClientContracts(contracts);
       setClientInvoices(invoices);

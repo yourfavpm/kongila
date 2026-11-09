@@ -76,11 +76,24 @@ export default function TalentProfileView() {
 
   const fetchData = async () => {
     try {
-      const res = await apiFetch('/api/db');
-      const db = await res.json();
-      const found = db.talents?.find((t: any) => t.id === id);
-      setTalent(found);
-      setDocuments(db.documents || []);
+      // Through /api/talents. This read the whole database and picked one
+      // candidate out of it, so rendering one page pulled every contract,
+      // invoice and message on the platform as well.
+      const [detailRes, managersRes] = await Promise.all([
+        apiFetch(`/api/talents?id=${encodeURIComponent(String(id))}`),
+        apiFetch('/api/clients?view=managers')
+      ]);
+
+      if (!detailRes.ok) {
+        const detail = await detailRes.json().catch(() => ({}));
+        console.error('[talents] detail not loaded:', detail?.error);
+        setLoading(false);
+        return;
+      }
+
+      const payload = await detailRes.json();
+      setTalent(payload.talent);
+      setDocuments(payload.documents || []);
 
       const [
         { data: { session } },
@@ -90,18 +103,14 @@ export default function TalentProfileView() {
         supabase.auth.getUser()
       ]);
 
-      // users, roles and user_roles come from /api/db now. Read directly
-      // with the anon key, `users` handed the browser every email, role
-      // and account status on the platform.
-      const users = db.users || [];
-      const roles = db.roles || [];
-      const userRoles = db.userRoles || [];
-
+      const managers = managersRes.ok ? await managersRes.json() : { users: [], roles: [] };
       const assignableTalentManagers = mergeAuthenticatedUserIntoAssignableUsers(
         enrichUsersWithRoleAssignments(
-          users || db.users || [],
-          roles || [],
-          userRoles || [],
+          managers.users || [],
+          managers.roles || [],
+          (managers.users || []).flatMap((u: any) =>
+            (u.roleIds || []).map((roleId: string) => ({ user_id: u.id, role_id: roleId }))
+          ),
         ),
         authUser || session?.user,
       ).filter(isTalentManagerAssignable);

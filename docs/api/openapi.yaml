@@ -93,6 +93,47 @@ paths:
                 role: { type: string, example: member }
       responses:
         '200': { $ref: '#/components/responses/Success' }
+  /api/session:
+    get:
+      tags: [Account]
+      operationId: getSession
+      summary: Read the authenticated session actor
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/clients:
+    get:
+      tags: [Admin]
+      operationId: listAdminClients
+      summary: List or inspect clients as an administrator
+      parameters:
+        - name: id
+          in: query
+          schema: { type: string }
+        - name: view
+          in: query
+          schema: { type: string, enum: [managers] }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/talents:
+    get:
+      tags: [Admin]
+      operationId: listAdminTalents
+      summary: List or inspect talents as an administrator
+      parameters:
+        - name: id
+          in: query
+          schema: { type: string }
+        - name: shortlistable
+          in: query
+          schema: { type: boolean }
+        - name: requestId
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/requests:
     get:
       tags: [Requests and support]
@@ -266,6 +307,29 @@ paths:
             schema: { $ref: '#/components/schemas/GenericObject' }
       responses:
         '201': { $ref: '#/components/responses/Success' }
+  /api/assessments:
+    get:
+      tags: [Profile]
+      operationId: listTalentAssessments
+      summary: List assessments assigned to the authenticated talent
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/finance/generate-drafts:
+    get:
+      tags: [Finance]
+      operationId: previewInvoiceDrafts
+      summary: Preview invoice drafts as an administrator
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Finance]
+      operationId: generateInvoiceDrafts
+      summary: Generate invoice drafts as an administrator
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/contracts/sign:
     get:
       tags: [Offers and contracts]

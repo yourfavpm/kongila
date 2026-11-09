@@ -165,7 +165,8 @@ The RLS gate is now clear to pass. The application migration is complete, the mi
 - [x] Remove `saveToDb` from the client portal.
 - [x] Remove equivalent snapshot writes from the admin portal.
 - [x] Authenticate `apps/remotan-web/pages/api/db.ts`. It had no authentication at all and accepted a POST straight into `writeDbAsync`.
-- [~] Replace snapshot reads with resource-specific API reads. Eleven hydration points still read `/api/db`; the route is marked deprecated in all three apps.
+- [x] Replace portal `/api/db` hydration calls with authenticated resource/API reads. The read-only `/api/db` routes remain only as compatibility endpoints and for Postman coverage.
+- [ ] Replace the shared `readDbAsync` implementation behind `/api/resources/[resource]` with targeted reads; each resource request still loads the full schema before returning one resource.
 - [x] Stop merging stale browser state into database state.
 - [ ] Stop returning empty database objects after database failures.
 - [ ] Stop returning cached data as if it were current data.
@@ -481,7 +482,7 @@ Applied in this order. The refreshed schema and audit confirm the resulting tabl
 - [x] Admin and client production builds passed during the migration audit.
 - [ ] The worktree is not clean: existing tracked and untracked changes must be preserved and reviewed before release.
 - [ ] Direct browser-side business writes remain in unmigrated features and are the next migration target.
-- [ ] Whole-database `/api/db` snapshot writes remain and must not be used for new work.
+- [x] Portal code no longer depends on whole-database `/api/db` snapshots. The read-only compatibility routes remain temporarily.
 
 ## Recorded — 4 November 2026
 

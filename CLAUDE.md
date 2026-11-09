@@ -153,4 +153,4 @@ server-side code should.
 
 Update this line at the close of each day, and see `PROGRESS.md` for detail.
 
-**Day 1, 19 October.** Repo cleanup, environment setup, this file.
+**Updated 4 November 2026.** Server API migration work is in progress; the portal `/api/db` snapshot callers have been removed. See [PROGRESS.md](./PROGRESS.md) and [docs/PRODUCTION-READINESS-CHECKLIST.md](./docs/PRODUCTION-READINESS-CHECKLIST.md) for current status.

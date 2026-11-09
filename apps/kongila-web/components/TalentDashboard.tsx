@@ -2271,7 +2271,7 @@ const PAST_STATUSES = ['completed', 'ended', 'terminated', 'closed'];
 
 const ContractSection = ({ profile }: { profile: any }) => {
   const [activeTab, setActiveTab] = useState<'active'|'pending'|'past'>('active');
-  // Real contracts for this candidate, from the scoped /api/db route. This
+  // Real contracts for this candidate, from the scoped contracts API. This
   // used to be a hardcoded MOCK_CONTRACTS array, so every candidate who opened
   // this tab saw the same three invented engagements, one of them an active
   // $8,000 a month contract with a company they had never worked for.
@@ -2285,13 +2285,13 @@ const ContractSection = ({ profile }: { profile: any }) => {
 
     const loadContracts = async () => {
       try {
-        const res = await apiFetch('/api/db');
+        const res = await apiFetch('/api/contracts');
         if (!res.ok) throw new Error(`Could not load your contracts (${res.status}).`);
-        const db = await res.json();
+        const body = await res.json();
 
-        // /api/db already scopes contracts to the signed-in talent, but filter
-        // again rather than trust the shape of a response.
-        const mine = (db.contracts || []).filter(
+        // The server scopes contracts to the signed-in talent. Keep the
+        // client-side check as a defensive guard against malformed responses.
+        const mine = (body.contracts || []).filter(
           (c: any) => String(c.talentId) === String(profile.id)
         );
 
@@ -7812,7 +7812,7 @@ export default function TalentDashboard({
 
     if (!asmnt) {
       try {
-        const res = await apiFetch('/api/db');
+        const res = await apiFetch('/api/assessments');
         if (res.ok) {
           const fetchedData = await res.json();
           const allAsmnts = fetchedData.assessments || [];

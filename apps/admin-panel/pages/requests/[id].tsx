@@ -47,168 +47,77 @@ export default function RequestDetailView() {
       const requestId = Array.isArray(id) ? id[0] : id;
       if (!requestId) return;
 
-      // Keep this query deliberately simple; detail pages must still open if
-      // optional relationship metadata is not present in the Supabase schema.
-      const requestPromise = apiFetch(`/api/requests/${encodeURIComponent(requestId)}`)
-        .then(async response => ({
-          data: response.ok ? await response.json() : null,
-          error: response.ok ? null : new Error((await response.json().catch(() => ({}))).error || 'Could not load request')
-        }));
+      // Two calls, both server side.
+      //
+      // This used to read talent_requests, users, roles, user_roles,
+      // client_profiles and matches directly from the browser, plus
+      // /api/db on top for a fallback copy of the matches. Six reads with
+      // the anon key to render one page, and `users` among them. It also
+      // called /api/requests/:id, which does not exist in this app, so the
+      // primary fetch always failed and the page ran on the fallback.
+      const [detailRes, managersRes, { data: { session } }, { data: { user: authUser } }] =
+        await Promise.all([
+          apiFetch(`/api/requests?id=${encodeURIComponent(requestId)}`),
+          apiFetch('/api/clients?view=managers'),
+          supabase.auth.getSession(),
+          supabase.auth.getUser()
+        ]);
 
-      // Fetch users and role assignments for assignment dropdowns.
-      const sessionPromise = supabase.auth.getSession();
-      const authUserPromise = supabase.auth.getUser();
-      const adminPromise = supabase
-        .from('users')
-        .select('*');
-      const rolesPromise = supabase
-        .from('roles')
-        .select('id, name');
-      const userRolesPromise = supabase
-        .from('user_roles')
-        .select('user_id, role_id');
-
-      const dbPromise = apiFetch('/api/db').then(r => r.json());
-
-      const [
-        { data: { session } },
-        { data: { user: authUser } },
-        { data: requestData, error: reqError },
-        { data: adminData },
-        { data: rolesData, error: rolesError },
-        { data: userRolesData, error: userRolesError },
-        localDb
-      ] = await Promise.all([
-        sessionPromise,
-        authUserPromise,
-        requestPromise,
-        adminPromise,
-        rolesPromise,
-        userRolesPromise,
-        dbPromise
-      ]);
-
-      if (reqError) {
-        console.error('Failed to load request from talent_requests:', reqError);
+      if (!detailRes.ok) {
+        const detail = await detailRes.json().catch(() => ({}));
+        console.error('[requests] detail not loaded:', detail?.error);
+        setLoading(false);
+        return;
       }
-      if (rolesError) console.error('Failed to load roles:', rolesError);
-      if (userRolesError) console.error('Failed to load user roles:', userRolesError);
 
-      if (!reqError && requestData && requestData.payload) {
-        const row = requestData;
-        const req = row.payload;
+      const payload = await detailRes.json();
+      const req = payload.request;
+      setRequestRow(payload.row || null);
 
-        setRequestRow(row);
+      const resolvedAMId = req.assignedAccountManagerId || '';
+      const resolvedTMId = req.assignedTalentManagerId || '';
 
-        // Priority of truth for assignments:
-        // 1. dedicated DB column (talent_manager_id / account_manager_id)
-        // 2. payload field (legacy / fallback)
-        const resolvedAMId = row.account_manager_id || req.assignedAccountManagerId || '';
-        const resolvedTMId = row.talent_manager_id || req.assignedTalentManagerId || '';
+      setRequest({ ...req, status: coerceRequestStatus(req.status) });
+      setFormData({
+        status: coerceRequestStatus(req.status),
+        urgency: req.urgency || 'Standard',
+        assignedAccountManagerId: resolvedAMId,
+        assignedTalentManagerId: resolvedTMId,
+        internalNotes: req.internalNotes || ''
+      });
 
-        // Sync resolved IDs back into the payload object so display code is consistent
-        const mergedReq = {
-          ...req,
-          assignedAccountManagerId: resolvedAMId,
-          assignedTalentManagerId: resolvedTMId,
-          status: coerceRequestStatus(req.status),
-        };
-
-        setRequest(mergedReq);
-        setFormData({
-          status: coerceRequestStatus(req.status),
-          urgency: req.urgency || 'Standard',
-          assignedAccountManagerId: resolvedAMId,
-          assignedTalentManagerId: resolvedTMId,
-          internalNotes: req.internalNotes || ''
-        });
-
-        // Fetch the client's org — also read account_manager_id from there as additional source
-        if (req.clientId) {
-          const { data: orgData } = await supabase
-            .from('client_profiles')
-            .select('organizations(*, account_manager:account_manager_id(id, name, email))')
-            .eq('user_id', req.clientId)
-            .maybeSingle();
-
-          if (orgData?.organizations) {
-            const org = orgData.organizations as any;
-            setClient(org);
-
-            // If the request has no AM yet, inherit from the org
-            if (!resolvedAMId && org.account_manager_id) {
-              setFormData(prev => ({ ...prev, assignedAccountManagerId: org.account_manager_id }));
-              setRequest((prev: any) => ({ ...prev, assignedAccountManagerId: org.account_manager_id }));
-            }
-          }
-        }
-      } else {
-        const fallbackRequest = (localDb?.clientRequests || []).find((req: any) => req.id === requestId);
-        if (fallbackRequest) {
-          const mergedFallback = {
-            ...fallbackRequest,
-            status: coerceRequestStatus(fallbackRequest.status),
-          };
-          setRequestRow(null);
-          setRequest(mergedFallback);
-          setFormData({
-            status: coerceRequestStatus(fallbackRequest.status),
-            urgency: fallbackRequest.urgency || 'Standard',
-            assignedAccountManagerId: fallbackRequest.assignedAccountManagerId || '',
-            assignedTalentManagerId: fallbackRequest.assignedTalentManagerId || '',
-            internalNotes: fallbackRequest.internalNotes || ''
-          });
+      if (payload.organization) {
+        setClient(payload.organization);
+        // A request with no account manager of its own inherits the
+        // company's.
+        if (!resolvedAMId && payload.organization.account_manager_id) {
+          const inherited = payload.organization.account_manager_id;
+          setFormData(prev => ({ ...prev, assignedAccountManagerId: inherited }));
+          setRequest((prev: any) => ({ ...prev, assignedAccountManagerId: inherited }));
         }
       }
 
+      const managers = managersRes.ok ? await managersRes.json() : { users: [], roles: [] };
       setAdminUsers(
         mergeAuthenticatedUserIntoAssignableUsers(
-          enrichUsersWithRoleAssignments(adminData || [], rolesData || [], userRolesData || []),
+          enrichUsersWithRoleAssignments(
+            managers.users || [],
+            managers.roles || [],
+            (managers.users || []).flatMap((u: any) =>
+              (u.roleIds || []).map((roleId: string) => ({ user_id: u.id, role_id: roleId }))
+            )
+          ),
           authUser || session?.user,
         )
       );
 
-      // ── Fetch matches for this request from Supabase (primary source) ──
-      const { data: supaMatches } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('request_id', requestId);
-
-      // Normalise to camelCase so UI is consistent
-      const supaMatchesNorm = (supaMatches || []).map((m: any) => ({
+      // The route returns each match with the candidate's name, title and
+      // grade already attached, so there is no second lookup and no
+      // fallback copy to merge.
+      setMatches((payload.matches || []).map((m: any) => ({
         ...m,
-        requestId: m.request_id || m.requestId,
-        talentId: m.talent_id || m.talentId,
-      }));
-
-      // Merge local-db matches as fallback (catches any written only to /api/db)
-      const localMatches = (localDb?.matches || []).filter((m: any) => m.requestId === requestId);
-      const combinedMatches: any[] = [...supaMatchesNorm];
-      localMatches.forEach((lm: any) => {
-        if (!combinedMatches.find(sm => sm.id === lm.id)) combinedMatches.push(lm);
-      });
-
-      // ── Populate talent details ──
-      // Prefer Supabase talent_profiles / users for display names
-      const talentIds = [...new Set(combinedMatches.map(m => m.talentId || m.talent_id))].filter(Boolean);
-      let supabaseTalentMap: Record<string, any> = {};
-      if (talentIds.length > 0) {
-        const { data: talentUsers } = await supabase
-          .from('users')
-          .select('id, name, email')
-          .in('id', talentIds);
-        (talentUsers || []).forEach((u: any) => { supabaseTalentMap[u.id] = u; });
-      }
-
-      const populated = combinedMatches.map(m => {
-        const tid = m.talentId || m.talent_id;
-        const localTalent = (localDb?.talents || []).find((t: any) => t.id === tid);
-        const supabaseTalent = supabaseTalentMap[tid];
-        const talent = localTalent || (supabaseTalent ? { ...supabaseTalent, name: supabaseTalent.name || supabaseTalent.email } : null);
-        return { ...m, talent, talentId: tid };
-      });
-      setMatches(populated);
-
+        talent: m.talentName ? { id: m.talentId, name: m.talentName, title: m.talentTitle } : null
+      })));
     } catch (e) {
       console.error(e);
     } finally {

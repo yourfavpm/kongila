@@ -34,25 +34,22 @@ import {
 // thirteen tabs.
 const normalizeAdminRole = (role: any) => resolveRole(role) || '';
 
-// Supabase Auth IDs are UUIDs, while the staging seed uses stable IDs in
-// public.users. Resolve the role by Auth ID first, then by the verified email
-// so the session listener does not immediately sign seeded demo admins out.
-async function getAdminRoleForSession(user: any): Promise<string> {
-  let { data: userData } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (!userData && user.email) {
-    ({ data: userData } = await supabase
-      .from('users')
-      .select('role')
-      .eq('email', user.email)
-      .maybeSingle());
+// The caller's own role, resolved server-side.
+//
+// This read public.users from the browser, twice: once by Auth id and
+// once by email. getRequestUser already does the lookup properly, taking
+// the id from the verified token, refusing a suspended account whose
+// token has not expired yet, and normalising the role. /api/session
+// returns that result, so the browser never touches the users table.
+async function getAdminRoleForSession(_user: any): Promise<string> {
+  try {
+    const res = await apiFetch('/api/session');
+    if (!res.ok) return '';
+    const me = await res.json();
+    return normalizeAdminRole(me.role);
+  } catch {
+    return '';
   }
-
-  return normalizeAdminRole(userData?.role || user.user_metadata?.role || user.app_metadata?.role || '');
 }
 
 // ─── TYPE DEFINITIONS ───────────────────────────────────────────────────────
@@ -382,39 +379,34 @@ export default function AdminPanel() {
 
   const syncFromDb = async () => {
     try {
-      const [
-        res,
-        requestRes,
-        supportRes,
-        ivRes
-      ] = await Promise.all([
-        apiFetch('/api/db'),
-        apiFetch('/api/requests'),
-        apiFetch('/api/support'),
-        apiFetch('/api/interviews')
-      ]);
+      const resourceNames = [
+        'organizations', 'clientProfiles', 'users', 'talents', 'clientRequests',
+        'matches', 'notifications', 'rehireRequests', 'supportTickets', 'supportMessages',
+        'interviews', 'documents', 'requestActivityLogs', 'assessments',
+        'assessmentCategories', 'assessmentQuestions', 'assessmentAssignments',
+        'skillAssessmentResults', 'talentSkillAssessments', 'workSimulationTasks',
+        'contracts', 'contractTemplates', 'auditLogs', 'agentLogs', 'invoices',
+        'payments', 'talentPayouts'
+      ];
+      const resourceResults = await Promise.all(resourceNames.map(async name => {
+        const response = await apiFetch(`/api/resources/${name}`);
+        if (!response.ok) {
+          throw new Error(`Could not load ${name}: ${response.status}`);
+        }
+        const body = await response.json();
+        if (!Array.isArray(body.data)) {
+          throw new Error(`The ${name} API returned an invalid response.`);
+        }
+        return [name, body.data || []] as const;
+      }));
+      const db = Object.fromEntries(resourceResults);
+      const requestRes = await apiFetch('/api/requests').catch(() => ({ ok: false } as Response));
+      const supportRes = await apiFetch('/api/support').catch(() => ({ ok: false } as Response));
+      const ivRes = await apiFetch('/api/interviews').catch(() => ({ ok: false } as Response));
 
       // organizations, client_profiles, audit_logs and matches used to be
-      // read straight from the tables here with the anon key, alongside
-      // the /api/db call that already carries all four. Reading them
-      // directly is exactly what RLS on those tables has to allow, so it
-      // was the thing standing between here and turning RLS on.
-
-      if (!res.ok) {
-        // A 401 on first paint is expected: the poll can run before the
-        // Supabase session has restored and a token is available. The next
-        // tick picks the data up. Anything else is a real failure worth a dialog.
-        if (res.status === 401) {
-          console.info('[api/db] not authenticated yet, retrying on next sync');
-        } else {
-          const errText = await res.text();
-          alert(`API /api/db failed! Status: ${res.status}. Error: ${errText}`);
-          console.error('API /api/db failed', errText);
-        }
-      }
-
-      if (res.ok) {
-        const db = await res.json();
+      // read straight from the tables here with the anon key. These
+      // resource APIs enforce authorization and scope server-side.
         const requestApiBody = requestRes.ok ? await requestRes.json().catch(() => ({})) : {};
         const supportApiBody = supportRes.ok ? await supportRes.json().catch(() => ({})) : {};
         const freshTalents = db.talents || [];
@@ -423,7 +415,7 @@ export default function AdminPanel() {
         // The browser-side organizations query is subject to client RLS. For
         // seeded admin accounts the public.users ID can differ from the Auth
         // UUID, so that query may legitimately return no rows even though the
-        // authenticated admin API has the data. Prefer the admin API snapshot.
+        // authenticated admin API has the data. Prefer the admin resource API.
         setOrganizations(db.organizations || []);
 
         const localRequests = (db.clientRequests || []).map((request: any) => ({
@@ -498,7 +490,6 @@ export default function AdminPanel() {
           }
           return { ...freshMatch, vettingPipeline: localPipeline || dbPipeline };
         });
-      }
       if (!ivRes.ok) {
         const errText = await ivRes.text();
         alert(`API /api/interviews failed! Status: ${ivRes.status}. Error: ${errText}`);

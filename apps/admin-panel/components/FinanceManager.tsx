@@ -153,7 +153,13 @@ export default function FinanceManager({
     setGeneratingDrafts(true);
     setFinanceError(null);
     try {
-      const res = await apiFetch('/api/finance/generate-drafts', { method: 'POST' });
+      // /api/finance/generate-drafts only exists in the client app, so
+      // this was a 404 and the billing run never started. The admin
+      // route does the same thing behind action 'generate'.
+      const res = await apiFetch('/api/finance', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'generate' })
+      });
       const data = await res.json();
 
       if (!res.ok) {

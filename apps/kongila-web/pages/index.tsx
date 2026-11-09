@@ -446,18 +446,26 @@ export default function KongilaWeb() {
     }, 30000);
 
     try {
-      const controller = new AbortController();
-      const fetchTimeout = setTimeout(() => controller.abort(), 60000);
-      const res = await apiFetch('/api/db', { signal: controller.signal }).catch(e => {
-        console.warn("fetch /api/db error or abort", e);
-        return { ok: false, json: async () => ({}) } as Response;
-      });
-      clearTimeout(fetchTimeout);
+      const resourceNames = [
+        'organizations', 'clientProfiles', 'users', 'talents', 'clientRequests',
+        'matches', 'notifications', 'rehireRequests', 'supportTickets', 'interviews',
+        'documents', 'requestActivityLogs', 'assessments', 'assessmentCategories',
+        'assessmentQuestions', 'talentSkillAssessments', 'skillAssessmentResults',
+        'workSimulationTasks'
+      ];
+      const resourceResults = await Promise.all(resourceNames.map(async name => {
+        const response = await apiFetch(`/api/resources/${name}`).catch(() => null);
+        if (!response?.ok) return [name, []] as const;
+        const body = await response.json().catch(() => ({}));
+        return [name, body.data || []] as const;
+      }));
+      const resourceData = Object.fromEntries(resourceResults);
+      const res = { ok: true, json: async () => resourceData } as Response;
 
       if (res && res.ok) {
         const dbData = await res.json();
         // These three used to be read straight from the tables with the
-        // anon key, overriding the already-scoped /api/db response. Every
+        // anon key, overriding the already-scoped resource API responses. Every
         // candidate and every client therefore received every
         // organization, every client profile and every row of `users`:
         // emails, roles and account status for the whole platform. The
@@ -528,64 +536,18 @@ export default function KongilaWeb() {
           setInvoices([]);
         }
 
-        // ── Fetch matches from Supabase so clients see admin-submitted candidates ──
-        const { data: supabaseMatches } = await supabase
-          .from('matches')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (supabaseMatches && supabaseMatches.length > 0) {
-          // Normalise Supabase snake_case to camelCase expected by the UI
-          const normalizedMatches = supabaseMatches.map((m: any) => ({
-            ...m,
-            requestId: m.request_id || m.requestId,
-            talentId: m.talent_id || m.talentId,
-          }));
-          setMatches(normalizedMatches);
-        } else {
-          setMatches(dbData.matches || []);
-        }
-        setContracts(dbData.contracts || []);
-        // Conversations and messages, scoped to this user by the server.
-        //
-        // These two queries used to select every row in both tables with no
-        // filter at all, so each portal held every conversation and every
-        // message on the platform — other clients', other candidates' — and
-        // only the rendering decided what was shown.
-        try {
-          const msgResponse = await apiFetch('/api/messages');
-          if (msgResponse.ok) {
-            const msgPayload = await msgResponse.json();
-            setConversations(msgPayload.conversations || []);
-            setMessages(msgPayload.messages || []);
-          } else {
-            setConversations([]);
-            setMessages([]);
-          }
-        } catch (err) {
-          console.error('Failed to load messages', err);
-          setConversations([]);
-          setMessages([]);
-        }
+        // Matches come from the scoped resource API. This used to select the
+        // whole matches table with the anon key, unordered by owner, so
+        // every client received every other client's shortlist.
+        setMatches(dbData.matches || []);
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
         setSupportTickets(supportBody.tickets || dbData.supportTickets || []);
-        // ── Fetch interviews from Supabase ──
-        const { data: supabaseInterviews } = await supabase
-          .from('interviews')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (supabaseInterviews && supabaseInterviews.length > 0) {
-          setInterviews(supabaseInterviews.map((iv: any) => ({
-            ...iv,
-            requestId: iv.request_id || iv.requestId,
-            matchId: iv.match_id || iv.matchId,
-            talentId: iv.talent_id || iv.talentId,
-            talentName: iv.talent_name || iv.talentName,
-            meetingLink: iv.meeting_link || iv.meetingLink,
-          })));
-        } else {
-          setInterviews(dbData.interviews || []);
-        }
+        // Interviews come from the scoped resource API. This used to select
+        // the whole interviews table with the anon key, so every caller
+        // received every interview on the platform.
+        setInterviews(dbData.interviews || []);
+
         setDocuments(dbData.documents || []);
         setRequestActivityLogs(dbData.requestActivityLogs || []);
         // Assessment data for talent side
@@ -641,11 +603,11 @@ export default function KongilaWeb() {
   useEffect(() => {
     const restoreUserFromSession = async (session: Session) => {
       const authUser = session.user;
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', authUser.email)
-        .maybeSingle();
+      // The caller's own identity, resolved server-side. This used to
+      // select from public.users in the browser, which is also what RLS
+      // on that table had to permit.
+      const meRes = await apiFetch('/api/session');
+      const dbUser = meRes.ok ? await meRes.json() : null;
 
       const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
       // The user is considered to have completed onboarding only when their talent_profile
@@ -660,28 +622,6 @@ export default function KongilaWeb() {
         // works today only because RLS is off on that table.
         const dbTalentProfile = await loadOwnTalentProfile();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
-
-        // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
-        if (!isOnboardingComplete) {
-          try {
-            const legacyRes = await apiFetch('/api/db');
-            if (legacyRes.ok) {
-              const legacyDb = await legacyRes.json();
-              const legacyTalent = legacyDb.talents?.find((t: any) => t.email === authUser.email || t.id === (dbUser?.id || authUser.id));
-              if (legacyTalent && isTalentProfileOnboardingComplete({ 
-                bio: typeof legacyTalent.bio === 'string' ? legacyTalent.bio : JSON.stringify(legacyTalent.bio),
-                full_name: legacyTalent.name,
-                level: legacyTalent.title,
-                country: legacyTalent.country,
-                vetting_status: legacyTalent.vettingStatus
-              })) {
-                isOnboardingComplete = true;
-              }
-            }
-          } catch (e) {
-            console.error('Legacy DB fallback failed:', e);
-          }
-        }
 
         // If not complete, try to restore draft onboarding state
         if (!isOnboardingComplete && dbTalentProfile?.bio) {
@@ -991,42 +931,19 @@ export default function KongilaWeb() {
 
       if (error) throw error;
 
-      // Read the user's role from the public.users table (source of truth)
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', emailInput)
-        .maybeSingle();
+      // The role comes from the server, which takes the id from the
+      // verified token rather than matching on an email the browser sent.
+      const meRes = await apiFetch('/api/session');
+      const dbUser = meRes.ok ? await meRes.json() : null;
 
       const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
-      let isOnboardingComplete = dbUser?.status === 'active';
+      let isOnboardingComplete = Boolean(dbUser);
       if (role === 'talent') {
         // Through the server. Reading talent_profiles from the browser
         // works today only because RLS is off on that table.
         const dbTalentProfile = await loadOwnTalentProfile();
         isOnboardingComplete = isTalentProfileOnboardingComplete(dbTalentProfile);
 
-        // Fallback for legacy accounts that haven't been synced to Supabase talent_profiles yet
-        if (!isOnboardingComplete) {
-          try {
-            const legacyRes = await apiFetch('/api/db');
-            if (legacyRes.ok) {
-              const legacyDb = await legacyRes.json();
-              const legacyTalent = legacyDb.talents?.find((t: any) => t.email === emailInput || t.id === (dbUser?.id || data.user?.id));
-              if (legacyTalent && isTalentProfileOnboardingComplete({ 
-                bio: typeof legacyTalent.bio === 'string' ? legacyTalent.bio : JSON.stringify(legacyTalent.bio),
-                full_name: legacyTalent.name,
-                level: legacyTalent.title,
-                country: legacyTalent.country,
-                vetting_status: legacyTalent.vettingStatus
-              })) {
-                isOnboardingComplete = true;
-              }
-            }
-          } catch (e) {
-            console.error('Legacy DB login fallback failed:', e);
-          }
-        }
       }
 
       const loggedInUser = {
@@ -1399,13 +1316,15 @@ export default function KongilaWeb() {
         bio: bioText
       });
 
+      let savedProfileId = authUserId || '';
+
       // ── 1. The public.users row already exists ──
       // It is created server-side by /api/account/provision during signup.
       // The browser cannot write that table: UPDATE is revoked from
       // authenticated, so this upsert would always fail. Activation happens
       // in step 3 below, through /api/account/activate.
       if (authUserId) {
-        // ── 2. Upsert full onboarding data directly into Supabase talent_profiles ──
+        // ── 2. Save full onboarding data through the profile API ──
         // The payload used to carry vetting_stage, vetting_status and grade,
         // upserted straight from the browser with the anon key. RLS is off on
         // talent_profiles in the live database, so a candidate could post
@@ -1446,6 +1365,8 @@ export default function KongilaWeb() {
           console.error('[Onboarding] profile save failed:', detail?.error, detail?.problems);
           throw new Error(detail?.error || 'Your profile could not be saved.');
         }
+        const savedProfile = await profileRes.json();
+        savedProfileId = savedProfile.profile?.id || savedProfileId;
 
         // ── 3. Mark the account active ──
         // Server-side: UPDATE on public.users is revoked from authenticated,
@@ -1460,26 +1381,16 @@ export default function KongilaWeb() {
             'error'
           );
         }
-      }
 
-      // ── 4. Sync to local db.json for offline/admin panel fallback ──
-      const res = await apiFetch('/api/db');
-      if (res.ok) {
-        const dbData = await res.json();
-        if (!dbData.talents) dbData.talents = [];
-        if (!dbData.notifications) dbData.notifications = [];
-        if (!dbData.auditLogs) dbData.auditLogs = [];
-        if (!dbData.agentLogs) dbData.agentLogs = [];
-
-        const existingIndex = dbData.talents.findIndex((t: any) =>
-          t.id === authUserId || (talentEmail && t.email?.toLowerCase() === talentEmail.toLowerCase())
+        // Update the local dashboard view from the profile just saved.
+        const existingIndex = talents.findIndex((t: TalentProfile) =>
+          t.id === savedProfileId || (talentEmail && t.email?.toLowerCase() === talentEmail.toLowerCase())
         );
-
-        const baseTalent = existingIndex > -1 ? dbData.talents[existingIndex] : {};
+        const baseTalent: Partial<TalentProfile> = existingIndex > -1 ? talents[existingIndex] : {};
 
         const updatedTalent: TalentProfile = {
           ...baseTalent,
-          id: authUserId || baseTalent.id || `talent_${Date.now()}`,
+          id: savedProfileId || baseTalent.id || `talent_${Date.now()}`,
           name: talentName,
           email: talentEmail,
           avatar: talentOnboardingData.profilePhotoUrl || baseTalent.avatar || 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=200',
@@ -1547,19 +1458,10 @@ export default function KongilaWeb() {
           supportTickets: baseTalent.supportTickets || []
         };
 
-        if (existingIndex > -1) {
-          dbData.talents[existingIndex] = updatedTalent;
-        } else {
-          dbData.talents.push(updatedTalent);
-        }
-
-        // The three pushes and the whole-database save that used to be
-        // here are gone. They posted the browser's copy of talents,
-        // clientRequests, matches and contracts back through /api/db, which
-        // upserts every one of those tables, so a stale snapshot overwrote
-        // whatever the profile route had just written correctly. The audit
-        // entry is written server side by that route.
-        setTalents(dbData.talents);
+        const updatedTalents = [...talents];
+        if (existingIndex > -1) updatedTalents[existingIndex] = updatedTalent;
+        else updatedTalents.push(updatedTalent);
+        setTalents(updatedTalents);
       }
     } catch (e) {
       console.error('[Onboarding] Failed to submit onboarding data:', e);

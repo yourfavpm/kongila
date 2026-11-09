@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 
 interface AdminLoginProps {
   // The verified role and the id it belongs to. The portal decides what
@@ -45,18 +46,16 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
       if (error) throw error;
 
       if (data.user) {
-        // Check if the user has the 'admin' role — first from public.users, then from auth metadata
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('role')
-          .eq('id', data.user.id)
-          .maybeSingle();
-
-        if (userError) {
+        // The role comes from the server, which takes the id from the
+        // verified token. This used to select from public.users in the
+        // browser, which is also what RLS on that table had to permit.
+        const meRes = await apiFetch('/api/session');
+        if (!meRes.ok && meRes.status !== 401 && meRes.status !== 403) {
           throw new Error('Failed to verify admin role.');
         }
+        const me = meRes.ok ? await meRes.json() : {};
 
-        const role = normalizeRole(userData?.role || data.user.user_metadata?.role || data.user.app_metadata?.role || '');
+        const role = normalizeRole(me.role || data.user.user_metadata?.role || data.user.app_metadata?.role || '');
 
         // Admin access is granted by an existing role in public.users, nothing else.
         //

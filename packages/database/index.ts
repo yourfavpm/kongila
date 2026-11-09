@@ -1827,3 +1827,9 @@ export * from './vettingService';
 // -- Uploads ------------------------------------------
 // Signed upload URLs. The browser used to pick its own object path.
 export * from './uploadService';
+
+// -- Directories --------------------------------------
+// The client and candidate reads the admin screens need, so they stop
+// pulling the whole database through /api/db and filtering in the browser.
+export * from './clientService';
+export * from './talentDirectoryService';

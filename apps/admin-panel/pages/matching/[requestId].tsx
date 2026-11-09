@@ -216,32 +216,32 @@ export default function MatchingEngine() {
     if (!requestId) return;
     const fetchData = async () => {
       try {
-        // The request comes from /api/db, which reads talent_requests
-        // server side and flattens the payload. Reading the table
-        // directly with the anon key is what RLS on it has to allow.
-        const db = await apiFetch('/api/db').then(res => res.json());
+        // Through /api/talents?requestId=, which returns the request, the
+        // candidates who may be shortlisted for it and the matches already
+        // on it. This used to read the whole database and apply the
+        // eligibility rule in the browser against every candidate.
+        //
+        // A and A+ are the deployable grades. B is the trainable pool the
+        // scope describes: it is scored and shown so an operator can
+        // consider it, but automatic matching still leaves it out and
+        // submitting one needs an override reason. A candidate flagged for
+        // re-review is left out entirely. That rule now lives in
+        // listTalents, server side.
+        const boardRes = await apiFetch(`/api/talents?requestId=${encodeURIComponent(String(requestId))}`);
+        if (!boardRes.ok) {
+          const detail = await boardRes.json().catch(() => ({}));
+          console.error('[matching] board not loaded:', detail?.error);
+          setLoading(false);
+          return;
+        }
 
-        const req = (db.clientRequests || []).find(
-          (r: any) => String(r.id) === String(requestId) || String(r.rowId) === String(requestId)
-        );
+        const board = await boardRes.json();
+        const req = board.request;
         if (req) setRequest({ ...req, status: coerceRequestStatus(req.status) });
 
-        // A and A+ are the deployable grades. B is the trainable pool the
-        // scope describes: it is scored and shown here so an operator can
-        // consider it, but automatic matching still leaves it out and
-        // submitting one needs an override reason.
-        //
-        // A candidate flagged for re-review has changed something material
-        // since being vetted, so they are left out entirely until an operator
-        // has looked again.
-        const allTalents = (db.talents || []).filter((t: any) => {
-          if (t.requiresReReview) return false;
-          if (t.vettingStage === 'Vetted & Available') return true;
-          return t.vettingStatus === 'Vetted' &&
-            (t.grade === 'A' || t.grade === 'A+' || t.grade === 'B');
-        });
+        const allTalents = board.talents || [];
         setTalents(allTalents);
-        setMatches(db.matches || []);
+        setMatches(board.matches || []);
 
         if (req) calculateScores(req, allTalents);
       } catch (e) {

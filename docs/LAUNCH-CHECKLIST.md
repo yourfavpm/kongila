@@ -7,6 +7,11 @@ of the code on `staging`. The detailed findings behind this checklist are in
 Scope: **Kongila only**. Remotan is excluded. Anything in `apps/remotan-web`, the workflow
 engine or the Remotan payroll surfaces stays untouched.
 
+> **Status note — 4 November 2026:** This workflow audit reflects the code as reviewed on
+> 28 October and is historical, not the current implementation tracker. For changes since
+> then, use [the production-readiness checklist](./PRODUCTION-READINESS-CHECKLIST.md) and
+> [the progress log](../PROGRESS.md); older findings below need re-verification before action.
+
 ---
 
 ## What changed in this revision

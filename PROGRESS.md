@@ -79,6 +79,31 @@ Started 17 October, ahead of the 19 October plan date.
 
 ---
 
+## 4 November — removing portal snapshot calls
+
+**Landed**
+
+- Removed the remaining client/talent portal `GET /api/db` calls: the two legacy onboarding
+  fallbacks and the post-onboarding refresh. Onboarding now updates local state from the
+  profile API response and current in-memory profile.
+- Admin sync now logs failed or malformed resource responses instead of treating them as
+  empty successful results.
+- Updated the migration checklist, Postman notes and launch-audit status note.
+- Both portal production builds pass; `pnpm test` passes all 293 tests.
+
+**Decided**
+
+- Keep the authenticated, read-only `/api/db` routes temporarily for compatibility and the
+  Postman regression checks. Neither portal calls them.
+
+**Outstanding**
+
+- The generic resource API routes still call `readDbAsync`, loading the full schema before
+  returning one resource. Replace that implementation with targeted reads separately.
+- Run the Postman isolation checks against staging with the configured test accounts.
+
+---
+
 ## Template for the next entry
 
 ```

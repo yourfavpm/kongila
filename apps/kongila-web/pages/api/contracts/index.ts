@@ -2,9 +2,28 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getRequestUser, getSupabaseClient, recordAudit } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+
+  if (req.method === 'GET') {
+    if (actor.kind !== 'client' && actor.kind !== 'talent') {
+      return res.status(403).json({ error: 'Not authorised' });
+    }
+
+    const supabase = getSupabaseClient();
+    const query = supabase.from('contracts').select('*').order('created_at', { ascending: false });
+    const { data, error } = actor.kind === 'talent'
+      ? await query.eq('talent_id', actor.talentProfileId || actor.userId)
+      : await query.eq('client_id', actor.userId);
+
+    if (error) {
+      console.error('[contracts] list failed:', error.message);
+      return res.status(500).json({ error: 'Could not load contracts' });
+    }
+    return res.status(200).json({ contracts: data || [] });
+  }
+
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (actor.kind !== 'client') return res.status(403).json({ error: 'Only clients can create contracts' });
 
   const { talentId, requestId, serviceType, roleTitle, startDate, budget } = req.body || {};
