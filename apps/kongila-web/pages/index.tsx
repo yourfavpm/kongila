@@ -840,7 +840,7 @@ export default function KongilaWeb() {
 
     try {
       setLoading(true);
-      const { data, error } = await supabase.auth.signUp({
+      let { data, error } = await supabase.auth.signUp({
         email: emailInput,
         password: passwordInput,
         options: {
@@ -856,6 +856,19 @@ export default function KongilaWeb() {
         }
       });
 
+      if (error && /already registered|already exists/i.test(error.message)) {
+        const existingAccount = await supabase.auth.signInWithPassword({
+          email: emailInput,
+          password: passwordInput
+        });
+        if (existingAccount.error) {
+          throw new Error(
+            'This email already has an account. Sign in with that account to finish setup.'
+          );
+        }
+        data = existingAccount.data;
+        error = null;
+      }
       if (error) throw error;
 
       const authUserId = data.user?.id || crypto.randomUUID();
@@ -863,9 +876,8 @@ export default function KongilaWeb() {
       // The browser can no longer write public.users: UPDATE was revoked from
       // authenticated and granted back on three harmless columns only, so the
       // role column cannot be set from here. user_roles and roles are closed
-      // the same way. All of the provisioning happens server-side instead, in
-      // one call, so a partial failure cannot leave someone with an auth
-      // account and no profile.
+      // the same way. Provisioning is retried safely on signup and the next
+      // login, so a partial failure does not strand the auth account.
       const provisionRes = await apiFetch('/api/account/provision', {
         method: 'POST',
         body: JSON.stringify({
@@ -937,6 +949,24 @@ export default function KongilaWeb() {
       const dbUser = meRes.ok ? await meRes.json() : null;
 
       const role = dbUser?.role || data.user?.user_metadata?.role || 'talent';
+      if (role === 'client' || role === 'talent') {
+        const provisionRes = await apiFetch('/api/account/provision', {
+          method: 'POST',
+          body: JSON.stringify({
+            role,
+            name: data.user?.user_metadata?.full_name || emailInput,
+            companyName: data.user?.user_metadata?.company_name,
+            inviteToken: inviteTokenRaw || undefined
+          })
+        });
+        const provision = await provisionRes.json().catch(() => ({}));
+        if (!provisionRes.ok || !provision.ok) {
+          throw new Error(
+            provision.error || 'Your account setup is incomplete. Please try signing in again.'
+          );
+        }
+      }
+
       let isOnboardingComplete = Boolean(dbUser);
       if (role === 'talent') {
         // Through the server. Reading talent_profiles from the browser
