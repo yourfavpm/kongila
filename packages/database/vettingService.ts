@@ -22,11 +22,11 @@
  * Everything here reads one row, changes one row, and writes one row.
  */
 
-import { getSupabaseClient } from './index';
+import { getSupabaseClient, isUndefinedColumn } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers } from './notify';
-import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
+import { notifyUsers, talentPortalUrl } from './notify';
+import { calculateCompositeVettingGrade, vettingScoreState, validatePostedPipeline } from '@kongila/matching-engine';
 import { canTransitionTalent } from '@kongila/workflows';
 
 export interface VettingResult<T = any> {
@@ -135,8 +135,23 @@ export async function recordVettingScores(
   const talent = await loadTalent(talentId);
   if (!talent) return fail(404, 'That candidate does not exist.');
 
-  const { score, grade } = calculateCompositeVettingGrade(scores as any);
-  const nextStatus = grade === 'Reject' ? 'Review' : 'Vetted';
+  // A grade is a statement about a finished assessment.
+  //
+  // This read `calculateCompositeVettingGrade(scores).grade` over whatever
+  // subset of scores had been entered, and the dimensions nobody had scored
+  // yet counted as zero. Three stages of five at full marks comes to 80,
+  // which clears the A+ threshold, so a candidate could be marked Vetted at
+  // A+ having never sat the personality test or the remote readiness check.
+  // Two stages at full marks comes to 60, which grades as Reject, so the
+  // same arithmetic also failed candidates who had passed everything asked
+  // of them so far.
+  //
+  // A grade and a move to Vetted now require every measured stage to have a
+  // score. A partial set is recorded and leaves the candidate in Review.
+  const state = vettingScoreState(scores as any);
+  const { score } = calculateCompositeVettingGrade(scores as any);
+  const grade = state.grade;
+  const nextStatus = state.isFullyScored && grade !== 'Reject' ? 'Vetted' : 'Review';
 
   // The transition table decides whether this move is legal. Nothing
   // checked before, so a deployed candidate could be dropped back to
@@ -164,38 +179,78 @@ export async function recordVettingScores(
   envelope.scores = scores;
 
   const supabase = getSupabaseClient();
-  const { error } = await supabase
-    .from('talent_profiles')
-    .update({
-      bio: JSON.stringify(envelope),
-      grade,
-      vetting_status: nextStatus
-    })
-    .eq('id', talentId);
+  const patch: Record<string, unknown> = {
+    bio: JSON.stringify(envelope),
+    vetting_scores: scores,
+    composite_score: state.score,
+    vetting_status: nextStatus
+  };
+  // An incomplete assessment leaves the existing grade alone rather than
+  // writing one derived from stages nobody has run.
+  if (state.isFullyScored && grade) patch.grade = grade;
+
+  let { error } = await supabase
+    .from('talent_profiles').update(patch).eq('id', talentId);
+
+  // Same fallback as updateVettingPipeline: before the 2026-11-09c migration
+  // vetting_scores and composite_score do not exist, and naming them failed
+  // the whole statement, taking the envelope, the status and the grade with
+  // it.
+  if (error && isUndefinedColumn(error)) {
+    console.warn(
+      '[vetting] no vetting_scores/composite_score columns, so these scores were saved to the '
+      + 'bio envelope instead. Run packages/database/migrations/2026-11-09c_vetting_columns.sql.'
+    );
+    const withoutColumns: Record<string, unknown> = { ...patch };
+    delete withoutColumns.vetting_scores;
+    delete withoutColumns.composite_score;
+    ({ error } = await supabase
+      .from('talent_profiles').update(withoutColumns).eq('id', talentId));
+  }
 
   if (error) return fail(500, `Those scores were not saved: ${error.message}`);
 
   await recordAudit(actor, {
     action: 'Update Vetting Scores',
-    details: `${talent.full_name || talentId}: composite ${score}%, grade ${grade}, status ${nextStatus}.`,
+    details: `${talent.full_name || talentId}: composite ${score}%, `
+      + `grade ${grade ?? 'not yet graded'} (${state.scoredDimensions.length} of `
+      + `${state.scoredDimensions.length + state.missingDimensions.length} stages scored), `
+      + `status ${nextStatus}.`,
     entityType: 'talent_profile',
     entityId: talentId
   });
 
   const warnings: string[] = [];
   if (talent.user_id) {
-    const notified = await notifyUsers(
-      String(talent.user_id),
-      nextStatus === 'Vetted' ? 'stage_advanced' : 'application_rejected',
-      { stageName: 'Vetting', reason: nextStatus === 'Vetted' ? undefined : 'Your assessment is under review.' }
-    );
+    // Vetted means every measured stage has produced a score and the grade
+    // is real, so this is the one place `vetting_complete` is sent — with the
+    // grade, which `stage_advanced` had no way to carry.
+    const notified = nextStatus === 'Vetted'
+      ? await notifyUsers(String(talent.user_id), 'vetting_complete', {
+          grade: state.isFullyScored && grade ? grade : undefined,
+          actionUrl: talentPortalUrl('/?section=scores_grades')
+        })
+      : await notifyUsers(String(talent.user_id), 'vetting_stage_result', {
+          stageName: 'Vetting',
+          score: `${state.score ?? 0}%`,
+          feedback: 'Your assessment is still being reviewed.',
+          actionUrl: talentPortalUrl('/?section=vetting')
+        });
     warnings.push(...notified.warnings);
   }
 
   return {
     ok: true,
     status: 200,
-    data: { talentId, score, grade, vettingStatus: nextStatus, scores },
+    data: {
+      talentId,
+      score,
+      grade,
+      isFullyScored: state.isFullyScored,
+      awaitingScores: state.missingDimensions,
+      vettingStatus: nextStatus,
+      scores
+    },
     warnings
   };
 }
@@ -235,7 +290,17 @@ export async function updateVettingPipeline(
   const talentId = String(input.talentId || '').trim();
   if (!talentId) return fail(400, 'Which candidate?');
   if (!Array.isArray(input.pipeline)) return fail(400, 'A pipeline is required.');
-  if (input.pipeline.length > 30) return fail(422, 'That is more stages than a pipeline has.');
+
+  // The posted pipeline is checked against the real seven stages before it is
+  // stored. Until now the only checks here were that it was an array of
+  // thirty or fewer entries, so a request made outside the admin portal could
+  // post every stage as passed, with no scores, and the server would keep it:
+  // a candidate who looks fully assessed and never was. The portal's own
+  // validateStageDecision still runs when an operator takes a decision, which
+  // is what gives them the specific message about that decision; this is the
+  // check that does not depend on the caller being our own screen.
+  const shapeProblem = validatePostedPipeline(input.pipeline);
+  if (shapeProblem) return fail(422, shapeProblem);
 
   const talent = await loadTalent(talentId);
   if (!talent) return fail(404, 'That candidate does not exist.');
@@ -270,16 +335,49 @@ export async function updateVettingPipeline(
     }
     if (Object.keys(scores).length > 0) {
       envelope.scores = scores;
-      grade = calculateCompositeVettingGrade(scores as any).grade;
-      patch.grade = grade;
+      // Same rule as recordVettingScores: no grade until every measured
+      // stage has produced a score. The composite is written either way,
+      // because a running total is useful to operations; it is only the
+      // grade that must wait for a complete assessment.
+      const state = vettingScoreState(scores as any);
+      patch.vetting_scores = scores;
+      patch.composite_score = state.score;
+      if (state.isFullyScored && state.grade) {
+        grade = state.grade;
+        patch.grade = grade;
+      }
     }
   }
 
+  patch.vetting_pipeline = input.pipeline;
   patch.bio = JSON.stringify(envelope);
 
   const supabase = getSupabaseClient();
-  const { error } = await supabase
+  let { error } = await supabase
     .from('talent_profiles').update(patch).eq('id', talentId);
+
+  // The three vetting columns arrive with the 2026-11-09c migration. Until it
+  // runs they do not exist, and naming them failed the whole statement — so a
+  // stage decision could not be saved at all, even though the bio envelope
+  // beside them would have taken it. An operator approving Application
+  // Screening got an error, nothing was stored, and every later stage stayed
+  // blocked because the stage behind it was still pending.
+  //
+  // The envelope carries the same pipeline and scores, so fall back to it and
+  // let the migration move the row onto the columns later.
+  if (error && isUndefinedColumn(error)) {
+    console.warn(
+      '[vetting] talent_profiles has no vetting_pipeline/vetting_scores/composite_score columns, ' +
+      'so this decision was saved to the bio envelope instead. Run ' +
+      'packages/database/migrations/2026-11-09c_vetting_columns.sql.'
+    );
+    const withoutColumns: Record<string, unknown> = { ...patch };
+    delete withoutColumns.vetting_pipeline;
+    delete withoutColumns.vetting_scores;
+    delete withoutColumns.composite_score;
+    ({ error } = await supabase
+      .from('talent_profiles').update(withoutColumns).eq('id', talentId));
+  }
 
   if (error) return fail(500, `That decision was not saved: ${error.message}`);
 
@@ -295,7 +393,8 @@ export async function updateVettingPipeline(
   const warnings: string[] = [];
   if (input.vettingStage && talent.user_id && input.vettingStage !== talent.vetting_stage) {
     const notified = await notifyUsers(String(talent.user_id), 'stage_advanced', {
-      stageName: String(input.vettingStage)
+      stageName: String(input.vettingStage),
+      actionUrl: talentPortalUrl('/?section=vetting')
     });
     warnings.push(...notified.warnings);
   }

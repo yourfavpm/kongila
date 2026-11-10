@@ -1,4 +1,5 @@
 import { clientStatusView, CLIENT_JOURNEY_STEPS, clientJourneyStepPct } from '@kongila/workflows';
+import { requestTitle, requestHeadcount } from '@kongila/shared-types';
 import { apiFetch } from '../lib/apiFetch';
 import { uploadFile } from '../lib/uploadFile';
 import { viewerTimeZone, wallClockToUtc, interviewInstant, formatForBothParties, formatInstantInZone, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
@@ -323,6 +324,8 @@ interface ClientDashboardProps {
   setConversations?: (conversations: any[]) => void;
   setNotifications?: (notifications: any[]) => void;
   onAddRequest?: (newReq: any) => Promise<void>;
+  /** Puts a request the server has just confirmed back into the list. */
+  onRequestUpdated?: (request: any) => void;
   rehireRequests?: any[];
   setRehireRequests?: (rehireRequests: any[]) => void;
   supportTickets?: any[];
@@ -443,10 +446,12 @@ export default function ClientDashboard({
   signingContractId,
   selectedRequest,
   setSelectedRequest,
+  setConversations,
   setInvoices,
   setMessages,
   setNotifications,
   onAddRequest,
+  onRequestUpdated,
   setMatches,
   interviews = [],
   setInterviews,
@@ -474,7 +479,7 @@ export default function ClientDashboard({
     const markRead = async () => {
       const myConvos = conversations.filter(c => c.client_id === currentUser?.id);
       const activeConvo = myConvos.find(c => c.id === selectedThreadId);
-      const convo = activeConvo ? activeConvo : myConvos[0];
+      const convo = activeConvo;
       if (!convo) return;
       
       const unreadMsgIds = messages
@@ -495,7 +500,7 @@ export default function ClientDashboard({
   }, [messages, selectedThreadId, currentUser?.id, conversations]);
 
   // Scheduling State
-  const [scheduleModalData, setScheduleModalData] = React.useState<{ talent: any, request: any } | null>(null);
+  const [scheduleModalData, setScheduleModalData] = React.useState<{ talent: any, request: any, matchId?: string } | null>(null);
 
   const [activeSection, setActiveSection] =
     useState<ClientSection>("dashboard");
@@ -553,10 +558,6 @@ export default function ClientDashboard({
   const [detailsViewRequestId, setDetailsViewRequestId] = useState<
     string | null
   >(null);
-  const [interviewRequests, setInterviewRequests] = useState<
-    Record<string, string[]>
-  >({});
-
   const [showRequestInterviewModal, setShowRequestInterviewModal] =
     useState(false);
   const [requestInterviewTarget, setRequestInterviewTarget] = useState<{
@@ -614,20 +615,21 @@ export default function ClientDashboard({
     notes: "",
   });
 
-  const handleRequestInterviewClick = (matchId: string, talentId: string, talentName: string) => {
-    const activeRequest = selectedRequest;
+  const handleRequestInterviewClick = (
+    matchId: string,
+    talentId: string,
+    talentName: string,
+    request: any = selectedRequest
+  ) => {
+    const activeRequest = request;
     if (!activeRequest) return;
-    const maxInterviews = (activeRequest.numberOfHires || 1) * 3;
-    const requestedInterviewsCount = matches.filter(
-      (m) =>
-        m.requestId === activeRequest.id &&
-        (m.status === "Interview Requested" ||
-          m.status === "Interview Scheduled" ||
-          m.status === "Interviewed")
+    const candidateInterviewCount = interviews.filter((interview) =>
+      String(interview.requestId) === String(activeRequest.id)
+      && String(interview.talentId) === String(talentId)
+      && !['cancelled', 'declined', 'expired'].includes(String(interview.status).toLowerCase())
     ).length;
-
-    if (requestedInterviewsCount >= maxInterviews) {
-      alert(`You can only request up to ${maxInterviews} interviews for this role (${activeRequest.numberOfHires || 1} hire(s)).`);
+    if (candidateInterviewCount >= 3) {
+      alert('You have reached the maximum of three interview requests for this candidate on this role.');
       return;
     }
 
@@ -654,55 +656,10 @@ export default function ClientDashboard({
       return;
     }
 
-    const updatedMatches = matches.map((m) => {
-      if (m.id === requestInterviewTarget.matchId) {
-        return {
-          ...m,
-          status: "Interview Scheduled" as const,
-          requestedDate: requestInterviewForm.date,
-          requestedTime: requestInterviewForm.time,
-          requestedDuration: requestInterviewForm.duration,
-          requestedNotes: requestInterviewForm.notes,
-        };
-      }
-      return m;
-    });
-
     const activeRequest =
       requests.find((r) => r.id === requestInterviewTarget.requestId) ||
       selectedRequest;
     if (!activeRequest) return;
-
-    // No fabricated joining link. This used to mint meet.google.com plus ten
-    // random letters — a well-formed URL that went nowhere — along with a
-    // Google Calendar event id and a render link for an event that did not
-    // exist. Operations supplies a real link; until then both portals say the
-    // joining details will follow, and the invitation email carries a real
-    // .ics so the time still lands in everyone's calendar.
-    const meetingLink = null;
-    const calEventId = null;
-    const googleCalendarLink = null;
-
-    const newInterview = {
-      id: `interview_${Date.now()}`,
-      requestId: requestInterviewTarget.requestId,
-      matchId: requestInterviewTarget.matchId,
-      talentId: requestInterviewTarget.talentId,
-      talentName: requestInterviewTarget.talentName,
-      talentAvatar:
-        talents.find((t) => t.id === requestInterviewTarget.talentId)?.avatar ||
-        "",
-      clientName: currentUser?.companyName || currentUser?.name || "Client",
-      title: `${activeRequest.serviceType} - Interview with ${requestInterviewTarget.talentName}`,
-      date: requestInterviewForm.date,
-      time: requestInterviewForm.time,
-      status: "Scheduled",
-      meetingLink,
-      googleCalendarEventId: calEventId,
-      googleCalendarLink,
-      notes: requestInterviewForm.notes || "",
-      createdAt: new Date().toISOString(),
-    };
 
     try {
       // Through the server. A browser insert could not check whether either
@@ -718,53 +675,33 @@ export default function ClientDashboard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          requestId: newInterview.requestId,
-          matchId: newInterview.matchId,
-          talentId: newInterview.talentId,
-          talentName: newInterview.talentName,
-          talentAvatar: newInterview.talentAvatar,
-          clientName: newInterview.clientName,
-          title: newInterview.title,
-          date: newInterview.date,
-          time: newInterview.time,
+          requestId: requestInterviewTarget.requestId,
+          matchId: requestInterviewTarget.matchId,
+          talentId: requestInterviewTarget.talentId,
+          talentName: requestInterviewTarget.talentName,
+          talentAvatar: talents.find((t) => t.id === requestInterviewTarget.talentId)?.avatar || '',
+          clientName: currentUser?.companyName || currentUser?.name || 'Client',
+          title: `Interview: ${requestInterviewTarget.talentName} for ${requestTitle(activeRequest)}`,
+          date: requestInterviewForm.date,
+          time: requestInterviewForm.time,
+          durationMinutes: Number(requestInterviewForm.duration),
           timezone: clientZone,
           clientTimezone: clientZone,
           talentTimezone: talentZone,
-          meetingLink: newInterview.meetingLink,
-          notes: newInterview.notes
+          notes: requestInterviewForm.notes
         })
       });
 
       const ivPayload = await ivResponse.json().catch(() => ({}));
       if (!ivResponse.ok) throw new Error(ivPayload?.error || `Could not request the interview (${ivResponse.status}).`);
 
-      // Shortlisting goes through the server. matches_status_check allows
-      // only proposed/shortlisted/rejected/accepted, and the browser update
-      // here wrote 'interview_scheduled' at one point, which the database
-      // refused; the match never moved and the error was logged.
-      if (newInterview.matchId) {
-        const msResponse = await apiFetch('/api/matches', {
-          method: 'PATCH',
-          body: JSON.stringify({ matchId: newInterview.matchId, status: 'shortlisted' })
-        });
-        if (!msResponse.ok) {
-          const detail = await msResponse.json().catch(() => ({}));
-          console.error('[ClientDashboard] match not shortlisted:', detail?.error);
-        }
-      }
-
-      // The route notified the candidate, in their own timezone and with a
-      // calendar file, and it tells operations as well. The two inserts that
-      // used to live here duplicated the first and addressed the second from
-      // the browser to the notifications table, which denies every write.
-
-      if (setInterviews) {
-        // Optimistically update local interviews if possible
-        // Actually, ClientDashboard doesn't have setInterviews, it just gets it as prop.
-        // Sync via channel or refresh will pick it up.
-      }
+      if (setInterviews) setInterviews([...interviews, ivPayload.interview]);
       if (setMatches) {
-        setMatches(updatedMatches);
+        setMatches(matches.map((match) =>
+          match.id === requestInterviewTarget.matchId
+            ? { ...match, status: 'shortlisted' }
+            : match
+        ));
       }
 
       setShowRequestInterviewModal(false);
@@ -777,10 +714,11 @@ export default function ClientDashboard({
       });
 
       alert(
-        `Interview with ${requestInterviewTarget.talentName} has been successfully scheduled and synced to your calendars.`,
+        `Interview request sent for ${requestInterviewTarget.talentName}. The candidate must confirm the proposed time.`,
       );
-    } catch {
-      alert("Failed to schedule interview. Please try again.");
+      if (ivPayload.warnings?.length) alert(ivPayload.warnings.join('\n'));
+    } catch (error: any) {
+      alert(error?.message || "Failed to request the interview. Please try again.");
     }
   };
 
@@ -951,67 +889,53 @@ export default function ClientDashboard({
     candName: string,
     requestId?: string,
   ) => {
-    const isShortlistedNow = !matchingShortlistedState[candId];
-    setMatchingShortlistedState((prev) => ({
-      ...prev,
-      [candId]: isShortlistedNow,
-    }));
-
-    if (setNotifications) {
-      setNotifications([
-        ...(notifications || []),
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentUser?.id || "client_unknown",
-          title: isShortlistedNow
-            ? "Candidate Shortlisted"
-            : "Candidate Removed",
-          message: `${candName} has been ${isShortlistedNow ? "shortlisted" : "removed"} from your matching pipeline.`,
-          read: false,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    }
-
-    alert(
-      `${candName} has been ${isShortlistedNow ? "shortlisted successfully" : "removed from shortlists"}.`,
+    const match = matches.find((item) =>
+      String(item.talentId) === String(candId)
+      && (!requestId || String(item.requestId) === String(requestId))
     );
+    if (!match) {
+      alert(`Could not find ${candName}'s match on this role.`);
+      return;
+    }
+    if (String(match.status).toLowerCase() === 'shortlisted') return;
+
+    try {
+      const response = await apiFetch('/api/matches', {
+        method: 'PATCH',
+        body: JSON.stringify({ matchId: match.id, status: 'shortlisted' })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'The candidate could not be shortlisted.');
+      if (setMatches) {
+        setMatches(matches.map((item) => item.id === match.id ? { ...item, ...body.match } : item));
+      }
+    } catch (error: any) {
+      console.error('[ClientDashboard] shortlist not saved:', error);
+      alert(error?.message || 'The candidate could not be shortlisted.');
+    }
   };
 
-  const handleRequestInterview = async (
-    candName: string,
-    requestId?: string,
-  ) => {
-    const requestKey = requestId || detailsViewRequestId;
-    if (requestKey) {
-      setInterviewRequests((prev) => ({
-        ...prev,
-        [requestKey]: [...(prev[requestKey] || []), candName],
-      }));
+  const handleRejectCandidate = async (match: any, reason: string) => {
+    const response = await apiFetch('/api/matches', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        matchId: match.id,
+        status: 'rejected',
+        rejectionReason: reason
+      })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'The candidate rejection could not be saved.');
+
+    if (setMatches) {
+      setMatches(matches.map((item) => item.id === match.id ? { ...item, ...body.match } : item));
     }
-
-    if (setNotifications) {
-      setNotifications([
-        ...(notifications || []),
-        {
-          id: `notif_${Date.now()}`,
-          userId: currentUser?.id || "client_unknown",
-          title: "Interview Request Sent",
-          message: `Interview request dispatched to ${candName}${requestKey ? ` for request ${requestKey}` : ""}.`,
-          read: false,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    }
-
-    // The confirmation the client sees is the alert below. The insert here
-    // wrote a notification to themselves about their own click; the
-    // notifications table denies browser writes, so it never landed, and the
-    // candidate is notified by the interview route in any case.
-
-    alert(
-      `Interview proposal dispatched to ${candName}. Candidate has been notified to choose available slot.`,
+    const roleRequest = requests.find((request) =>
+      String(request.id) === String(match.requestId)
     );
+    if (roleRequest && body.match?.requestStatus && onRequestUpdated) {
+      onRequestUpdated({ ...roleRequest, status: body.match.requestStatus });
+    }
   };
 
   // Dynamic stats calculation from real backend telemetry
@@ -1080,18 +1004,43 @@ export default function ClientDashboard({
       })),
   ].slice(0, 5); // display top 5 most relevant real activities
 
+  // ─── Who at Kongila is looking after this account ───────────────────────────
+  //
+  // Resolved once here rather than inside renderDashboard, because the
+  // messaging list needs it too: it labelled every thread "Account Manager"
+  // as static text, so a client could not tell who they were writing to.
+  const myClientProfile = clientProfiles?.find(
+    (cp: any) => cp.user_id === currentUser?.id || cp.userId === currentUser?.id
+  );
+  const myOrganization = organizations?.find(
+    (o: any) => o.id === myClientProfile?.organization_id || o.id === myClientProfile?.organizationId
+  );
+  // readDbAsync maps this column to accountManagerId, so looking for
+  // account_manager_id found nothing even before the scoping problem below.
+  const accountManagerId =
+    (myOrganization as any)?.accountManagerId || (myOrganization as any)?.account_manager_id || null;
+  // An account manager is an administrator, and a client's `users` is their
+  // own organisation, so this used to be undefined for everyone and every
+  // client was told "Unassigned". scopeForClient now adds a contact card for
+  // the Kongila people assigned to the account, and readDbAsync resolves the
+  // name on the organisation itself, so either answers it.
+  const accountManagerUser = users?.find((u: any) => String(u.id) === String(accountManagerId));
+  const accountManagerName =
+    (accountManagerUser?.name
+      || accountManagerUser?.email
+      || (myOrganization as any)?.accountManagerName
+      || '').trim() || 'Unassigned';
+  const accountManagerEmail = accountManagerUser?.email || null;
+
   // Send messaging dispatch
   // ─── Sub-Section Layouts ─────────────────────────────────────────────────────
 
   const renderDashboard = () => {
     // ─── KC-HOME: Derived data ───────────────────────────────────────────────
     const now = new Date();
-    
-    // Account Manager Lookup
-    const clientProfile = clientProfiles?.find(cp => cp.user_id === currentUser?.id || cp.userId === currentUser?.id);
-    const myOrg = organizations?.find(o => o.id === clientProfile?.organization_id || o.id === clientProfile?.organizationId);
-    const amUser = users?.find(u => u.id === myOrg?.account_manager_id);
-    const accountManagerName = amUser ? (amUser.name || amUser.email) : 'Unassigned';
+
+    const clientProfile = myClientProfile;
+    const myOrg = myOrganization;
 
     // Active Service Requests widget
     const openRequests = clientRequests.filter(
@@ -1400,7 +1349,13 @@ export default function ClientDashboard({
                 (e.currentTarget.style.background = "#FFFFFF")
               }
             >
-              💬 Message {accountManagerName !== 'Unassigned' ? accountManagerName : 'Account Manager'}
+              {/* Named the account manager and then opened a general inbox.
+                  Now it says which it is: their name once one is assigned,
+                  and "your Kongila team" until then, which is who actually
+                  picks the thread up. */}
+              💬 {accountManagerName !== 'Unassigned'
+                ? `Message ${accountManagerName}`
+                : 'Message your Kongila team'}
             </button>
             <button
               onClick={() => setActiveSection("billing")}
@@ -1428,6 +1383,73 @@ export default function ClientDashboard({
               🧾 View Invoices
             </button>
           </div>
+        </div>
+
+        {/* ── Who is looking after this account ──────────────────────────────────
+            The account manager existed only as a word in a button label, and
+            that label said "Unassigned" to every client because the lookup
+            could never resolve. This says who they are and how to reach
+            them. */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "14px",
+            padding: "16px 18px",
+            borderRadius: "14px",
+            background: "#FFFFFF",
+            border: "1px solid #E2E8F0",
+            marginBottom: "4px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div
+            style={{
+              width: "42px",
+              height: "42px",
+              borderRadius: "50%",
+              background: accountManagerName !== "Unassigned" ? "#2563EB" : "#E2E8F0",
+              color: accountManagerName !== "Unassigned" ? "#FFFFFF" : "#64748B",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 800,
+              fontSize: "16px",
+              flexShrink: 0,
+            }}
+          >
+            {accountManagerName !== "Unassigned" ? accountManagerName[0].toUpperCase() : "·"}
+          </div>
+          <div style={{ flex: 1, minWidth: "200px" }}>
+            <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, letterSpacing: "0.02em" }}>
+              YOUR ACCOUNT MANAGER
+            </div>
+            <div style={{ fontSize: "15px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+              {accountManagerName !== "Unassigned"
+                ? accountManagerName
+                : "Being assigned"}
+            </div>
+            <div style={{ fontSize: "12px", color: "#64748B", marginTop: "2px" }}>
+              {accountManagerName !== "Unassigned"
+                ? (accountManagerEmail || "Message them here on Kongila")
+                : "Your request is with our team. We will introduce you to your account manager shortly."}
+            </div>
+          </div>
+          <button
+            onClick={() => setActiveSection("messaging")}
+            style={{
+              background: "#F8FAFC",
+              border: "1px solid #E2E8F0",
+              borderRadius: "10px",
+              padding: "9px 16px",
+              color: "#1E293B",
+              fontWeight: 700,
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
+            💬 Send a message
+          </button>
         </div>
 
         {/* ── Widget Grid Row 1: Primary Status Cards ──────────────────────────── */}
@@ -1560,10 +1582,7 @@ export default function ClientDashboard({
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {req.serviceType}{" "}
-                          {req.roleDescription
-                            ? `— ${req.roleDescription.split(" ").slice(0, 5).join(" ")}…`
-                            : ""}
+                          {requestTitle(req)}
                         </div>
                         <div
                           style={{
@@ -2264,11 +2283,7 @@ export default function ClientDashboard({
                             color: "#0F172A",
                           }}
                         >
-                          {req.serviceType} —{" "}
-                          {req.roleDescription
-                            ?.split(" ")
-                            .slice(0, 4)
-                            .join(" ") || "Talent Required"}
+                          {requestTitle(req)}
                         </div>
                         <div
                           style={{
@@ -2277,9 +2292,10 @@ export default function ClientDashboard({
                             marginTop: "2px",
                           }}
                         >
-                          {req.numberOfHires} hire
-                          {req.numberOfHires !== 1 ? "s" : ""} ·{" "}
+                          {requestHeadcount(req)} hire
+                          {requestHeadcount(req) !== 1 ? "s" : ""} ·{" "}
                           {req.duration || "Ongoing"}
+                          {req.groupSize > 1 && ` · role ${req.groupPosition} of ${req.groupSize}`}
                         </div>
                       </div>
                       {(() => {
@@ -2371,6 +2387,28 @@ export default function ClientDashboard({
                   </div>
                 );
               })}
+
+              {/* The strip shows three. A client who filed a five-role brief
+                  has five open requests and was shown three with nothing to
+                  say the other two existed. */}
+              {openRequests.length > 3 && (
+                <button
+                  onClick={() => setActiveSection("requests")}
+                  style={{
+                    alignSelf: "flex-start",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: "#4F46E5",
+                  }}
+                >
+                  {openRequests.length - 3} more open{" "}
+                  {openRequests.length - 3 === 1 ? "request" : "requests"} — see all →
+                </button>
+              )}
             </div>
           </Card>
         )}
@@ -2414,7 +2452,11 @@ export default function ClientDashboard({
                   <div style={{ fontSize: '14px', fontWeight: 600, color: '#0F172A' }}>
                     {c.context_type === 'service_request' ? 'Service Request Chat' : 'General Support'}
                   </div>
-                  <div style={{ fontSize: '12px', color: '#64748B' }}>Account Manager</div>
+                  <div style={{ fontSize: '12px', color: '#64748B' }}>
+                    {accountManagerName !== 'Unassigned'
+                      ? `${accountManagerName} · Kongila`
+                      : 'Your Kongila team'}
+                  </div>
                 </div>
                 {unreadCount > 0 && (
                   <Badge text={`${unreadCount} new`} status="warning" />
@@ -2586,6 +2628,9 @@ export default function ClientDashboard({
           .includes(searchRequestsFilter.toLowerCase()) ||
         req.roleDescription
           ?.toLowerCase()
+          .includes(searchRequestsFilter.toLowerCase()) ||
+        requestTitle(req)
+          .toLowerCase()
           .includes(searchRequestsFilter.toLowerCase());
 
       // status filter
@@ -3108,8 +3153,10 @@ export default function ClientDashboard({
                             marginTop: "4px",
                           }}
                         >
-                          {req.roleDescription ||
-                            "Scalable application architecture"}
+                          {/* Was "Scalable application architecture" when the
+                              field was empty — an invented description shown
+                              to the client as their own words. */}
+                          {req.roleDescription || "No description given"}
                         </div>
                       </td>
 
@@ -3351,7 +3398,10 @@ export default function ClientDashboard({
     const shortlistedCount = requestMatches.filter(
       (m: any) => matchingShortlistedState[m.talentId],
     ).length;
-    const interviewCount = interviewRequests[request.id]?.length || 0;
+    const requestInterviews = interviews.filter(
+      (interview) => String(interview.requestId) === String(request.id)
+    );
+    const interviewCount = requestInterviews.length;
     // Derived from the stored canonical status rather than compared against
     // labels. The old version keyed on "Matching", "Interview" and
     // "Completed", none of which the normaliser can ever produce, so the
@@ -3761,10 +3811,10 @@ export default function ClientDashboard({
               </div>
               {interviewCount > 0 ? (
                 <div style={{ display: "grid", gap: "10px" }}>
-                  {(interviewRequests[request.id] || []).map(
-                    (candidateName: string, index: number) => (
+                  {requestInterviews.map(
+                    (interview: any) => (
                       <div
-                        key={index}
+                        key={interview.id}
                         style={{
                           padding: "12px",
                           borderRadius: "12px",
@@ -3778,7 +3828,7 @@ export default function ClientDashboard({
                             color: "#0F172A",
                           }}
                         >
-                          {candidateName}
+                          {interview.talentName || 'Candidate'}
                         </div>
                         <div
                           style={{
@@ -3787,7 +3837,7 @@ export default function ClientDashboard({
                             marginTop: "4px",
                           }}
                         >
-                          Interview requested
+                          {String(interview.status || 'proposed').replace(/_/g, ' ')}
                         </div>
                       </div>
                     ),
@@ -3816,10 +3866,13 @@ export default function ClientDashboard({
                 avatar: "",
                 location: "Remote",
               };
-              const isShortlisted = !!matchingShortlistedState[match.talentId];
-              const requestedInterviews = interviewRequests[request.id] || [];
-              const interviewRequested = requestedInterviews.includes(
-                talent.name,
+              const isShortlisted = String(match.status).toLowerCase() === 'shortlisted'
+                || !!matchingShortlistedState[match.talentId];
+              const requestedInterviews = requestInterviews.filter((interview: any) =>
+                String(interview.talentId) === String(match.talentId)
+              );
+              const interviewRequested = requestedInterviews.some((interview: any) =>
+                !['cancelled', 'declined', 'expired'].includes(String(interview.status).toLowerCase())
               );
               return (
                 <Card
@@ -3906,9 +3959,8 @@ export default function ClientDashboard({
                       {isShortlisted ? "✓ Shortlisted" : "Shortlist"}
                     </button>
                     <button
-                      onClick={() =>
-                        handleRequestInterview(talent.name, request.id)
-                      }
+                      onClick={() => handleRequestInterviewClick(match.id, match.talentId, talent.name, request)}
+                      disabled={['rejected', 'accepted'].includes(String(match.status).toLowerCase())}
                       style={{
                         padding: "10px 16px",
                         borderRadius: "10px",
@@ -3969,8 +4021,9 @@ export default function ClientDashboard({
       return {
         id: r.id,
         category: r.serviceType.toUpperCase(),
-        title:
-          r.serviceType + " - " + (r.roleDescription.split(" ")[0] || "Talent"),
+        // r.roleDescription.split(...) with no guard: one request saved
+        // without a description threw here and took the whole section down.
+        title: requestTitle(r),
         posted: r.createdAt
           ? `Posted ${new Date(r.createdAt).toLocaleDateString()}`
           : "Posted recently",
@@ -4696,35 +4749,11 @@ export default function ClientDashboard({
                         return;
                       }
 
-                      const updatedMatches = matches.map((m) => {
-                        if (m.id === hireTarget.matchId) {
-                          return {
-                            ...m,
-                            status: "Offer Extended" as const,
-                          };
-                        }
-                        return m;
-                      });
-
-                      const newContract = {
-                        id: `contract_${Date.now()}`,
-                        matchId: hireTarget.matchId,
-                        clientId: currentUser?.id || "usr_horizon",
-                        clientName: currentUser
-                          ? `${currentUser.name} (${currentUser.companyName || "Vanguard Corp"})`
-                          : "Client",
-                        talentId: hireTarget.talentId,
-                        talentName: hireTarget.name,
-                        role:
-                          activeRequest.roleDescription ||
-                          activeRequest.serviceType,
-                        salary: Number(hireForm.salary),
-                        rateAmount: Number(hireForm.salary),
-                        rateType: "Monthly",
-                        startDate: hireForm.startDate,
-                        status: "Pending",
-                        createdAt: new Date().toISOString(),
-                      };
+                      const offerRequest = hireTarget.request || activeRequest;
+                      if (!offerRequest?.id || !hireTarget.matchId || !hireTarget.talentId) {
+                        alert("Open this candidate from a specific role request before creating an offer.");
+                        return;
+                      }
 
                       try {
                         // One server-side call. It authorises the request
@@ -4737,13 +4766,11 @@ export default function ClientDashboard({
                         const res = await apiFetch('/api/offers', {
                           method: 'POST',
                           body: JSON.stringify({
-                            matchId: newContract.matchId,
-                            requestId: activeRequest?.id,
-                            talentId: newContract.talentId,
-                            roleTitle: newContract.role,
-                            serviceType: activeRequest?.serviceType || newContract.role,
-                            proposedRateUsd: newContract.rateAmount,
-                            proposedStartDate: newContract.startDate,
+                            matchId: hireTarget.matchId,
+                            requestId: offerRequest.id,
+                            talentId: hireTarget.talentId,
+                            proposedRateUsd: Number(hireForm.salary),
+                            proposedStartDate: hireForm.startDate,
                             paymentModel: 'flat_rate',
                             paymentPeriod: 'monthly',
                             clientNote: hireForm.notes,
@@ -4755,8 +4782,11 @@ export default function ClientDashboard({
                           throw new Error(result?.error || 'The offer could not be saved.');
                         }
 
-                        if (setMatches) {
-                          setMatches(updatedMatches);
+                        if (onRequestUpdated && result.offer) {
+                          onRequestUpdated({
+                            ...offerRequest,
+                            offers: [...(offerRequest.offers || []), result.offer]
+                          });
                         }
                         setShowHireModal(false);
                         setHireTarget(null);
@@ -5505,12 +5535,14 @@ export default function ClientDashboard({
                               "✓ Interview Scheduled"}
                           </button>
 
-                          {(cand.status === "Shortlisted" ||
-                            cand.status === "Interview Scheduled" ||
-                            cand.status === "Interview Requested") && (
+                          {interviews.some((interview) =>
+                            String(interview.requestId) === String(activeRequest.id)
+                            && String(interview.talentId) === String(cand.talentId)
+                            && String(interview.status).toLowerCase() === "completed"
+                          ) && (
                             <button
                               onClick={() => {
-                                setHireTarget(cand);
+                                setHireTarget({ ...cand, request: activeRequest, requestId: activeRequest.id });
                                 setHireForm({
                                   salary: activeRequest.budget
                                     ? String(activeRequest.budget)
@@ -6824,17 +6856,31 @@ export default function ClientDashboard({
                                       currentUser={currentUser}
                                       requests={requests}
                                       matches={matches}
+                                      conversations={conversations}
+                                      interviews={interviews}
                                       contracts={contracts}
                                       talents={talents}
                                       messages={messages}
                                       requestActivityLogs={requestActivityLogs}
+                                      onRequestUpdated={onRequestUpdated}
+                                      setConversations={setConversations}
+                                      setMessages={setMessages}
                                       onSignContract={onSignContract}
-                                      onExtendOffer={onExtendOffer}
-                                      onScheduleMeeting={onScheduleMeeting}
+                                      onExtendOffer={(talent, request, match) => {
+                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
+                                        setHireForm({
+                                          salary: String(request.budgetMaxUsd || request.budget || 4500),
+                                          startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
+                                          notes: ""
+                                        });
+                                        setShowHireModal(true);
+                                      }}
+                                      onScheduleCandidateInterview={(talent, request, match) =>
+                                        setScheduleModalData({ talent, request, matchId: match.id })
+                                      }
+                                      onRejectCandidate={handleRejectCandidate}
                                       matchingShortlistedState={matchingShortlistedState}
                                       handleShortlistToggle={handleShortlistToggle}
-                                      interviewRequests={interviewRequests}
-                                      handleRequestInterview={handleRequestInterview}
                                       detailsViewRequestId={detailsViewRequestId}
                                       setDetailsViewRequestId={setDetailsViewRequestId}
                                     />;
@@ -6842,10 +6888,20 @@ export default function ClientDashboard({
                                       currentUser={currentUser}
                                       requests={requests}
                                       matches={matches}
+                                      interviews={interviews}
                                       talents={talents}
                                       setMatches={setMatches}
-                                      onScheduleMeeting={(talent, req) => setScheduleModalData({ talent, request: req })}
-                                      onExtendOffer={onExtendOffer}
+                                      onRequestUpdated={onRequestUpdated}
+                                      onScheduleMeeting={(talent, req, match) => setScheduleModalData({ talent, request: req, matchId: match?.id })}
+                                      onExtendOffer={(talent, request, match) => {
+                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
+                                        setHireForm({
+                                          salary: String(request.budgetMaxUsd || request.budget || 4500),
+                                          startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
+                                          notes: ""
+                                        });
+                                        setShowHireModal(true);
+                                      }}
                                     />;
       case 'scheduling':     return <ClientInterviewsPanel 
                                       currentUser={currentUser}
@@ -7815,9 +7871,11 @@ export default function ClientDashboard({
             </button>
             <SmartIntakeForm
               currentUser={currentUser}
-              onComplete={async (req) => {
+              onComplete={async (created) => {
+                // A list: a brief with three roles files three requests.
+                const filed = Array.isArray(created) ? created : [created];
                 if (onAddRequest) {
-                  await onAddRequest(req);
+                  for (const request of filed) await onAddRequest(request);
                 }
                 setShowIntakeModal(false);
               }}
@@ -8977,6 +9035,7 @@ export default function ClientDashboard({
           currentUser={currentUser}
           request={scheduleModalData.request}
           talent={scheduleModalData.talent}
+          matchId={scheduleModalData.matchId}
           interviews={interviews}
           setInterviews={setInterviews}
           onClose={() => setScheduleModalData(null)}

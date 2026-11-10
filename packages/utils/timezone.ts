@@ -186,24 +186,111 @@ export function interviewZone(interview: any): string | null {
   return isValidTimeZone(zone) ? zone : null;
 }
 
-/** A short, readable list of zones for a picker, viewer's own first. */
+/**
+ * The one timezone list the platform offers.
+ *
+ * Every timezone picker in both portals reads this. Before, each screen had
+ * its own: the onboarding wizard carried a local array of 37 strings with the
+ * offset baked into the value, the interview scheduler had 12, and two
+ * screens were free text, so a candidate could type anything and the
+ * scheduler had no way to convert it.
+ *
+ * Values are IANA zone names, which is what `Intl` and Postgres both expect.
+ * Never store the label.
+ */
+export const TIMEZONE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  // Africa
+  { value: 'Africa/Abidjan', label: 'Abidjan (GMT)' },
+  { value: 'Africa/Accra', label: 'Accra (GMT)' },
+  { value: 'Africa/Addis_Ababa', label: 'Addis Ababa (EAT)' },
+  { value: 'Africa/Algiers', label: 'Algiers (CET)' },
+  { value: 'Africa/Cairo', label: 'Cairo (EET)' },
+  { value: 'Africa/Casablanca', label: 'Casablanca (WET)' },
+  { value: 'Africa/Dakar', label: 'Dakar (GMT)' },
+  { value: 'Africa/Dar_es_Salaam', label: 'Dar es Salaam (EAT)' },
+  { value: 'Africa/Johannesburg', label: 'Johannesburg (SAST)' },
+  { value: 'Africa/Kampala', label: 'Kampala (EAT)' },
+  { value: 'Africa/Khartoum', label: 'Khartoum (CAT)' },
+  { value: 'Africa/Kigali', label: 'Kigali (CAT)' },
+  { value: 'Africa/Lagos', label: 'Lagos (WAT)' },
+  { value: 'Africa/Lusaka', label: 'Lusaka (CAT)' },
+  { value: 'Africa/Nairobi', label: 'Nairobi (EAT)' },
+  { value: 'Africa/Tunis', label: 'Tunis (CET)' },
+  // Europe
+  { value: 'Europe/Amsterdam', label: 'Amsterdam (CET/CEST)' },
+  { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)' },
+  { value: 'Europe/Brussels', label: 'Brussels (CET/CEST)' },
+  { value: 'Europe/Bucharest', label: 'Bucharest (EET/EEST)' },
+  { value: 'Europe/Dublin', label: 'Dublin (GMT/IST)' },
+  { value: 'Europe/Helsinki', label: 'Helsinki (EET/EEST)' },
+  { value: 'Europe/Istanbul', label: 'Istanbul (TRT)' },
+  { value: 'Europe/Lisbon', label: 'Lisbon (WET/WEST)' },
+  { value: 'Europe/London', label: 'London (GMT/BST)' },
+  { value: 'Europe/Madrid', label: 'Madrid (CET/CEST)' },
+  { value: 'Europe/Moscow', label: 'Moscow (MSK)' },
+  { value: 'Europe/Oslo', label: 'Oslo (CET/CEST)' },
+  { value: 'Europe/Paris', label: 'Paris (CET/CEST)' },
+  { value: 'Europe/Rome', label: 'Rome (CET/CEST)' },
+  { value: 'Europe/Stockholm', label: 'Stockholm (CET/CEST)' },
+  { value: 'Europe/Warsaw', label: 'Warsaw (CET/CEST)' },
+  { value: 'Europe/Zurich', label: 'Zurich (CET/CEST)' },
+  // Americas
+  { value: 'America/Argentina/Buenos_Aires', label: 'Buenos Aires (ART)' },
+  { value: 'America/Bogota', label: 'Bogota (COT)' },
+  { value: 'America/Chicago', label: 'Chicago (CT)' },
+  { value: 'America/Denver', label: 'Denver (MT)' },
+  { value: 'America/Halifax', label: 'Halifax (AT)' },
+  { value: 'America/Lima', label: 'Lima (PET)' },
+  { value: 'America/Los_Angeles', label: 'Los Angeles (PT)' },
+  { value: 'America/Mexico_City', label: 'Mexico City (CT)' },
+  { value: 'America/New_York', label: 'New York (ET)' },
+  { value: 'America/Phoenix', label: 'Phoenix (MST)' },
+  { value: 'America/Sao_Paulo', label: 'Sao Paulo (BRT)' },
+  { value: 'America/Toronto', label: 'Toronto (ET)' },
+  { value: 'America/Vancouver', label: 'Vancouver (PT)' },
+  // Asia and the Middle East
+  { value: 'Asia/Bangkok', label: 'Bangkok (ICT)' },
+  { value: 'Asia/Colombo', label: 'Colombo (IST)' },
+  { value: 'Asia/Dhaka', label: 'Dhaka (BST)' },
+  { value: 'Asia/Dubai', label: 'Dubai (GST)' },
+  { value: 'Asia/Hong_Kong', label: 'Hong Kong (HKT)' },
+  { value: 'Asia/Jakarta', label: 'Jakarta (WIB)' },
+  { value: 'Asia/Jerusalem', label: 'Jerusalem (IST)' },
+  { value: 'Asia/Karachi', label: 'Karachi (PKT)' },
+  { value: 'Asia/Kolkata', label: 'Kolkata (IST)' },
+  { value: 'Asia/Kuala_Lumpur', label: 'Kuala Lumpur (MYT)' },
+  { value: 'Asia/Manila', label: 'Manila (PHT)' },
+  { value: 'Asia/Qatar', label: 'Doha (AST)' },
+  { value: 'Asia/Riyadh', label: 'Riyadh (AST)' },
+  { value: 'Asia/Seoul', label: 'Seoul (KST)' },
+  { value: 'Asia/Shanghai', label: 'Shanghai (CST)' },
+  { value: 'Asia/Singapore', label: 'Singapore (SGT)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+  // Oceania
+  { value: 'Australia/Brisbane', label: 'Brisbane (AEST)' },
+  { value: 'Australia/Melbourne', label: 'Melbourne (AET)' },
+  { value: 'Australia/Perth', label: 'Perth (AWST)' },
+  { value: 'Australia/Sydney', label: 'Sydney (AET)' },
+  { value: 'Pacific/Auckland', label: 'Auckland (NZST/NZDT)' },
+  // Neutral
+  { value: 'UTC', label: 'UTC' }
+];
+
+/**
+ * The picker list with the viewer's own zone pinned to the top.
+ *
+ * A zone already on the list is moved rather than duplicated. A zone that is
+ * not on the list, which is how an older stored value reaches us, is added at
+ * the top so the stored value still shows as selected instead of silently
+ * reverting to the first option.
+ */
 export function timeZoneOptions(viewer = viewerTimeZone()): Array<{ value: string; label: string }> {
-  const common = [
-    { value: 'Africa/Lagos', label: 'Lagos (WAT)' },
-    { value: 'Africa/Nairobi', label: 'Nairobi (EAT)' },
-    { value: 'Africa/Johannesburg', label: 'Johannesburg (SAST)' },
-    { value: 'Europe/London', label: 'London (GMT/BST)' },
-    { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)' },
-    { value: 'America/New_York', label: 'New York (ET)' },
-    { value: 'America/Chicago', label: 'Chicago (CT)' },
-    { value: 'America/Los_Angeles', label: 'Los Angeles (PT)' },
-    { value: 'Asia/Dubai', label: 'Dubai (GST)' },
-    { value: 'Asia/Singapore', label: 'Singapore (SGT)' },
-    { value: 'Australia/Sydney', label: 'Sydney (AET)' },
-    { value: 'UTC', label: 'UTC' }
+  const rest = TIMEZONE_OPTIONS.filter(o => o.value !== viewer);
+  const own = TIMEZONE_OPTIONS.find(o => o.value === viewer);
+  return [
+    { value: viewer, label: own ? `${own.label} — your timezone` : `${viewer} (your timezone)` },
+    ...rest.map(o => ({ ...o }))
   ];
-  const rest = common.filter(o => o.value !== viewer);
-  return [{ value: viewer, label: `${viewer} (your timezone)` }, ...rest];
 }
 
 /**

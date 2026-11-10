@@ -29,6 +29,10 @@ export default function ClientProfileView() {
   const [clientInvoices, setClientInvoices] = useState<any[]>([]);
   const [clientPayments, setClientPayments] = useState<any[]>([]);
   const [clientMessages, setClientMessages] = useState<any[]>([]);
+  // The company's own members, and which of them is its primary contact. The
+  // page had the list from the API and never rendered it, so there was no way
+  // to see who signed the company up.
+  const [clientMembers, setClientMembers] = useState<any[]>([]);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -121,6 +125,7 @@ export default function ClientProfileView() {
       setClientContracts(contracts);
       setClientInvoices(invoices);
       setClientPayments(payments);
+      setClientMembers(payload.members || []);
       setClientMessages([]);
     } catch (err) {
       console.error(err);
@@ -193,6 +198,9 @@ export default function ClientProfileView() {
   const currentAccountManager = adminUsers.find(u => u.id === currentAccountManagerId);
   const hasAccountManager = Boolean(currentAccountManagerId);
   const accountManagerName = currentAccountManager?.name || currentAccountManager?.email || client.accountManagerName || 'Assigned Account Manager';
+  // The company's own administrator, as distinct from the Kongila account
+  // manager assigned to it.
+  const primaryContact = clientMembers.find((m: any) => m.isPrimaryContact) || null;
   const openAccountManagerModal = () => {
     setReassignForm({ newAmId: currentAccountManagerId || '', reason: '' });
     setShowReassignModal(true);
@@ -262,6 +270,54 @@ export default function ClientProfileView() {
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Score dynamically calculated.</div>
                   </div>
                 </div>
+              </GlassCard>
+
+              {/* Who the company's own administrator is. The page showed the
+                  Kongila account manager assigned to the company and nothing
+                  about which member signed the company up or who to contact
+                  about it. */}
+              <GlassCard>
+                <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px' }}>Primary Contact</h3>
+                {primaryContact ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                      {String(primaryContact.name || primaryContact.email || '?')[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                        {primaryContact.name || primaryContact.email || 'Unnamed contact'}
+                      </div>
+                      {primaryContact.position && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{primaryContact.position}</div>
+                      )}
+                      {primaryContact.email && primaryContact.name && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{primaryContact.email}</div>
+                      )}
+                      {primaryContact.phone && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{primaryContact.phone}</div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '14px', borderRadius: '10px', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No primary contact is recorded for this company.
+                    {clientMembers.length > 0 && ` It has ${clientMembers.length} member${clientMembers.length === 1 ? '' : 's'}.`}
+                  </div>
+                )}
+                {clientMembers.length > 1 && (
+                  <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-glass)' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                      Other members
+                    </div>
+                    {clientMembers.filter((m: any) => !m.isPrimaryContact).map((m: any) => (
+                      <div key={m.id} style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        {m.name || m.email || 'Unnamed'}
+                        {m.position ? ` — ${m.position}` : ''}
+                        {m.permissionLevel ? ` (${m.permissionLevel})` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </GlassCard>
 
               <GlassCard>

@@ -14,6 +14,12 @@
 // the failure direction we want.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { resolveRole } from '@kongila/auth';
+import { SCOPED_RESOURCES, isScopedResource } from './resources';
+
+export { SCOPED_RESOURCES, isScopedResource } from './resources';
+export type { ScopedResource } from './resources';
+
 export interface RequestActor {
   userId: string;
   email: string | null;
@@ -57,6 +63,31 @@ function redactTalentForClient(t: any) {
   return copy;
 }
 
+/**
+ * The Kongila person looking after this account, as the client may see them.
+ *
+ * A client's `users` is filtered to their own organisation, and an account
+ * manager is an administrator, so they were never in it. The dashboard looked
+ * the assignee up in that list, found nothing, and told every client their
+ * account manager was "Unassigned" — including the ones who had one.
+ *
+ * Only what a client needs in order to recognise and contact them: who they
+ * are and how to reach them. Not their status, not their internal role, not
+ * anything else on the row.
+ */
+function contactCardForClient(u: any) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    name: u.name || '',
+    email: u.email || null,
+    // Marks this user as somebody from Kongila rather than a colleague, so a
+    // screen listing people can say which is which without having to infer it
+    // from an internal role name.
+    isKongilaContact: true
+  };
+}
+
 /** Assessment questions carry the answer key. Never send it to a candidate. */
 function stripAnswerKey(q: any) {
   if (!q) return q;
@@ -74,7 +105,29 @@ function stripAnswerKey(q: any) {
  */
 export function scopeDbForUser(db: any, actor: RequestActor): any {
   if (!db) return db;
-  if (actor.kind === 'admin') return db;
+  if (actor.kind === 'admin') {
+    if (resolveRole(actor.role) !== 'account_manager') return db;
+
+    const managedOrganizationIds = idsOf(
+      arr(db.organizations).filter((organization: any) =>
+        String(organization.accountManagerId ?? organization.account_manager_id ?? '') === actor.userId
+      )
+    );
+    const managedClientIds = new Set(
+      arr(db.clientProfiles)
+        .filter((profile: any) =>
+          managedOrganizationIds.has(String(profile.organizationId ?? profile.organization_id ?? ''))
+        )
+        .map((profile: any) => profile.userId ?? profile.user_id)
+        .filter((userId: any) => userId != null)
+        .map(String)
+    );
+    const requests = arr(db.clientRequests).filter((request: any) =>
+      String(request.assignedAccountManagerId || request.account_manager_id || '') === actor.userId
+      || managedClientIds.has(String(request.clientId ?? request.client_id ?? ''))
+    );
+    return { ...db, clientRequests: requests };
+  }
   if (actor.kind === 'talent') return scopeForTalent(db, actor);
   if (actor.kind === 'client') return scopeForClient(db, actor);
   // Unknown role: nothing.
@@ -187,6 +240,26 @@ function scopeForClient(db: any, actor: RequestActor) {
   const ownRequests = arr(db.clientRequests).filter((r: any) => orgUserIds.has(String(r.clientId)));
   const ownRequestIds = idsOf(ownRequests);
 
+  // The Kongila people assigned to this account: the organisation's account
+  // manager, plus anyone assigned to one of its requests. Collected as ids
+  // first so the same person assigned to the organisation and to three
+  // requests is one entry.
+  const ownOrg = orgId ? arr(db.organizations).find((o: any) => String(o.id) === String(orgId)) : null;
+  const kongilaContactIds = new Set<string>();
+  if (ownOrg?.accountManagerId) kongilaContactIds.add(String(ownOrg.accountManagerId));
+  for (const r of ownRequests) {
+    if (r.assignedAccountManagerId) kongilaContactIds.add(String(r.assignedAccountManagerId));
+    if (r.assignedTalentManagerId) kongilaContactIds.add(String(r.assignedTalentManagerId));
+  }
+  // A colleague is never also a Kongila contact; the org filter below covers
+  // them in full.
+  for (const id of orgUserIds) kongilaContactIds.delete(id);
+
+  const kongilaContacts = arr(db.users)
+    .filter((u: any) => kongilaContactIds.has(String(u.id)))
+    .map(contactCardForClient)
+    .filter(Boolean);
+
   const ownMatches = arr(db.matches).filter((m: any) => ownRequestIds.has(String(m.requestId)));
   const matchedTalentIds = new Set<string>(ownMatches.map((m: any) => String(m.talentId)));
 
@@ -222,7 +295,13 @@ function scopeForClient(db: any, actor: RequestActor) {
 
     organizations: orgId ? arr(db.organizations).filter((o: any) => String(o.id) === String(orgId)) : EMPTY,
     clientProfiles: orgProfiles,
-    users: arr(db.users).filter((u: any) => orgUserIds.has(String(u.id))),
+    // Colleagues in full, plus a contact card for each Kongila person assigned
+    // to this account. Without the second part a client cannot be shown who
+    // their account manager is, let alone message them.
+    users: [
+      ...arr(db.users).filter((u: any) => orgUserIds.has(String(u.id))),
+      ...kongilaContacts
+    ],
 
     invoices: ownInvoices,
     payments: arr(db.payments).filter((p: any) => ownInvoiceIds.has(String(p.invoiceId))),

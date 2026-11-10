@@ -198,10 +198,10 @@ export const PROFILE_CORE_FIELDS = [
   'seniorityLevel',
   'experienceYears',
   'primarySkills',
-  'preferredEngagementType',
   'timezone',
   'noticePeriod',
   'salaryExpectationUsd',
+  'linkedIn',
 ] as const;
 
 // These are tracked for profile completeness % but do NOT block onboarding completion.
@@ -220,13 +220,12 @@ export const PROFILE_REQUIRED_FIELDS = [
   'experienceYears',
   'bio',
   'primarySkills',
-  'preferredEngagementType',
   'preferredWorkHours',
   'timezone',
-  'preferredProjectType',
   'noticePeriod',
   'salaryExpectationUsd',
   'cvUrl',
+  'linkedIn',
   'profilePhotoUrl'
 ] as const;
 
@@ -258,11 +257,10 @@ export function calculateTalentProfileCompletion(profile: Partial<TalentProfile>
     experienceYears: hasValue(profile.experienceYears),
     bio: hasValue(profile.bio),
     primarySkills: primarySkills.length > 0,
-    preferredEngagementType: hasValue(profile.preferredEngagementType || profile.employmentPreference),
     preferredWorkHours: hasValue(profile.preferredWorkHours || profile.hourlyMonthly),
     timezone: hasValue(profile.timezone),
-    preferredProjectType: hasValue(profile.preferredProjectType),
     noticePeriod: hasValue(profile.noticePeriod || profile.availableStartDate),
+    linkedIn: hasValue((profile as any).linkedIn || (profile as any).linkedinUrl),
     salaryExpectationUsd: hasValue(salaryUsd),
     cvUrl: hasValue(profile.cvUrl || profile.documents?.find((d: any) => String(d?.name || '').toLowerCase().includes('.pdf'))?.fileUrl),
     profilePhotoUrl: hasValue(profile.profilePhotoUrl || profile.profilePhotoName),
@@ -309,9 +307,69 @@ export type ServiceType = 'Hire Talent' | 'Outsource Talent' | 'Managed Workforc
 
 export type UrgencyType = 'asap' | 'within_2_weeks' | 'flexible' | 'no_rush';
 
+/**
+ * @deprecated Superseded by RequestRole. Declared but never referenced
+ * anywhere in the product; kept only so an old stored payload still types.
+ */
 export interface RoleCount {
   role: string;
   count: number;
+}
+
+/**
+ * Where one role of a request has got to.
+ *
+ * Deliberately shorter than RequestStatus. A request's status is the
+ * commercial conversation, which an operator moves; a role's status is where
+ * the sourcing for that one role has got to, and several roles on one request
+ * move independently — one filled while another is still being sourced.
+ */
+export type RequestRoleStatus =
+  | 'Open'
+  | 'Sourcing'
+  | 'Candidates Ready'
+  | 'Interviewing'
+  | 'Filled'
+  | 'On Hold'
+  | 'Cancelled';
+
+export const REQUEST_ROLE_STATUSES: RequestRoleStatus[] = [
+  'Open', 'Sourcing', 'Candidates Ready', 'Interviewing', 'Filled', 'On Hold', 'Cancelled'
+];
+
+/**
+ * One role within a request.
+ *
+ * A client hiring a designer, a backend engineer and a QA analyst was filling
+ * the six-step wizard three times over, re-entering the same company, budget,
+ * timezones and urgency each time, and ending up with three unconnected
+ * references that the admin board showed as three unrelated rows.
+ *
+ * So the request holds the shared context — service type, budget, timezones,
+ * urgency, notes — and carries roles. The request is the client's unit: one
+ * reference, one account manager, one thread. The role is the unit of sourcing
+ * and tracking, which is why it has an id and a status of its own.
+ *
+ * `count` is how many people of this role, replacing the old top-level
+ * numberOfHires for multi-role requests. A single-role request still sets
+ * numberOfHires, and `requestRoles` below reconciles the two so no screen has
+ * to know which shape it is looking at.
+ */
+export interface RequestRole {
+  /** Stable across edits. Matches and interviews reference it. */
+  id: string;
+  title: string;
+  count: number;
+  status: RequestRoleStatus;
+  seniorityLevel?: string;
+  requiredSkills?: string[];
+  description?: string;
+  startDate?: string;
+  commitmentLevel?: string;
+  budgetMinUsd?: number;
+  budgetMaxUsd?: number;
+  /** How many of `count` are placed. Never inferred — set when a hire is made. */
+  filledCount?: number;
 }
 
 /**
@@ -362,14 +420,45 @@ export interface ServiceRequest {
   roleTitle?: string;
   seniorityLevel?: string;
   keyResponsibilities?: string[];
+  /** @deprecated No longer collected. Overlapped requiredSkills and seniorityLevel. */
   mustHaveQualifications?: string;
   
   // Step 2B & 2C — Outsource Talent & Managed Workforce
   teamSize?: number;
+  /** @deprecated Never read anywhere. Use `roles`. */
   rolesRequired?: RoleCount[];
+  /**
+   * @deprecated A request is for one role. Kept so requests stored while it
+   * held several still read, and `requestRoles()` still returns them, but
+   * nothing writes it: intake now files one request per role.
+   */
+  roles?: RequestRole[];
+
+  // ── One brief, several roles ───────────────────────────────────────────
+  //
+  // A client hiring a designer, a backend engineer and a QA analyst answers
+  // the shared context once and adds three roles. That used to produce one
+  // request carrying three roles, which was wrong: matching, interviews,
+  // offers and contracts all happen per role, so a request holding three of
+  // them had one status for three different conversations — one role could
+  // be at offer while another had not been sourced, and the request could
+  // only show one of those.
+  //
+  // Intake now files three requests and links them with a shared group id.
+  // The client still answers once; each role is tracked, progressed, edited
+  // and closed on its own.
+
+  /** Shared by every request filed from one intake. Absent on a lone request. */
+  requestGroupId?: string;
+  /** Which of the group this is, from 1. For display only. */
+  groupPosition?: number;
+  /** How many requests the group holds, as filed. For display only. */
+  groupSize?: number;
   coverageType?: string;
+  /** @deprecated No longer collected; its condition never matched, so the field never appeared. */
   customHours?: string;
   teamDescription?: string;
+  /** @deprecated Merged into supervisionLevel, which now asks who manages them day to day. */
   reportingStructure?: string;
   supervisionLevel?: string;
   performanceMetrics?: string[];
@@ -379,11 +468,13 @@ export interface ServiceRequest {
   projectName?: string;
   projectDescription?: string;
   keyDeliverables?: string[];
+  /** @deprecated No longer collected. Restated the budget range and deadline, vaguely. */
   estimatedScope?: string;
   projectDeadline?: string;
   referenceFiles?: any[];
   
   // Step 3 — Engagement Details
+  /** @deprecated Collected as commitmentLevel now, which is what the product reads. */
   engagementType?: string;
   partTimeHours?: number;
   durationType?: string;
@@ -398,6 +489,7 @@ export interface ServiceRequest {
   
   // Step 5 — Priority & Notes
   urgencyLevel?: UrgencyType;
+  /** @deprecated No longer collected. Asked the urgency question a second time. */
   roleCriticality?: string;
   additionalNotes?: string;
 
@@ -407,6 +499,204 @@ export interface ServiceRequest {
   assignedTalentManagerId?: string;
   assignedAccountManagerId?: string;
   internalNotes?: string;
+}
+
+/**
+ * What to call a request on screen.
+ *
+ * Every view used to show `roleDescription.substring(0, 40)`, which is a
+ * paragraph cut off mid-word. Intake collects a real name for the work on each
+ * of the four service paths, and they are not the same field: Hire Talent asks
+ * for a role title, Outsource and Managed Workforce for a team description,
+ * Project Execution for a project name. The stored `title` is written at
+ * intake from whichever applies, so that is preferred; the rest of the chain
+ * exists for requests filed before the column was read, and for the odd
+ * request where the client left the name blank.
+ *
+ * The description is deliberately last. It is a legitimate fallback — a
+ * request has to be called something — but a truncated description is a
+ * symptom, not a title, and anything reaching for it means intake let a
+ * request through without a name.
+ */
+export function requestTitle(request: Partial<ServiceRequest> | null | undefined): string {
+  if (!request) return 'Untitled request';
+
+  // A request for several roles has no single name, so it is named after the
+  // first role and says how many others there are. Without this a three-role
+  // request appeared on the board under whichever role happened to be first,
+  // with nothing to say the other two existed.
+  const roles = Array.isArray(request.roles) ? request.roles.filter(r => r && r.title) : [];
+  if (roles.length > 1) {
+    const first = String(roles[0].title).trim();
+    const name = first.length <= 44 ? first : `${first.slice(0, 41).replace(/\s+\S*$/, '')}…`;
+    return `${name} +${roles.length - 1} more role${roles.length - 1 === 1 ? '' : 's'}`;
+  }
+
+  const candidates = [
+    roles.length === 1 ? roles[0].title : undefined,
+    request.title,
+    request.roleTitle,
+    request.projectName,
+    request.teamDescription,
+    request.serviceDescription,
+    request.roleDescription,
+    request.description
+  ];
+
+  for (const candidate of candidates) {
+    const text = typeof candidate === 'string' ? candidate.trim() : '';
+    // A description used as a title is shortened; a real title is not. Cutting
+    // at a word boundary keeps it readable where it has to happen at all.
+    if (text) return text.length <= 70 ? text : `${text.slice(0, 67).replace(/\s+\S*$/, '')}…`;
+  }
+
+  return request.serviceType ? String(request.serviceType) : 'Untitled request';
+}
+
+/**
+ * The roles on a request, whatever shape it was stored in.
+ *
+ * Every request that existed before roles did has its one role in the flat
+ * fields — roleTitle, seniorityLevel, requiredSkills, numberOfHires — and a
+ * client hiring one person still fills those in. Rather than make every screen
+ * ask "does this have a roles array?", this returns a role list for all of
+ * them: the stored array where there is one, otherwise a single role built
+ * from the flat fields.
+ *
+ * The synthesised role's id is `${request.id}:role-1`, which is stable for a
+ * given request, so a match or an interview can reference a role on a request
+ * filed before this existed.
+ *
+ * Nothing is invented. A request with no name for the work gets a role titled
+ * from `requestTitle`, which falls back to the service type, and a count of
+ * whatever numberOfHires says, defaulting to 1 — not a guess, just the one
+ * person a request is for unless it says otherwise.
+ */
+export function requestRoles(request: Partial<ServiceRequest> | null | undefined): RequestRole[] {
+  if (!request) return [];
+
+  const stored = Array.isArray(request.roles) ? request.roles : [];
+  const usable = stored.filter(r => r && typeof r === 'object' && String(r.title || '').trim());
+  if (usable.length > 0) {
+    return usable.map((r, i) => ({
+      id: String(r.id || `${request.id || 'request'}:role-${i + 1}`),
+      title: String(r.title).trim(),
+      count: Number.isFinite(Number(r.count)) && Number(r.count) > 0 ? Math.floor(Number(r.count)) : 1,
+      status: (REQUEST_ROLE_STATUSES as string[]).includes(String(r.status))
+        ? (r.status as RequestRoleStatus)
+        : 'Open',
+      seniorityLevel: r.seniorityLevel,
+      requiredSkills: Array.isArray(r.requiredSkills) ? r.requiredSkills : [],
+      description: r.description,
+      startDate: r.startDate,
+      commitmentLevel: r.commitmentLevel,
+      budgetMinUsd: r.budgetMinUsd,
+      budgetMaxUsd: r.budgetMaxUsd,
+      filledCount: Number.isFinite(Number(r.filledCount)) ? Number(r.filledCount) : 0
+    }));
+  }
+
+  const count = Number(request.numberOfHires ?? request.teamSize ?? 1);
+  return [{
+    id: `${request.id || 'request'}:role-1`,
+    title: requestTitle(request),
+    count: Number.isFinite(count) && count > 0 ? Math.floor(count) : 1,
+    status: 'Open',
+    seniorityLevel: request.seniorityLevel,
+    requiredSkills: Array.isArray(request.requiredSkills) ? request.requiredSkills : [],
+    description: request.roleDescription || request.description,
+    startDate: request.startDate,
+    commitmentLevel: request.commitmentLevel,
+    budgetMinUsd: request.budgetMinUsd,
+    budgetMaxUsd: request.budgetMaxUsd,
+    filledCount: 0
+  }];
+}
+
+/** How many people this request is for, across all its roles. */
+export function requestHeadcount(request: Partial<ServiceRequest> | null | undefined): number {
+  return requestRoles(request).reduce((total, role) => total + role.count, 0);
+}
+
+/** True when this request asks for more than one kind of person. */
+export function isMultiRoleRequest(request: Partial<ServiceRequest> | null | undefined): boolean {
+  return requestRoles(request).length > 1;
+}
+
+/** A request cannot carry more roles than an operator could work. */
+export const MAX_ROLES_PER_REQUEST = 20;
+/** Per role. A client wanting more than this is a conversation, not a form. */
+export const MAX_COUNT_PER_ROLE = 100;
+
+/**
+ * Is this a roles array the product could have produced?
+ *
+ * Returns the reason it cannot be stored, or null when it can. `requestRoles`
+ * above is forgiving because it reads whatever is already in the database;
+ * this is strict, because it guards what goes in. The two are not in tension:
+ * read loosely, write carefully.
+ *
+ * Status is not checked here. A client may not set it at all — the route
+ * carries it over from the stored role or sets Open — so a status arriving in
+ * a client's payload is ignored rather than refused, and an operator setting
+ * one goes through the admin route, which has its own transition rules.
+ */
+export function validateRequestRoles(roles: unknown): string | null {
+  if (!Array.isArray(roles)) return 'Roles must be a list.';
+  if (roles.length === 0) return 'A request needs at least one role.';
+  if (roles.length > MAX_ROLES_PER_REQUEST) {
+    return `A request can carry up to ${MAX_ROLES_PER_REQUEST} roles; this one has ${roles.length}. `
+      + 'Split the rest into a second request.';
+  }
+
+  const seenTitles = new Set<string>();
+
+  for (let i = 0; i < roles.length; i++) {
+    const role = roles[i] as any;
+    const position = `Role ${i + 1}`;
+
+    if (!role || typeof role !== 'object' || Array.isArray(role)) return `${position} is not a role.`;
+
+    const title = String(role.title ?? '').trim();
+    if (!title) return `${position} needs a title — what is the person you are hiring called?`;
+    if (title.length > 120) return `${position}'s title is too long. Put the detail in its description.`;
+
+    // Two roles with the same title cannot be told apart on the board or in a
+    // shortlist, and are almost always one role with a higher count.
+    const key = title.toLowerCase();
+    if (seenTitles.has(key)) {
+      return `This request has two roles called "${title}". `
+        + 'Use one role and raise how many people you need.';
+    }
+    seenTitles.add(key);
+
+    if (role.count !== undefined && role.count !== null && role.count !== '') {
+      const count = Number(role.count);
+      if (!Number.isInteger(count) || count < 1 || count > MAX_COUNT_PER_ROLE) {
+        return `${position} asks for ${role.count} people. It must be a whole number between 1 and ${MAX_COUNT_PER_ROLE}.`;
+      }
+    }
+
+    if (role.requiredSkills !== undefined && role.requiredSkills !== null && !Array.isArray(role.requiredSkills)) {
+      return `${position}'s skills must be a list.`;
+    }
+
+    for (const field of ['budgetMinUsd', 'budgetMaxUsd'] as const) {
+      const value = role[field];
+      if (value === undefined || value === null || value === '') continue;
+      if (!Number.isFinite(Number(value)) || Number(value) < 0) {
+        return `${position}'s budget must be a number that is not negative.`;
+      }
+    }
+
+    const min = Number(role.budgetMinUsd);
+    const max = Number(role.budgetMaxUsd);
+    if (Number.isFinite(min) && Number.isFinite(max) && max > 0 && min > max) {
+      return `${position}'s budget starts higher than it ends.`;
+    }
+  }
+
+  return null;
 }
 
 export interface MatchBreakdown {
@@ -733,6 +1023,7 @@ export interface AssessmentQuestion {
   question_text: string;
   options?: string[]; // for MCQ
   correct_answer?: string | string[]; // for MCQ
+  correct_options?: string | string[]; // legacy MCQ answer key
   expected_answer?: string; // for subjective
   scoring_weight: number;
   max_score: number;
@@ -773,7 +1064,8 @@ export interface WorkSimulationTask {
   assignedAt: string;
   deadline: string;
   status: 'assigned' | 'submitted' | 'graded' | 'closed';
-  submissionType?: 'file' | 'essay' | 'link';
+  /** The server's vocabulary. 'essay' appears on rows written before 2026-11-10. */
+  submissionType?: 'file' | 'text' | 'link' | 'essay';
   submissionLink?: string;
   submissionFileUrl?: string;
   submissionText?: string;

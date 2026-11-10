@@ -22,6 +22,7 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { notifyUsers } from './notify';
+import { requestTitle } from '@kongila/shared-types';
 
 export interface MessagingResult<T = any> {
   ok: boolean;
@@ -41,6 +42,7 @@ function newId(prefix: string): string {
 }
 
 export type ConversationType = 'talent_admin' | 'client_admin' | 'placement';
+const REQUEST_CONTEXT_TYPES = new Set(['request', 'service_request', 'talent_request']);
 
 function rowToConversation(row: any) {
   return {
@@ -95,6 +97,108 @@ async function resolveParticipants(
   return { ids: Array.from(ids) };
 }
 
+async function requestConversationParticipants(
+  actor: Actor,
+  requestId: string
+): Promise<{ ids: string[]; request?: any; error?: string; status?: number }> {
+  const supabase = getSupabaseClient();
+  let { data: request, error } = await supabase
+    .from('talent_requests')
+    .select('*')
+    .eq('id', requestId)
+    .maybeSingle();
+
+  if (error) return { ids: [], error: `The role request could not be loaded: ${error.message}`, status: 500 };
+  if (!request) {
+    const legacy = await supabase
+      .from('talent_requests')
+      .select('*')
+      .eq('payload->>id', requestId)
+      .maybeSingle();
+    request = legacy.data;
+    error = legacy.error;
+  }
+  if (error) return { ids: [], error: `The role request could not be loaded: ${error.message}`, status: 500 };
+  if (!request) return { ids: [], error: 'The role request does not exist.', status: 404 };
+
+  const clientId = String(request.client_id || '');
+  if (!clientId) return { ids: [], error: 'This role request has no client.', status: 409 };
+  if (actor.kind === 'talent') {
+    return { ids: [], error: 'Candidates cannot message a client about a role request.', status: 403 };
+  }
+
+  const profiles = await supabase
+    .from('client_profiles')
+    .select('user_id, organization_id')
+    .eq('user_id', clientId)
+    .maybeSingle();
+  if (profiles.error) {
+    return { ids: [], error: `The client account could not be verified: ${profiles.error.message}`, status: 500 };
+  }
+
+  let clientIds = [clientId];
+  const organizationId = profiles.data?.organization_id || request.organization_id;
+  if (organizationId) {
+    const members = await supabase
+      .from('client_profiles')
+      .select('user_id')
+      .eq('organization_id', organizationId);
+    if (members.error) {
+      return { ids: [], error: `The client team could not be verified: ${members.error.message}`, status: 500 };
+    }
+    clientIds = Array.from(new Set([clientId, ...(members.data || []).map((row: any) => String(row.user_id))]));
+  }
+
+  if (actor.kind === 'client' && !clientIds.includes(String(actor.userId))) {
+    return { ids: [], error: 'This role request is not for your company.', status: 403 };
+  }
+
+  const payload = request.payload || {};
+  const operationsIds = new Set<string>(
+    [
+      request.account_manager_id,
+      request.talent_manager_id,
+      request.assigned_account_manager_id,
+      request.assigned_talent_manager_id,
+      payload.assignedAccountManagerId,
+      payload.assignedTalentManagerId,
+      payload.accountManagerId,
+      payload.talentManagerId
+    ].filter(Boolean).map(String)
+  );
+
+  if (organizationId) {
+    const organization = await supabase
+      .from('organizations')
+      .select('account_manager_id')
+      .eq('id', organizationId)
+      .maybeSingle();
+    if (organization.error) {
+      return { ids: [], error: `The account manager could not be resolved: ${organization.error.message}`, status: 500 };
+    }
+    if (organization.data?.account_manager_id) {
+      operationsIds.add(String(organization.data.account_manager_id));
+    }
+  }
+
+  if (operationsIds.size === 0) {
+    const operations = await supabase
+      .from('users')
+      .select('id')
+      .in('role', ['super_admin', 'admin', 'account_manager', 'talent_manager', 'ops_manager']);
+    if (operations.error) {
+      return { ids: [], error: `The Kongila team could not be resolved: ${operations.error.message}`, status: 500 };
+    }
+    for (const user of operations.data || []) operationsIds.add(String(user.id));
+  }
+
+  if (actor.kind === 'admin') operationsIds.add(String(actor.userId));
+  return {
+    ids: Array.from(new Set([...clientIds, ...operationsIds])),
+    request
+  };
+}
+
 /**
  * A client and a candidate may only talk once something connects them.
  *
@@ -137,6 +241,57 @@ export async function startConversation(
 
   const type: ConversationType = input.type
     || (actor.kind === 'talent' ? 'talent_admin' : 'client_admin');
+  const contextType = String(input.contextType || '').trim().toLowerCase();
+  const requestScoped = REQUEST_CONTEXT_TYPES.has(contextType);
+
+  if (requestScoped && type !== 'client_admin') {
+    return fail(400, 'Role request conversations must be client-to-Kongila conversations.');
+  }
+
+  let participantIds: string[];
+  let request: any;
+  if (requestScoped) {
+    const requestId = String(input.contextId || '').trim();
+    if (!requestId) return fail(400, 'A role request is required for this conversation.');
+    const resolved = await requestConversationParticipants(actor, requestId);
+    if (resolved.error) return fail(resolved.status || 500, resolved.error);
+    participantIds = resolved.ids;
+    request = resolved.request;
+
+    const supabase = getSupabaseClient();
+    const { data: existing, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('type', type)
+      .in('context_type', Array.from(REQUEST_CONTEXT_TYPES))
+      .eq('context_id', String(request.id))
+      .maybeSingle();
+    if (error) return fail(500, `The role conversation could not be loaded: ${error.message}`);
+    if (existing) {
+      const currentParticipants = (existing.participant_ids || []).map(String);
+      if (actor.kind === 'admin' && !currentParticipants.includes(String(actor.userId))) {
+        const updatedParticipants = Array.from(new Set([...currentParticipants, ...participantIds]));
+        const update = await supabase
+          .from('conversations')
+          .update({ participant_ids: updatedParticipants, updated_at: new Date().toISOString() })
+          .eq('id', existing.id)
+          .select('*')
+          .single();
+        if (update.error) return fail(500, `The role conversation could not be updated: ${update.error.message}`);
+        return { ok: true, status: 200, data: rowToConversation(update.data) };
+      }
+      if (!currentParticipants.includes(String(actor.userId))) {
+        return fail(403, 'You are not a participant in this role conversation.');
+      }
+      return { ok: true, status: 200, data: rowToConversation(existing) };
+    }
+  } else {
+    const { ids, error: participantError } = await resolveParticipants(
+      type, actor.userId, input.otherPartyId
+    );
+    if (participantError) return fail(500, participantError);
+    participantIds = ids;
+  }
 
   if (type === 'placement') {
     if (!input.otherPartyId) return fail(400, 'A placement conversation needs the other party.');
@@ -150,11 +305,6 @@ export async function startConversation(
     }
   }
 
-  const { ids, error: participantError } = await resolveParticipants(
-    type, actor.userId, input.otherPartyId
-  );
-  if (participantError) return fail(500, participantError);
-
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
@@ -162,9 +312,9 @@ export async function startConversation(
     id: newId('conv'),
     // NOT NULL, and the client portal never set it, so every insert failed.
     type,
-    participant_ids: ids,
-    context_type: input.contextType || null,
-    context_id: input.contextId || null,
+    participant_ids: participantIds,
+    context_type: requestScoped ? 'request' : input.contextType || null,
+    context_id: requestScoped ? String(request.id) : input.contextId || null,
     created_at: now,
     updated_at: now
   };
@@ -293,10 +443,32 @@ export async function sendMessage(
 
   const warnings: string[] = [];
   if (others.length > 0) {
-    const result = await notifyUsers(others, 'request_received', {
-      roleTitle: 'New message',
-      reason: input.content?.trim().slice(0, 140) || 'An attachment was sent.'
-    }, { inAppOnly: true });
+    const isRequestMessage = REQUEST_CONTEXT_TYPES.has(String(conversation.context_type || '').toLowerCase());
+    const requestResult = isRequestMessage
+      ? await getSupabaseClient()
+          .from('talent_requests')
+          .select('id, title, payload')
+          .eq('id', conversation.context_id)
+          .maybeSingle()
+      : null;
+    if (requestResult?.error) {
+      warnings.push(`The message was sent, but its role title could not be loaded: ${requestResult.error.message}`);
+    }
+    const roleTitle = requestResult?.data
+      ? requestTitle({
+          ...(requestResult.data.payload || {}),
+          title: requestResult.data.payload?.title || requestResult.data.title
+        })
+      : 'your request';
+    const event = isRequestMessage
+      ? actor.kind === 'client' ? 'request_message_from_client' : 'request_message_from_admin'
+      : 'request_received';
+    const result = await notifyUsers(others, event, {
+      roleTitle,
+      reason: input.content?.trim().slice(0, 300) || 'An attachment was sent.'
+    }, isRequestMessage
+      ? { sourceRecordId: String(conversation.context_id) }
+      : { inAppOnly: true });
     warnings.push(...result.warnings);
   }
 

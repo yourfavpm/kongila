@@ -1,4 +1,16 @@
 import { RequestStatus, VettingStatus, TaskStatus, ServiceType } from '@kongila/shared-types';
+export {
+  countSignedHires,
+  hasOfferCapacity,
+  hasReachedHireTarget,
+  isSignedHireContract,
+  requestedHeadcount
+} from './hiringProgress';
+export {
+  compareMatchingProgress,
+  matchingProgressStatus,
+  type MatchingProgressEvent
+} from './matchingProgress';
 
 const REQUEST_STATUS_ALIASES: Record<string, RequestStatus> = {
   'new': 'New Request',
@@ -16,7 +28,9 @@ const REQUEST_STATUS_ALIASES: Record<string, RequestStatus> = {
   'client_interview': 'Client Interview',
   'offer accepted': 'Offer Accepted',
   'offer_accepted': 'Offer Accepted',
-  'onboarding': 'Onboarding'
+  'onboarding': 'Onboarding',
+  'closed': 'Closed',
+  'closed/cancelled': 'Closed'
 };
 
 /**

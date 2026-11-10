@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
+import { hasOfferCapacity, requestedHeadcount } from '@kongila/workflows';
+import { requestTitle } from '@kongila/shared-types';
 
 /**
  * Creating an offer.
@@ -25,28 +27,36 @@ import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/data
 /** Every user id in this client's organisation. */
 async function orgUserIds(supabase: any, actor: any): Promise<string[]> {
   if (!actor.organizationId) return [actor.userId];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('client_profiles')
     .select('user_id')
     .eq('organization_id', actor.organizationId);
+  if (error) throw new Error(`Could not verify company membership: ${error.message}`);
   const ids = (data || []).map((r: any) => String(r.user_id));
   if (!ids.includes(String(actor.userId))) ids.push(String(actor.userId));
   return ids;
 }
 
-/** Requests carry a row id and a payload id; both are accepted rather than guessed. */
-async function requestBelongsToActor(
+/** Requests carry a row id and a payload id; both are accepted via bound filters. */
+async function loadRequestById(
   supabase: any,
-  requestId: string,
-  allowedClientIds: string[]
-): Promise<boolean> {
-  const { data, error } = await supabase
+  requestId: string
+): Promise<any | null> {
+  const { data: rowMatch, error: rowError } = await supabase
     .from('talent_requests')
-    .select('id, client_id')
-    .or(`id.eq.${requestId},payload->>id.eq.${requestId}`)
-    .limit(5);
-  if (error || !data || data.length === 0) return false;
-  return data.some((row: any) => allowedClientIds.includes(String(row.client_id)));
+    .select('*')
+    .eq('id', requestId)
+    .maybeSingle();
+  if (rowError) throw new Error(rowError.message);
+  if (rowMatch) return rowMatch;
+
+  const { data: payloadMatch, error: payloadError } = await supabase
+    .from('talent_requests')
+    .select('*')
+    .eq('payload->>id', requestId)
+    .maybeSingle();
+  if (payloadError) throw new Error(payloadError.message);
+  return payloadMatch || null;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -60,8 +70,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     requestId,
     matchId,
     talentId,
-    roleTitle,
-    serviceType,
     proposedRateUsd,
     engagementType,
     hoursPerWeek,
@@ -75,40 +83,118 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     entryPoint
   } = req.body || {};
 
-  // role_title, service_type and proposed_rate_usd are NOT NULL on the table.
-  if (!talentId || !roleTitle || !serviceType || proposedRateUsd === undefined) {
+  if (!requestId || !matchId || !talentId || !Number.isFinite(Number(proposedRateUsd)) || Number(proposedRateUsd) <= 0) {
     return res.status(400).json({
-      error: 'talentId, roleTitle, serviceType and proposedRateUsd are required'
+      error: 'requestId, matchId, talentId and a positive proposedRateUsd are required'
     });
   }
 
   const supabase = getSupabaseClient();
 
   try {
-    // An offer cannot go to a candidate with outstanding compliance
-    // documents. The gate used to be a banner on the candidate's own
-    // dashboard, which blocked nothing.
-    const refusal = await complianceGate('extend_offer', String(talentId));
-    if (refusal) return res.status(409).json({ error: refusal });
+    const request = requestId ? await loadRequestById(supabase, String(requestId)) : null;
+    if (requestId && !request) return res.status(404).json({ error: 'Request not found' });
+
+    const requestStatus = String(request.payload?.status || request.status || '').toLowerCase().replace(/[_-]+/g, ' ');
+    if (['closed', 'closed/cancelled', 'onboarding'].includes(requestStatus)) {
+      return res.status(409).json({ error: `An offer cannot be created for a ${requestStatus} role` });
+    }
 
     if (actor.kind === 'client') {
-      if (!requestId) return res.status(400).json({ error: 'requestId is required' });
       const allowed = await orgUserIds(supabase, actor);
-      if (!(await requestBelongsToActor(supabase, String(requestId), allowed))) {
+      if (!allowed.includes(String(request?.client_id))) {
         console.warn(`[api/offers] client ${actor.userId} attempted an offer on request ${requestId}`);
         return res.status(403).json({ error: 'Not authorised for this request' });
       }
     }
 
-    // One live offer per candidate per request. Without this, clicking the
-    // button twice creates two offers the candidate can both accept.
-    const { data: existing } = await supabase
+    const requestIds = Array.from(new Set([
+      String(request.id),
+      String(request.payload?.id || '')
+    ].filter(Boolean)));
+    const { data: match, error: matchError } = await supabase
+      .from('matches')
+      .select('id, request_id, talent_id, status')
+      .eq('id', String(matchId))
+      .maybeSingle();
+    if (matchError) {
+      console.error('[api/offers] match lookup failed:', matchError.message);
+      return res.status(500).json({ error: 'Could not verify the candidate for this role' });
+    }
+    if (!match
+      || String(match.talent_id) !== String(talentId)
+      || !requestIds.includes(String(match.request_id))) {
+      return res.status(403).json({ error: 'That candidate is not matched to this role' });
+    }
+    if (String(match.status).toLowerCase() === 'rejected') {
+      return res.status(409).json({ error: 'An offer cannot be sent to a rejected candidate' });
+    }
+
+    const { data: candidateInterviews, error: interviewsError } = await supabase
+      .from('interviews')
+      .select('status')
+      .in('request_id', requestIds)
+      .eq('match_id', match.id)
+      .eq('talent_id', talentId);
+    if (interviewsError) {
+      console.error('[api/offers] interview lookup failed:', interviewsError.message);
+      return res.status(500).json({ error: 'Could not verify the interview history for this candidate' });
+    }
+    const completedInterview = (candidateInterviews || []).some(
+      (interview: any) => String(interview.status).toLowerCase() === 'completed'
+    );
+    if (!completedInterview) {
+      return res.status(409).json({ error: 'A completed interview is required before an offer can be created' });
+    }
+
+    // Validate compliance only after confirming the caller owns this
+    // request and candidate association, so this endpoint cannot be used to
+    // probe another candidate's compliance state.
+    const refusal = await complianceGate('extend_offer', String(talentId));
+    if (refusal) return res.status(409).json({ error: refusal });
+
+    const roleTitle = requestTitle({
+      ...(request.payload || {}),
+      title: request.payload?.title || request.title
+    });
+    const serviceType = request.payload?.serviceType || request.service_type;
+    if (!roleTitle || !serviceType) {
+      return res.status(422).json({ error: 'The role request is missing its title or service type' });
+    }
+
+    if (requestId) {
+      const { data: existingOffers, error: offersError } = await supabase
+        .from('offers')
+        .select('id')
+        .in('request_id', requestIds)
+        .in('status', ['draft', 'submitted', 'revision_requested', 'admin_approved', 'sent_to_talent', 'accepted', 'contract_active']);
+      if (offersError) {
+        console.error('[api/offers] existing offer lookup failed:', offersError.message);
+        return res.status(500).json({ error: 'Could not verify how many hires are already in progress' });
+      }
+
+      const targetHires = requestedHeadcount(request.payload?.numberOfHires);
+      const inProgress = existingOffers?.length || 0;
+      if (!hasOfferCapacity(targetHires, inProgress)) {
+        return res.status(409).json({
+          error: `This role already has ${inProgress} offer(s) in progress for ${targetHires} requested hire(s).`
+        });
+      }
+    }
+
+    // One live offer or contract per candidate per request. Accepted offers
+    // still occupy a hire slot and must not be reissued to the same person.
+    const { data: existing, error: existingError } = await supabase
       .from('offers')
       .select('id, status')
       .eq('talent_id', talentId)
-      .eq('request_id', requestId || null)
-      .in('status', ['draft', 'submitted', 'revision_requested', 'admin_approved', 'sent_to_talent'])
+      .in('request_id', requestIds)
+      .in('status', ['draft', 'submitted', 'revision_requested', 'admin_approved', 'sent_to_talent', 'accepted', 'contract_active'])
       .limit(1);
+    if (existingError) {
+      console.error('[api/offers] candidate offer lookup failed:', existingError.message);
+      return res.status(500).json({ error: 'Could not verify whether this candidate already has an offer' });
+    }
 
     if (existing && existing.length > 0) {
       return res.status(409).json({
@@ -121,9 +207,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: offer, error } = await supabase
       .from('offers')
       .insert({
-        request_id: requestId || null,
-        match_id: matchId || null,
-        client_id: actor.kind === 'client' ? actor.userId : null,
+        request_id: request.id,
+        match_id: match.id,
+        client_id: request.client_id,
         talent_id: talentId,
         initiated_by: actor.kind === 'admin' ? 'admin' : 'client',
         entry_point: entryPoint || 'matched_talent_page',

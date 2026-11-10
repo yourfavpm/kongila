@@ -13,6 +13,7 @@ import {
   COMPOSITE_WEIGHTS,
   DROPPED_DIMENSIONS,
   calculateCompositeVettingGrade,
+  vettingScoreState,
   gradeForScore
 } from './grading.ts';
 
@@ -95,4 +96,64 @@ test('scores outside 0-100 are clamped rather than trusted', () => {
   assert.equal(calculateCompositeVettingGrade({ technical: 500 }).score, 30);
   assert.equal(calculateCompositeVettingGrade({ technical: -50 }).score, 0);
   assert.equal(calculateCompositeVettingGrade({ technical: NaN }).score, 0);
+});
+
+// ─── vettingScoreState: what may be shown, as opposed to what is decided ────
+//
+// The tests above pin the decision function: an empty score set is a Reject.
+// That is correct for "does this candidate pass?" and wrong for "what do we
+// put on their dashboard?". These pin the display function.
+
+test('a candidate with no scores has no grade and no score to show', () => {
+  const state = vettingScoreState({});
+  assert.equal(state.score, null);
+  assert.equal(state.grade, null);
+  assert.equal(state.isScored, false);
+  assert.equal(state.isFullyScored, false);
+  assert.equal(state.scoredDimensions.length, 0);
+  assert.equal(state.missingDimensions.length, COMPOSITE_WEIGHTS.length);
+});
+
+test('null and undefined score sets behave the same as an empty one', () => {
+  for (const input of [null, undefined]) {
+    const state = vettingScoreState(input);
+    assert.equal(state.score, null);
+    assert.equal(state.grade, null);
+  }
+});
+
+test('a part-way candidate shows progress but still no grade', () => {
+  // Two stages of five. Deriving a grade here would say Reject about someone
+  // who has passed everything asked of them so far.
+  const state = vettingScoreState({ technical: 100, behavioral: 100 });
+  assert.equal(state.score, 60);
+  assert.equal(state.grade, null);
+  assert.equal(state.isScored, true);
+  assert.equal(state.isFullyScored, false);
+  assert.deepEqual(state.missingDimensions.sort(), ['personality', 'remoteReadiness', 'workSimulation']);
+});
+
+test('a grade appears once every measured stage has a score', () => {
+  const complete = Object.fromEntries(COMPOSITE_WEIGHTS.map(d => [d.key, 80]));
+  const state = vettingScoreState(complete as any);
+  assert.equal(state.isFullyScored, true);
+  assert.equal(state.score, 80);
+  assert.equal(state.grade, 'A');
+});
+
+test('a genuine zero is a score, not an absence', () => {
+  // A candidate who was assessed and scored zero on every stage is graded
+  // Reject. That is a real verdict and must not read as "not yet assessed".
+  const zeroed = Object.fromEntries(COMPOSITE_WEIGHTS.map(d => [d.key, 0]));
+  const state = vettingScoreState(zeroed as any);
+  assert.equal(state.isFullyScored, true);
+  assert.equal(state.score, 0);
+  assert.equal(state.grade, 'Reject');
+});
+
+test('an empty string is an absence, not a zero', () => {
+  // Admin override fields post '' for a box nobody filled in.
+  const state = vettingScoreState({ technical: '' as any, behavioral: 90 });
+  assert.deepEqual(state.scoredDimensions, ['behavioral']);
+  assert.equal(state.grade, null);
 });

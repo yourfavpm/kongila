@@ -214,9 +214,18 @@ importers:
 
   packages/database:
     dependencies:
+      '@kongila/matching-engine':
+        specifier: workspace:*
+        version: link:../matching-engine
       '@kongila/shared-types':
         specifier: workspace:*
         version: link:../shared-types
+      '@kongila/utils':
+        specifier: workspace:*
+        version: link:../utils
+      '@kongila/workflows':
+        specifier: workspace:*
+        version: link:../workflows
       '@supabase/supabase-js':
         specifier: ^2.105.4
         version: 2.105.4

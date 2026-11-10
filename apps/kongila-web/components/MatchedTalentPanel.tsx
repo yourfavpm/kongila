@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { apiFetch } from "../lib/apiFetch";
+import { requestTitle } from "@kongila/shared-types";
 
 /**
  * A match is rejected when its status is "rejected". Rows written before the
@@ -15,33 +16,40 @@ interface MatchedTalentPanelProps {
   currentUser: any;
   requests: any[];
   matches: any[];
+  interviews: any[];
   talents: any[];
   setMatches?: (matches: any[]) => void;
-  onScheduleMeeting?: (talent: any, request: any) => void;
-  onExtendOffer?: (talent: any) => void;
+  onRequestUpdated?: (request: any) => void;
+  onScheduleMeeting?: (talent: any, request: any, match: any) => void;
+  onExtendOffer?: (talent: any, request: any, match: any) => void;
 }
 
 export default function MatchedTalentPanel({
   currentUser,
   requests,
   matches,
+  interviews,
   talents,
   setMatches,
+  onRequestUpdated,
   onScheduleMeeting,
+  onExtendOffer,
 }: MatchedTalentPanelProps) {
   const [sortOption, setSortOption] = useState<"matchScore" | "vettingScore" | "recent">("matchScore");
-  const [shortlistedMap, setShortlistedMap] = useState<Record<string, string[]>>({});
   const [rejectionModalOpen, setRejectionModalOpen] = useState(false);
   const [rejectionCandidate, setRejectionCandidate] = useState<any>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [rejectionError, setRejectionError] = useState("");
+  const [isSubmittingRejection, setIsSubmittingRejection] = useState(false);
 
-  // Only show requests that are 'candidates_ready' or 'interviewing' (i.e. >= candidates_ready)
-  const eligibleRequests = requests.filter(r => 
-    ["candidates_ready", "interviewing", "hired"].includes((r.status || "").toLowerCase())
+  const eligibleRequests = requests.filter((request) =>
+    !['closed', 'closed/cancelled', 'cancelled'].includes(
+      String(request.status || '').toLowerCase().replace(/[_-]+/g, ' ')
+    )
   );
 
   const getTalentGrade = (talent: any) => {
-    // If not defined, fallback to A. We must filter out B completely.
+    // Keep the submitted candidate visible even when the grade is below A.
     return talent.grade || "A";
   };
 
@@ -52,17 +60,13 @@ export default function MatchedTalentPanel({
   // Pre-process and filter matches
   const processedGroups = useMemo(() => {
     return eligibleRequests.map(req => {
-      const requestMatches = matches.filter(m => 
-        m.requestId === req.id && 
+      const requestMatches = matches.filter(m =>
+        String(m.requestId) === String(req.id) &&
         // Must not be rejected
         !isRejectedMatch(m.status)
       ).map(m => {
         const talent = talents.find(t => t.id === m.talentId) || { name: "Unknown", id: m.talentId, primarySkills: [], title: "Unknown Role" };
         return { match: m, talent };
-      }).filter(({ talent }) => {
-        // Exclude Grade B talent completely
-        const grade = getTalentGrade(talent);
-        return grade === "A" || grade === "A+";
       });
 
       // Sort matches
@@ -73,47 +77,49 @@ export default function MatchedTalentPanel({
         return 0;
       });
 
-      // Bring shortlisted to top
-      const reqShortlists = shortlistedMap[req.id] || [];
       const finalList = [
-        ...sortedMatches.filter(x => reqShortlists.includes(x.talent.id)),
-        ...sortedMatches.filter(x => !reqShortlists.includes(x.talent.id))
+        ...sortedMatches.filter(x => String(x.match.status).toLowerCase() === 'shortlisted'),
+        ...sortedMatches.filter(x => String(x.match.status).toLowerCase() !== 'shortlisted')
       ];
 
       return { request: req, candidates: finalList };
     }).filter(group => group.candidates.length > 0);
-  }, [eligibleRequests, matches, talents, sortOption, shortlistedMap]);
+  }, [eligibleRequests, matches, talents, sortOption]);
 
-  const toggleShortlist = (reqId: string, talentId: string) => {
-    const current = shortlistedMap[reqId] || [];
-    if (current.includes(talentId)) {
-      setShortlistedMap({ ...shortlistedMap, [reqId]: current.filter(id => id !== talentId) });
-    } else {
-      if (current.length >= 10) {
-        alert("You have reached the maximum limit of 10 shortlisted candidates per request.");
-        return;
+  const toggleShortlist = async (match: any) => {
+    if (String(match.status).toLowerCase() === 'shortlisted') return;
+    try {
+      const response = await apiFetch('/api/matches', {
+        method: 'PATCH',
+        body: JSON.stringify({ matchId: match.id, status: 'shortlisted' })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'The candidate could not be shortlisted.');
+      if (setMatches) {
+        setMatches(matches.map((item) => item.id === match.id ? { ...item, ...body.match } : item));
       }
-      setShortlistedMap({ ...shortlistedMap, [reqId]: [...current, talentId] });
+    } catch (error: any) {
+      console.error('[MatchedTalentPanel] shortlist not saved:', error);
+      alert(error?.message || 'The candidate could not be shortlisted.');
     }
   };
 
-  const handleRequestInterview = (talent: any, req: any) => {
-    // If we have an external handler, we use it, otherwise mock
-    if (onScheduleMeeting) {
-       onScheduleMeeting(talent, req);
-    } else {
-       alert(`Interview requested for ${talent.name}. Our team will coordinate scheduling.`);
-    }
+  const handleRequestInterview = (talent: any, req: any, match: any) => {
+    onScheduleMeeting?.(talent, req, match);
   };
 
   const openRejection = (match: any, talent: any, request: any) => {
     setRejectionCandidate({ match, talent, request });
+    setRejectionReason("");
+    setRejectionError("");
     setRejectionModalOpen(true);
   };
 
   const confirmRejection = async () => {
-    if (!rejectionCandidate || !rejectionReason) return;
+    if (!rejectionCandidate || !rejectionReason || isSubmittingRejection) return;
     const { match, request } = rejectionCandidate;
+    setRejectionError("");
+    setIsSubmittingRejection(true);
 
     try {
       // Through the server. matches_status_check allows only
@@ -129,15 +135,17 @@ export default function MatchedTalentPanel({
         })
       });
 
-      if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(detail?.error || 'The rejection was not saved.');
-      }
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || 'The rejection was not saved.');
 
       // Optimistic UI update
       if (setMatches) {
-        const updated = matches.map(m => m.id === match.id ? { ...m, status: "rejected", clientRejectionReason: rejectionReason } : m);
+        const updated = matches.map(m => m.id === match.id ? { ...m, ...body.match } : m);
         setMatches(updated);
+      }
+      const currentRequest = requests.find((item) => String(item.id) === String(request.id));
+      if (currentRequest && body.match?.requestStatus && onRequestUpdated) {
+        onRequestUpdated({ ...currentRequest, status: body.match.requestStatus });
       }
 
       // Operations is told by the route when the request runs out of
@@ -145,14 +153,15 @@ export default function MatchedTalentPanel({
       // which is not a row in users, so the foreign key refused it
       // every time and nobody was ever told.
 
+      setRejectionModalOpen(false);
+      setRejectionCandidate(null);
+      setRejectionReason("");
     } catch(err: any) {
-      console.error(err);
-      alert(err?.message || "Failed to reject candidate.");
+      console.error('[MatchedTalentPanel] candidate rejection failed:', err);
+      setRejectionError(err?.message || "Failed to reject candidate.");
+    } finally {
+      setIsSubmittingRejection(false);
     }
-
-    setRejectionModalOpen(false);
-    setRejectionCandidate(null);
-    setRejectionReason("");
   };
 
   return (
@@ -189,7 +198,7 @@ export default function MatchedTalentPanel({
             <div key={group.request.id}>
               <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px", paddingBottom: "12px", borderBottom: "2px solid #E2E8F0" }}>
                 <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#0F172A", margin: 0 }}>
-                  {group.request.roleDescription || "Service Request"}
+                  {requestTitle(group.request)}
                 </h2>
                 <span style={{ padding: "4px 10px", background: "#EEF2FF", color: "#4F46E5", borderRadius: "20px", fontSize: "12px", fontWeight: 700 }}>
                   {group.candidates.length} Candidates
@@ -198,8 +207,17 @@ export default function MatchedTalentPanel({
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))", gap: "24px" }}>
                 {group.candidates.map(({ match, talent }) => {
-                  const isShortlisted = (shortlistedMap[group.request.id] || []).includes(talent.id);
+                  const isShortlisted = String(match.status).toLowerCase() === 'shortlisted';
                   const breakdown = match.breakdown || {} as any;
+                  const candidateInterviews = interviews.filter((interview) =>
+                    String(interview.requestId) === String(group.request.id)
+                    && (String(interview.matchId || '') === String(match.id)
+                      || String(interview.talentId) === String(talent.id))
+                  );
+                  const hasCompletedInterview = candidateInterviews.some((interview) =>
+                    String(interview.status).toLowerCase() === 'completed'
+                  );
+                  const isTerminalMatch = ['rejected', 'accepted'].includes(String(match.status).toLowerCase());
                   
                   return (
                     <div 
@@ -216,7 +234,9 @@ export default function MatchedTalentPanel({
                     >
                       {/* Shortlist Star */}
                       <button
-                        onClick={() => toggleShortlist(group.request.id, talent.id)}
+                        onClick={() => toggleShortlist(match)}
+                        disabled={isShortlisted || isTerminalMatch}
+                        title={isShortlisted ? "Shortlisted" : "Shortlist candidate"}
                         style={{
                           position: "absolute",
                           top: "16px",
@@ -236,7 +256,6 @@ export default function MatchedTalentPanel({
                           zIndex: 2,
                           transition: "color 0.2s"
                         }}
-                        title="Shortlist Candidate"
                       >
                         ★
                       </button>
@@ -316,7 +335,8 @@ export default function MatchedTalentPanel({
                         {/* Actions */}
                         <div style={{ display: "flex", gap: "12px" }}>
                           <button 
-                            onClick={() => handleRequestInterview(talent, group.request)}
+                            onClick={() => handleRequestInterview(talent, group.request, match)}
+                            disabled={isTerminalMatch}
                             style={{ flex: 1, background: "#2563EB", color: "#FFF", border: "none", padding: "10px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer", transition: "background 0.2s" }}
                             onMouseOver={(e) => e.currentTarget.style.background = "#1D4ED8"}
                             onMouseOut={(e) => e.currentTarget.style.background = "#2563EB"}
@@ -325,12 +345,21 @@ export default function MatchedTalentPanel({
                           </button>
                           <button 
                             onClick={() => openRejection(match, talent, group.request)}
+                            disabled={isTerminalMatch}
                             style={{ background: "#FEE2E2", color: "#B91C1C", border: "none", padding: "10px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer", transition: "background 0.2s" }}
                             onMouseOver={(e) => e.currentTarget.style.background = "#FECACA"}
                             onMouseOut={(e) => e.currentTarget.style.background = "#FEE2E2"}
                           >
                             Not a Fit
                           </button>
+                          {hasCompletedInterview && onExtendOffer && !isTerminalMatch && (
+                            <button
+                              onClick={() => onExtendOffer(talent, group.request, match)}
+                              style={{ background: "#10B981", color: "#FFF", border: "none", padding: "10px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}
+                            >
+                              Start Offer
+                            </button>
+                          )}
                         </div>
                         
                         <div style={{ textAlign: "center", marginTop: "16px" }}>
@@ -359,7 +388,10 @@ export default function MatchedTalentPanel({
             
             <select 
               value={rejectionReason}
-              onChange={e => setRejectionReason(e.target.value)}
+              onChange={e => {
+                setRejectionReason(e.target.value);
+                setRejectionError("");
+              }}
               style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #CBD5E1", fontSize: "14px", outline: "none", marginBottom: "24px" }}
             >
               <option value="" disabled>Select a reason...</option>
@@ -370,19 +402,31 @@ export default function MatchedTalentPanel({
               <option value="Other">Other</option>
             </select>
 
+            {rejectionError && (
+              <div role="alert" style={{ color: "#B91C1C", fontSize: "13px", marginBottom: "16px" }}>
+                {rejectionError}
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: "12px" }}>
               <button 
-                onClick={() => setRejectionModalOpen(false)}
+                onClick={() => {
+                  setRejectionModalOpen(false);
+                  setRejectionCandidate(null);
+                  setRejectionReason("");
+                  setRejectionError("");
+                }}
+                disabled={isSubmittingRejection}
                 style={{ flex: 1, padding: "10px", border: "1px solid #CBD5E1", background: "transparent", borderRadius: "8px", fontWeight: 600, color: "#475569", cursor: "pointer" }}
               >
                 Cancel
               </button>
               <button 
                 onClick={confirmRejection}
-                disabled={!rejectionReason}
-                style={{ flex: 1, padding: "10px", border: "none", background: rejectionReason ? "#B91C1C" : "#F87171", borderRadius: "8px", fontWeight: 700, color: "#FFF", cursor: rejectionReason ? "pointer" : "not-allowed" }}
+                disabled={!rejectionReason || isSubmittingRejection}
+                style={{ flex: 1, padding: "10px", border: "none", background: rejectionReason && !isSubmittingRejection ? "#B91C1C" : "#F87171", borderRadius: "8px", fontWeight: 700, color: "#FFF", cursor: rejectionReason && !isSubmittingRejection ? "pointer" : "not-allowed" }}
               >
-                Confirm Removal
+                {isSubmittingRejection ? "Saving..." : "Confirm Removal"}
               </button>
             </div>
           </div>

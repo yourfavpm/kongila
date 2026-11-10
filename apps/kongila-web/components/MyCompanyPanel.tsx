@@ -9,11 +9,67 @@ interface MyCompanyPanelProps {
 }
 
 export default function MyCompanyPanel({ currentUser, organizations, clientProfiles, users }: MyCompanyPanelProps) {
-  // Find the organization for the current user
-  const currentProfile = clientProfiles.find(cp => cp.userId === currentUser.id || cp.user_id === currentUser.id);
-  const organizationId = currentProfile?.organizationId || currentProfile?.organization_id;
-  const organization = organizations.find(o => o.id === organizationId);
-  
+  // This panel used to derive the company from the `organizations` and
+  // `clientProfiles` arrays handed down from the page, and render
+  // "Loading company details..." whenever it could not find a match. Nothing
+  // in that path was loading anything: if either array came back empty, which
+  // is what happens when the caller has no client_profiles row or no
+  // organization_id on it, the panel sat on that message for ever and the
+  // client could not tell a slow network from a missing record.
+  //
+  // It now asks the server for its own company. GET /api/company resolves the
+  // organisation from the caller's verified session, so there are three real
+  // outcomes: loaded, failed with a reason, or no company linked yet.
+  const [company, setCompany] = useState<{ organization: any; profile: any; isPrimaryContact?: boolean; primaryContact?: any } | null>(null);
+  const [loadingCompany, setLoadingCompany] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingCompany(true);
+    setLoadError('');
+
+    (async () => {
+      try {
+        const res = await apiFetch('/api/company');
+        const body = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) {
+          setLoadError(body?.error || `Could not load your company (${res.status}).`);
+          setCompany(null);
+          return;
+        }
+        setCompany({
+          organization: body?.organization || null,
+          profile: body?.profile || null,
+          isPrimaryContact: Boolean(body?.isPrimaryContact),
+          primaryContact: body?.primaryContact || null
+        });
+      } catch (err: any) {
+        if (!cancelled) {
+          setLoadError(err?.message || 'Could not reach the server.');
+          setCompany(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingCompany(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [currentUser?.id, reloadToken]);
+
+  // The page-level arrays stay as a fallback so nothing regresses for a client
+  // whose snapshot is already populated, but they no longer decide whether
+  // this panel renders at all.
+  const fallbackProfile = clientProfiles.find(cp => cp.userId === currentUser.id || cp.user_id === currentUser.id);
+  const currentProfile: any = company?.profile || fallbackProfile;
+  const organization: any = company?.organization
+    || organizations.find(o => o.id === (fallbackProfile?.organizationId || fallbackProfile?.organization_id));
+  const organizationId = organization?.id
+    || currentProfile?.organizationId
+    || currentProfile?.organization_id;
+
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -87,6 +143,9 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
       }
 
       setSuccessMsg('Company profile updated successfully.');
+      // Read it back, so what is on screen is what the server stored rather
+      // than what was typed.
+      setReloadToken(t => t + 1);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to update company profile');
     } finally {
@@ -101,7 +160,7 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
   const [inviteJobTitle, setInviteJobTitle] = useState('');
   const [invitePermission, setInvitePermission] = useState('Full Access');
   const [inviting, setInviting] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{link?: string, error?: string} | null>(null);
+  const [inviteResult, setInviteResult] = useState<{link?: string, error?: string, emailSent?: boolean, emailError?: string} | null>(null);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +184,11 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send invite');
       
-      setInviteResult({ link: data.inviteLink });
+      setInviteResult({
+        link: data.inviteLink,
+        emailSent: data.emailSent,
+        emailError: data.emailError
+      });
       setInviteEmail('');
       setInviteName('');
       setInviteJobTitle('');
@@ -136,10 +199,37 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
     }
   };
 
+  if (loadingCompany && !organization) {
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: '#64748B' }}>
+        Loading company details…
+      </div>
+    );
+  }
+
+  if (loadError && !organization) {
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: '#991B1B' }}>
+        <div style={{ fontWeight: 700, marginBottom: '8px' }}>We could not load your company details.</div>
+        <div style={{ fontSize: '13px', color: '#64748B', marginBottom: '16px' }}>{loadError}</div>
+        <button
+          type="button"
+          onClick={() => setReloadToken(t => t + 1)}
+          style={{ padding: '10px 18px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#fff', cursor: 'pointer', fontWeight: 600 }}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
   if (!organization) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: '#64748B' }}>
-        Loading company details...
+        <div style={{ fontWeight: 700, color: '#0F172A', marginBottom: '8px' }}>No company is linked to your account yet.</div>
+        <div style={{ fontSize: '13px' }}>
+          Your company record is created with your first talent request. Submit one, or ask whoever invited you to add you to their company.
+        </div>
       </div>
     );
   }
@@ -155,6 +245,47 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
       <div style={{ marginBottom: '32px' }}>
         <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#0F172A', marginBottom: '8px' }}>My Company</h1>
         <p style={{ color: '#64748B', fontSize: '14px' }}>Manage your organization's profile and team members.</p>
+      </div>
+
+      {/* Who this account belongs to. The page gave no sign that the account
+          is the company's rather than the signed-in person's, or who among
+          the team administers it. */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '16px',
+        flexWrap: 'wrap',
+        padding: '16px 18px',
+        marginBottom: '24px',
+        borderRadius: '12px',
+        background: company?.isPrimaryContact ? '#EFF6FF' : '#F8FAFC',
+        border: `1px solid ${company?.isPrimaryContact ? '#BFDBFE' : '#E2E8F0'}`
+      }}>
+        <div>
+          <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#64748B' }}>
+            Primary contact
+          </div>
+          <div style={{ fontSize: '15px', fontWeight: 700, color: '#0F172A', marginTop: '2px' }}>
+            {company?.isPrimaryContact
+              ? `You (${company?.primaryContact?.position || currentProfile?.position || 'Administrator'})`
+              : company?.primaryContact?.name
+                || company?.primaryContact?.email
+                || 'Not set'}
+          </div>
+          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px', maxWidth: '620px', lineHeight: 1.6 }}>
+            {company?.isPrimaryContact
+              ? 'This account belongs to the company. As its primary contact you can edit these details and invite colleagues.'
+              : company?.primaryContact
+                ? `${company.primaryContact.name || company.primaryContact.email} administers this company account. Ask them to change the company details or your access level.`
+                : 'No primary contact is recorded for this company. Ask Kongila to set one.'}
+          </div>
+        </div>
+        {(currentProfile?.permissionLevel || currentProfile?.permission_level) && (
+          <div style={{ fontSize: '12px', fontWeight: 700, padding: '6px 12px', borderRadius: '999px', background: '#FFF', border: '1px solid #CBD5E1', color: '#334155', whiteSpace: 'nowrap' }}>
+            Your access: {currentProfile.permissionLevel || currentProfile.permission_level}
+          </div>
+        )}
       </div>
 
       {(successMsg || errorMsg) && (
@@ -229,7 +360,7 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
               <input style={inputStyle} value={formData.contactPhone} onChange={e => setFormData({...formData, contactPhone: e.target.value})} />
             </div>
             <div>
-              <label style={labelStyle}>Job Title</label>
+              <label style={labelStyle}>Position Held</label>
               <input style={inputStyle} value={formData.position} onChange={e => setFormData({...formData, position: e.target.value})} />
             </div>
           </div>
@@ -321,7 +452,8 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
             
             {inviteResult?.link && (
               <div style={{ padding: '12px', background: '#ECFDF5', border: '1px solid #10B981', borderRadius: '6px', marginBottom: '16px', color: '#065F46', fontSize: '13px' }}>
-                <strong>Simulation:</strong> Invitation sent! Registration link:<br/>
+                <strong>{inviteResult.emailSent ? 'Invitation email sent.' : 'Invitation email not sent.'}</strong>
+                {inviteResult.emailError && <> {inviteResult.emailError}</>} Registration link:<br/>
                 <a href={inviteResult.link} target="_blank" rel="noreferrer" style={{ color: '#059669', wordBreak: 'break-all' }}>{inviteResult.link}</a>
               </div>
             )}

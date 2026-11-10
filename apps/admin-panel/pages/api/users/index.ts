@@ -40,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       : { ok: false, status: 400, error: `Unknown action "${action}".` };
 
     if (!result.ok) return res.status(result.status).json({ error: result.error });
-    return res.status(result.status).json(result.data);
+    return res.status(result.status).json({ ...result.data, warnings: result.warnings || [] });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });

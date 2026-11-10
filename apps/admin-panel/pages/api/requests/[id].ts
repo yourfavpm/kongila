@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { canAccessRequest, getRequestUser, getSupabaseClient } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -24,6 +24,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(500).json({ error: 'Could not load the request' });
   }
   if (!data) return res.status(404).json({ error: 'Request not found' });
+  try {
+    if (!await canAccessRequest(supabase, actor, data)) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+  } catch (accessError: any) {
+    console.error('[requests/:id] ownership lookup failed:', accessError.message);
+    return res.status(500).json({ error: 'Could not verify request ownership.' });
+  }
 
   return res.status(200).json(data);
 }

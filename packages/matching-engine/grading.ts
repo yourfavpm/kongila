@@ -104,3 +104,67 @@ export function calculateCompositeVettingGrade(
   const score = Math.round(total);
   return { score, grade: gradeForScore(score) };
 }
+
+/**
+ * What has actually been scored, and what may honestly be shown as a result.
+ *
+ * `calculateCompositeVettingGrade` answers "does this candidate pass?", and
+ * for an empty score set the honest answer is no. That makes it the wrong
+ * function to render from. A candidate who finished onboarding an hour ago
+ * has no scores, computes 0, grades as Reject, and the portal showed them a
+ * grade for an assessment nobody had carried out.
+ *
+ * This separates the two questions:
+ *
+ *   score   null until at least one stage has produced a score. After that
+ *           it is the weighted total so far, which is a progress figure and
+ *           not a verdict: dimensions still to come count as zero.
+ *   grade   null until all five scored dimensions have a value. A grade is a
+ *           statement about a finished assessment, and deriving one from two
+ *           stages out of five says Reject about a candidate who is simply
+ *           not finished yet.
+ *
+ * Render from this. Decide with `calculateCompositeVettingGrade`.
+ */
+export interface VettingScoreState {
+  scoredDimensions: Array<keyof VettingScoresInput>;
+  missingDimensions: Array<keyof VettingScoresInput>;
+  /** At least one dimension has a value. */
+  isScored: boolean;
+  /** Every weighted dimension has a value, so a grade means something. */
+  isFullyScored: boolean;
+  /** Weighted total so far, or null when nothing has been scored. */
+  score: number | null;
+  /** The grade, or null until the assessment is complete. */
+  grade: VettingGrade | null;
+}
+
+function hasScore(raw: unknown): boolean {
+  if (raw === undefined || raw === null || raw === '') return false;
+  return Number.isFinite(Number(raw));
+}
+
+export function vettingScoreState(
+  scores: Partial<VettingScoresInput> | null | undefined
+): VettingScoreState {
+  const scoredDimensions: Array<keyof VettingScoresInput> = [];
+  const missingDimensions: Array<keyof VettingScoresInput> = [];
+
+  for (const dimension of COMPOSITE_WEIGHTS) {
+    if (hasScore(scores?.[dimension.key])) scoredDimensions.push(dimension.key);
+    else missingDimensions.push(dimension.key);
+  }
+
+  const isScored = scoredDimensions.length > 0;
+  const isFullyScored = missingDimensions.length === 0;
+  const computed = calculateCompositeVettingGrade(scores);
+
+  return {
+    scoredDimensions,
+    missingDimensions,
+    isScored,
+    isFullyScored,
+    score: isScored ? computed.score : null,
+    grade: isFullyScored ? computed.grade : null
+  };
+}

@@ -18,5 +18,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const result = await scheduleInterview(actor, req.body || {});
   if (!result.ok) return res.status(result.status).json({ error: result.error });
 
-  return res.status(result.status).json({ interview: result.data, warnings: result.warnings });
+  const row = result.data || {};
+  return res.status(result.status).json({
+    interview: {
+      ...row,
+      requestId: row.request_id,
+      matchId: row.match_id,
+      talentId: row.talent_id,
+      clientId: row.client_id,
+      talentName: row.talent_name,
+      talentAvatar: row.talent_avatar,
+      clientName: row.client_name,
+      scheduledTime: row.scheduled_time,
+      scheduledTimezone: row.scheduled_timezone,
+      clientTimezone: row.client_timezone,
+      talentTimezone: row.talent_timezone,
+      durationMinutes: row.duration_minutes,
+      meetingLink: row.meeting_link,
+      createdAt: row.created_at
+    },
+    warnings: result.warnings
+  });
 }

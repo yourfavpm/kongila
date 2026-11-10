@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { canAccessRequest, getRequestUser, getSupabaseClient } from '@kongila/database';
+import { resolveRole } from '@kongila/auth';
 import {
   normalizeRequestStatus,
   canTransitionRequest,
@@ -27,7 +28,7 @@ import {
 async function loadRequest(supabase: any, requestId: string) {
   const { data, error } = await supabase
     .from('talent_requests')
-    .select('id, payload')
+    .select('id, payload, status, client_id, account_manager_id')
     .or(`id.eq.${requestId},payload->>id.eq.${requestId}`)
     .limit(2);
 
@@ -67,18 +68,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const row = await loadRequest(supabase, String(requestId));
     if (!row) return res.status(404).json({ error: 'Request not found' });
+    if (!await canAccessRequest(supabase, actor, row)) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
 
     const payload = row.payload || {};
     // An existing value that no longer resolves is treated as the start of
     // the pipeline for the purpose of deciding the next move, and said out
     // loud, rather than quietly rewriting history.
-    const current = normalizeRequestStatus(payload.status);
+    const current = normalizeRequestStatus(payload.status || row.status);
     if (!current && payload.status) {
       console.warn(
         `[requests/status] request ${requestId} holds unrecognised status "${payload.status}"`
       );
     }
     const from = current || 'New Request';
+
+    const isAccountManagerStartingAllowedStep = resolveRole(actor.role) === 'account_manager'
+      && ((from === 'New Request' && target === 'Reviewing')
+        || (from === 'Reviewing' && target === 'Sourcing Talent'));
+    if (resolveRole(actor.role) === 'account_manager' && !isAccountManagerStartingAllowedStep) {
+      return res.status(403).json({ error: 'Account managers can only move assigned requests into Reviewing or Sourcing Talent.' });
+    }
 
     if (!canTransitionRequest(from, target)) {
       return res.status(409).json({
@@ -106,7 +117,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { error: updateError } = await supabase
       .from('talent_requests')
-      .update({ payload: nextPayload, ...columnPatch })
+      .update({
+        payload: nextPayload,
+        status: target.toLowerCase().replace(/ /g, '_'),
+        ...columnPatch
+      })
       .eq('id', row.id);
 
     if (updateError) {

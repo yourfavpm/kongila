@@ -19,8 +19,10 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers } from './notify';
-import { coerceRequestStatus } from '@kongila/workflows';
+import { notifyUsers, talentPortalUrl, clientPortalUrl } from './notify';
+import { coerceRequestStatus, matchingProgressStatus, normalizeRequestStatus } from '@kongila/workflows';
+import { requestTitle } from '@kongila/shared-types';
+import { canAccessRequest } from './requestAccess';
 
 export interface MatchingResult<T = any> {
   ok: boolean;
@@ -58,7 +60,11 @@ export async function submitCandidates(
   const requestId = String(input.requestId || '').trim();
   if (!requestId) return fail(400, 'Which request?');
 
-  const candidates = (input.candidates || []).filter(c => c && c.talentId);
+  const candidates = Array.from(
+    new Map((input.candidates || [])
+      .filter(c => c && c.talentId)
+      .map(candidate => [String(candidate.talentId), candidate])).values()
+  );
   if (candidates.length === 0) return fail(400, 'No candidates were selected.');
   if (candidates.length > MAX_CANDIDATES) {
     return fail(422, `That is more than ${MAX_CANDIDATES} candidates for one request.`);
@@ -75,12 +81,18 @@ export async function submitCandidates(
   if (loadError) return fail(500, `That request could not be loaded: ${loadError.message}`);
   if (!rows || rows.length === 0) return fail(404, 'That request does not exist.');
   const row = rows[0];
+  try {
+    if (!await canAccessRequest(supabase, actor, row)) return fail(404, 'That request does not exist.');
+  } catch (accessError: any) {
+    return fail(500, `Request ownership could not be verified: ${accessError.message}`);
+  }
 
   // Every candidate has to be a real talent profile. A bad id used to go
   // straight into matches and show up in the client portal as a blank card.
   const talentIds = Array.from(new Set(candidates.map(c => String(c.talentId))));
-  const { data: profiles } = await supabase
+  const { data: profiles, error: profilesError } = await supabase
     .from('talent_profiles').select('id').in('id', talentIds);
+  if (profilesError) return fail(500, `Candidates could not be verified: ${profilesError.message}`);
 
   const known = new Set((profiles || []).map((p: any) => String(p.id)));
   const missing = talentIds.filter(id => !known.has(id));
@@ -92,10 +104,22 @@ export async function submitCandidates(
   const payload = { ...(row.payload || {}) };
   const accountManagerId = row.account_manager_id || payload.assignedAccountManagerId || null;
   const talentManagerId = row.talent_manager_id || payload.assignedTalentManagerId || null;
+  const startingStatus = normalizeRequestStatus(payload.status || row.status);
+  if (startingStatus === 'Closed' || startingStatus === 'Onboarding') {
+    return fail(409, `Candidates cannot be added to a ${startingStatus.toLowerCase()} request.`);
+  }
 
   // ── The matches ──────────────────────────────────────────────────────────
   // 'proposed', not 'shortlisted'. Shortlisting is the client's move.
-  const matchRows = talentIds.map(talentId => {
+  const { data: existingMatches, error: existingError } = await supabase
+    .from('matches')
+    .select('talent_id')
+    .eq('request_id', row.id)
+    .in('talent_id', talentIds);
+  if (existingError) return fail(500, `Existing matches could not be checked: ${existingError.message}`);
+
+  const existingTalentIds = new Set((existingMatches || []).map((match: any) => String(match.talent_id)));
+  const matchRows = talentIds.filter(talentId => !existingTalentIds.has(talentId)).map(talentId => {
     const candidate = candidates.find(c => String(c.talentId) === talentId) as ProposedCandidate;
     const score = Number(candidate.score);
     return {
@@ -109,27 +133,35 @@ export async function submitCandidates(
     };
   });
 
-  const { error: matchError } = await supabase
-    .from('matches').upsert(matchRows, { onConflict: 'id' });
+  if (matchRows.length === 0) {
+    return fail(409, 'Every selected candidate is already on this request. Existing match decisions were left unchanged.');
+  }
+
+  const { error: matchError } = await supabase.from('matches').insert(matchRows);
   if (matchError) return fail(500, `Those candidates were not submitted: ${matchError.message}`);
 
   // ── The request ──────────────────────────────────────────────────────────
-  payload.status = coerceRequestStatus('Candidates Ready');
+  const nextStatus = matchingProgressStatus(startingStatus, 'candidates_submitted');
+  if (nextStatus) payload.status = nextStatus;
   payload.assignedAccountManagerId = accountManagerId;
   payload.assignedTalentManagerId = talentManagerId;
 
-  const { error: requestError } = await supabase
-    .from('talent_requests')
-    .update({
-      payload,
-      status: 'candidates_ready',
-      account_manager_id: accountManagerId,
-      talent_manager_id: talentManagerId
-    })
-    .eq('id', row.id);
+  if (nextStatus) {
+    const { error: requestError } = await supabase
+      .from('talent_requests')
+      .update({
+        payload,
+        status: nextStatus.toLowerCase().replace(/ /g, '_'),
+        account_manager_id: accountManagerId,
+        talent_manager_id: talentManagerId
+      })
+      .eq('id', row.id);
 
-  if (requestError) {
-    warnings.push(`The candidates were submitted but the request did not move: ${requestError.message}`);
+    if (requestError) {
+      warnings.push(`The candidates were submitted but the request did not move: ${requestError.message}`);
+    }
+  } else {
+    warnings.push(`Candidates were added, but the request remains ${coerceRequestStatus(startingStatus)}.`);
   }
 
   await recordAudit(actor, {
@@ -139,15 +171,52 @@ export async function submitCandidates(
     entityId: String(row.id)
   });
 
+  const roleForNotice = requestTitle({ ...payload, title: payload.title || row.title })
+    || row.service_type
+    || undefined;
+  const companyForNotice = payload.clientName || undefined;
+
   // ── The client ───────────────────────────────────────────────────────────
   if (row.client_id) {
     const notified = await notifyUsers(String(row.client_id), 'candidates_ready', {
       candidateCount: matchRows.length,
-      roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined
+      roleTitle: roleForNotice,
+      actionUrl: clientPortalUrl('/?section=radar')
     });
     warnings.push(...notified.warnings);
   } else {
     warnings.push('That request has no client on it, so nobody was notified.');
+  }
+
+  // ── The candidates ───────────────────────────────────────────────────────
+  //
+  // Nobody told them. The client heard that a shortlist was ready and the
+  // people on it heard nothing, so the first a candidate knew of being put
+  // forward was an interview request out of the blue — or, if the client
+  // passed, nothing at all. The talent FRD lists this as its own
+  // notification.
+  //
+  // talent_profiles.id is the profile id; notifications go to the user, so
+  // the user ids are resolved first. A failure here never fails a submission
+  // that has already been stored.
+  try {
+    const talentIds = matchRows.map(m => String(m.talent_id)).filter(Boolean);
+    if (talentIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('talent_profiles').select('id, user_id').in('id', talentIds);
+
+      const userIds = (profiles || []).map((t: any) => String(t.user_id)).filter(Boolean);
+      if (userIds.length > 0) {
+        const told = await notifyUsers(userIds, 'submitted_to_client', {
+          roleTitle: roleForNotice,
+          companyName: companyForNotice,
+          actionUrl: talentPortalUrl('/?section=opportunities')
+        });
+        warnings.push(...told.warnings);
+      }
+    }
+  } catch (err: any) {
+    warnings.push(`The candidates were submitted but not all of them could be told: ${err?.message || err}`);
   }
 
   return {
@@ -203,6 +272,11 @@ export async function flagSourcingRequired(
   if (loadError) return fail(500, `That request could not be loaded: ${loadError.message}`);
   if (!rows || rows.length === 0) return fail(404, 'That request does not exist.');
   const row = rows[0];
+  try {
+    if (!await canAccessRequest(supabase, actor, row)) return fail(404, 'That request does not exist.');
+  } catch (accessError: any) {
+    return fail(500, `Request ownership could not be verified: ${accessError.message}`);
+  }
 
   const payload = { ...(row.payload || {}) };
   const note = String(input.note || '').trim();

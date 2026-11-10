@@ -74,6 +74,17 @@ export async function getCompany(actor: Actor): Promise<CompanyResult> {
     ? await supabase.from('organizations').select('*').eq('id', profile.organization_id).maybeSingle()
     : { data: null };
 
+  // Who the company's primary contact is, by name, so the portal can say so
+  // instead of leaving every member to guess whether the account is theirs to
+  // administer.
+  const primaryContactUserId = organization?.primary_contact_user_id || null;
+  const [primaryContactUser, primaryContactProfile] = primaryContactUserId
+    ? await Promise.all([
+        supabase.from('users').select('id, name, email').eq('id', primaryContactUserId).maybeSingle(),
+        supabase.from('client_profiles').select('position, phone').eq('user_id', primaryContactUserId).maybeSingle()
+      ])
+    : [{ data: null }, { data: null }];
+
   return {
     ok: true,
     status: 200,
@@ -85,7 +96,21 @@ export async function getCompany(actor: Actor): Promise<CompanyResult> {
         permissionLevel: profile.permission_level,
         settings: profile.settings
       },
-      organization: organization || null
+      organization: organization || null,
+      // True for the person who signed the company up. The portal uses it to
+      // present this screen as the company's own record rather than as one
+      // member's profile.
+      isPrimaryContact:
+        Boolean(primaryContactUserId) && String(primaryContactUserId) === String(actor.userId),
+      primaryContact: primaryContactUser.data
+        ? {
+            userId: primaryContactUser.data.id,
+            name: primaryContactUser.data.name || null,
+            email: primaryContactUser.data.email || null,
+            position: primaryContactProfile.data?.position || null,
+            phone: primaryContactProfile.data?.phone || null
+          }
+        : null
     }
   };
 }

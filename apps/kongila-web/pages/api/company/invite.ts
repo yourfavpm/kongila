@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getRequestUser } from '@kongila/database';
+import { buildNotification, emailIsConfigured, sendEmail } from '@kongila/notifications';
 import { signInvite } from '../../../lib/inviteToken';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -15,8 +16,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { email, organizationId, permissionLevel, name, jobTitle } = req.body;
 
-    if (!email || !organizationId || !permissionLevel) {
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!normalizedEmail || !organizationId || !permissionLevel) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    if (normalizedEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Enter a valid email address for the invite.' });
     }
 
     // A client may only invite into their own organisation. Operations may
@@ -34,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // as editable query parameters.
     const token = signInvite({
       orgId: String(organizationId),
-      email: String(email).trim().toLowerCase(),
+      email: normalizedEmail,
       permissionLevel: String(permissionLevel),
       name: name || '',
       jobTitle: jobTitle || ''
@@ -43,15 +48,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
     const inviteLink = `${baseUrl}/?invite=${encodeURIComponent(token)}`;
 
-    // No email provider is wired yet, so the link is returned to the inviter
-    // to pass on by hand. Once email lands, send it and stop returning it.
-    console.log(`[EMAIL SIMULATION] Sending invite to ${email}`);
-    console.log(`[EMAIL SIMULATION] Subject: You've been invited to join your company on Kongila`);
-    console.log(`[EMAIL SIMULATION] Body: Click the link to register: ${inviteLink}`);
+    const content = buildNotification('team_invitation', {
+      recipientName: String(name || '').trim() || undefined,
+      companyName: 'your company',
+      inviterName: actor.email?.split('@')[0] || 'A colleague',
+      actionUrl: inviteLink,
+      expiresIn: '7 days'
+    });
+    let emailSent = false;
+    let emailError: string | undefined;
+
+    if (emailIsConfigured()) {
+      const result = await sendEmail({
+        to: normalizedEmail,
+        subject: content.subject,
+        body: content.body
+      });
+      emailSent = result.success;
+      if (!result.success) emailError = result.error || 'Resend did not accept the invitation.';
+    } else {
+      emailError = 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM.';
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'Invitation created. The link is valid for 7 days.',
+      emailSent,
+      ...(emailError ? { emailError } : {}),
+      message: emailSent
+        ? 'Invitation email sent. The link is valid for 7 days.'
+        : 'Invitation created, but the email was not sent. Share the link manually.',
       inviteLink
     });
   } catch (error: any) {

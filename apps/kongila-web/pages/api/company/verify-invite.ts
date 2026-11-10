@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getSupabaseClient } from '@kongila/database';
 import { verifyInvite } from '../../../lib/inviteToken';
 
 /**
@@ -30,5 +31,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { orgId, email, permissionLevel, name, jobTitle } = result.payload;
-  return res.status(200).json({ ok: true, orgId, email, permissionLevel, name, jobTitle });
+
+  // The name of the company they are joining. The signup form asked an
+  // invited colleague to type a company name, which provisioning then ignored
+  // in favour of the organisation in the token, so the field could disagree
+  // with the account it was creating. The form now states the company instead
+  // of asking for it, which is what this is for.
+  //
+  // It is not a disclosure: whoever holds a signed token for this
+  // organisation was sent it by one of its administrators.
+  let organizationName: string | null = null;
+  try {
+    const { data } = await getSupabaseClient()
+      .from('organizations').select('name').eq('id', orgId).maybeSingle();
+    organizationName = data?.name || null;
+  } catch (error: any) {
+    // A readable name is a nicety. A failure here must not stop a valid
+    // invitation being accepted.
+    console.warn('[company/verify-invite] organisation name lookup failed:', error?.message);
+  }
+
+  return res.status(200).json({
+    ok: true, orgId, organizationName, email, permissionLevel, name, jobTitle
+  });
 }

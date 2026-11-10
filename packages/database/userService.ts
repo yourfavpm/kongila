@@ -22,7 +22,8 @@ import {
   storableRole,
   type AdminRole
 } from '@kongila/auth';
-import { notifyUsers } from './notify';
+import { notifyAdmins, notifyUsers } from './notify';
+import { buildNotification, emailIsConfigured, sendEmail } from '@kongila/notifications';
 
 /** Named apart from interviewService's ServiceResult, which is a different shape. */
 export interface UserServiceResult<T = any> {
@@ -84,13 +85,8 @@ export interface InviteOperatorInput {
 }
 
 /**
- * Invites an operator.
- *
- * Supabase sends the invitation and the person sets their own password, so
- * no password is ever typed by one person for another or sent over a
- * channel nobody controls. The role is written to public.users by the
- * server, never from the browser: the users table had UPDATE revoked
- * precisely so a client could not set its own role.
+ * Invites an operator with a Supabase-generated, single-use setup link
+ * delivered through Kongila's branded Resend template.
  */
 export async function inviteOperator(
   actor: Actor,
@@ -109,30 +105,44 @@ export async function inviteOperator(
 
   const supabase = getSupabaseClient();
 
-  const { data: existing } = await supabase
+  if (!emailIsConfigured()) {
+    return fail(503, 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM before inviting operators.');
+  }
+
+  const { data: existing, error: existingError } = await supabase
     .from('users')
     .select('id, role, status')
     .eq('email', email)
     .maybeSingle();
 
+  if (existingError) return fail(500, `The existing account could not be checked: ${existingError.message}`);
   if (existing) {
     return fail(409, `${email} already has an account. Change their role instead of inviting them again.`);
   }
 
-  // inviteUserByEmail needs the service role key. If the server is running
-  // on the anon key this fails, which is the correct outcome: creating
-  // operator accounts is not something an anon key should be able to do.
-  const { data: invited, error: inviteError } = await (supabase as any).auth.admin.inviteUserByEmail(
+  const adminBaseUrl = process.env.NEXT_PUBLIC_ADMIN_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+    || process.env.NEXT_PUBLIC_SITE_URL
+    || 'http://localhost:3002';
+  const setupUrl = `${adminBaseUrl.replace(/\/$/, '')}/set-password`;
+  const { data: invited, error: inviteError } = await supabase.auth.admin.generateLink({
+    type: 'invite',
     email,
-    { data: { full_name: input.name || '', role } }
-  );
+    options: {
+      redirectTo: setupUrl,
+      data: { full_name: input.name || '', role }
+    }
+  });
 
   if (inviteError) {
-    return fail(500, `The invitation could not be sent: ${inviteError.message}`);
+    return fail(500, `The secure invitation could not be created: ${inviteError.message}`);
   }
 
   const userId = invited?.user?.id;
-  if (!userId) return fail(500, 'Supabase accepted the invitation but returned no user.');
+  const actionLink = invited?.properties?.action_link;
+  if (!userId || !actionLink) {
+    return fail(500, 'The secure invitation was created without the required account or setup link.');
+  }
 
   const { error: rowError } = await supabase.from('users').insert({
     id: userId,
@@ -159,7 +169,29 @@ export async function inviteOperator(
     entityId: userId
   });
 
-  return { ok: true, status: 201, data: { id: userId, email, role } };
+  const invitation = buildNotification('team_invitation', {
+    recipientName: input.name || undefined,
+    companyName: 'Kongila',
+    inviterName: actor.email || 'Your Kongila administrator',
+    roleTitle: ROLE_LABELS[role as AdminRole],
+    actionUrl: actionLink,
+    expiresIn: 'a limited period'
+  });
+  const emailResult = await sendEmail({
+    to: email,
+    subject: invitation.subject,
+    body: invitation.body
+  });
+  const warnings = emailResult.success
+    ? []
+    : [`The account was created, but its invitation email was not sent: ${emailResult.error || 'Resend rejected the message'}. Use Resend invite to try again.`];
+
+  return {
+    ok: true,
+    status: 201,
+    data: { id: userId, email, role, emailSent: emailResult.success },
+    warnings
+  };
 }
 
 // ─── Changing a role ─────────────────────────────────────────────────────────
@@ -178,13 +210,18 @@ export async function changeOperatorRole(
   }
 
   const supabase = getSupabaseClient();
-  const { data: target } = await supabase
+  const { data: target, error: targetError } = await supabase
     .from('users')
     .select('id, email, name, role')
     .eq('id', input.userId)
     .maybeSingle();
 
+  if (targetError) return fail(500, `The operator could not be loaded: ${targetError.message}`);
   if (!target) return fail(404, 'That user does not exist.');
+  const previousRole = ROLE_LABELS[resolveRole(target.role) as AdminRole] || target.role;
+  if (resolveRole(target.role) === role) {
+    return { ok: true, status: 200, data: { id: input.userId, role }, warnings: [] };
+  }
 
   // A super admin demoting themselves can lock the last one out of user
   // management, so it is refused unless somebody else can still do it.
@@ -206,15 +243,29 @@ export async function changeOperatorRole(
 
   if (error) return fail(500, error.message);
 
+  const nextRole = ROLE_LABELS[role as AdminRole];
+  const notified = await notifyUsers(String(target.id), 'operator_role_changed', {
+    previousRole,
+    newRole: nextRole,
+    changedBy: actor.email || actor.userId,
+    actionUrl: `${(process.env.NEXT_PUBLIC_ADMIN_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+      || 'http://localhost:3002').replace(/\/$/, '')}/`
+  });
+
   await recordAudit(actor, {
     action: 'Change Operator Role',
-    details: `${target.email}: ${ROLE_LABELS[resolveRole(target.role) as AdminRole] || target.role} ` +
-             `to ${ROLE_LABELS[role as AdminRole]}.`,
+    details: `${target.email}: ${previousRole} to ${nextRole}.`,
     entityType: 'user',
     entityId: input.userId
   });
 
-  return { ok: true, status: 200, data: { id: input.userId, role } };
+  return {
+    ok: true,
+    status: 200,
+    data: { id: input.userId, role },
+    warnings: notified.warnings
+  };
 }
 
 // ─── Suspending ──────────────────────────────────────────────────────────────
@@ -242,13 +293,17 @@ export async function setOperatorStatus(
   }
 
   const supabase = getSupabaseClient();
-  const { data: target } = await supabase
+  const { data: target, error: targetError } = await supabase
     .from('users')
-    .select('id, email, role')
+    .select('id, email, role, status')
     .eq('id', input.userId)
     .maybeSingle();
 
+  if (targetError) return fail(500, `The operator could not be loaded: ${targetError.message}`);
   if (!target) return fail(404, 'That user does not exist.');
+  if ((target.status || 'active') === input.status) {
+    return { ok: true, status: 200, data: { id: input.userId, status: input.status }, warnings: [] };
+  }
 
   if (input.status === 'suspended' && resolveRole(target.role) === 'super_admin') {
     const { count } = await supabase
@@ -277,31 +332,82 @@ export async function setOperatorStatus(
     entityId: input.userId
   });
 
-  return { ok: true, status: 200, data: { id: input.userId, status: input.status } };
+  const warnings: string[] = [];
+  if (input.status === 'suspended') {
+    const userNotice = await notifyUsers(String(target.id), 'operator_account_suspended', {
+      reason: input.reason
+    }, { emailOnly: true });
+    warnings.push(...userNotice.warnings);
+    const opsNotice = await notifyAdmins('operator_account_suspended_notice', {
+      suspendedEmail: target.email,
+      reason: input.reason
+    }, { excludeUserIds: [String(target.id)] });
+    warnings.push(...opsNotice.warnings);
+  } else {
+    const restored = await notifyUsers(String(target.id), 'operator_account_restored', {
+      actionUrl: `${(process.env.NEXT_PUBLIC_ADMIN_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+        || 'http://localhost:3002').replace(/\/$/, '')}/`
+    });
+    warnings.push(...restored.warnings);
+  }
+
+  return { ok: true, status: 200, data: { id: input.userId, status: input.status }, warnings };
 }
 
-/** Sends the invitation again, for one that expired or never arrived. */
+/** Sends a fresh setup link through Resend for an invitation that expired or never arrived. */
 export async function resendOperatorInvite(
   actor: Actor,
   input: { userId: string }
 ): Promise<UserServiceResult> {
   const refused = guard(actor);
   if (refused) return refused;
+  if (!emailIsConfigured()) {
+    return fail(503, 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM before resending invitations.');
+  }
 
   const supabase = getSupabaseClient();
-  const { data: target } = await supabase
+  const { data: target, error: targetError } = await supabase
     .from('users')
     .select('id, email, name, role')
     .eq('id', input.userId)
     .maybeSingle();
 
+  if (targetError) return fail(500, `The operator could not be loaded: ${targetError.message}`);
   if (!target?.email) return fail(404, 'That user does not exist, or has no email address.');
 
-  const { error } = await (supabase as any).auth.admin.inviteUserByEmail(target.email, {
-    data: { full_name: target.name || '', role: storableRole(target.role) }
+  const { data: generated, error } = await supabase.auth.admin.generateLink({
+    type: 'magiclink',
+    email: target.email,
+    options: {
+      redirectTo: `${(process.env.NEXT_PUBLIC_ADMIN_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+        || process.env.NEXT_PUBLIC_SITE_URL
+        || 'http://localhost:3002').replace(/\/$/, '')}/set-password`,
+      data: { full_name: target.name || '', role: storableRole(target.role) }
+    }
   });
 
-  if (error) return fail(500, `The invitation could not be resent: ${error.message}`);
+  if (error) return fail(500, `A fresh setup link could not be created: ${error.message}`);
+  const actionLink = generated?.properties?.action_link;
+  if (!actionLink) return fail(500, 'Supabase did not return a setup link.');
+
+  const content = buildNotification('team_invitation', {
+    recipientName: target.name || undefined,
+    companyName: 'Kongila',
+    inviterName: actor.email || 'Your Kongila administrator',
+    roleTitle: ROLE_LABELS[resolveRole(target.role) as AdminRole] || target.role,
+    actionUrl: actionLink,
+    expiresIn: 'a limited period'
+  });
+  const emailResult = await sendEmail({ to: target.email, subject: content.subject, body: content.body });
+  if (!emailResult.success) {
+    return {
+      ok: false,
+      status: 502,
+      error: `A new setup link was created, but the email was not sent: ${emailResult.error || 'Resend rejected the message'}.`
+    };
+  }
 
   await recordAudit(actor, {
     action: 'Resend Operator Invite',
@@ -310,5 +416,5 @@ export async function resendOperatorInvite(
     entityId: target.id
   });
 
-  return { ok: true, status: 200, data: { id: target.id } };
+  return { ok: true, status: 200, data: { id: target.id, emailSent: true } };
 }

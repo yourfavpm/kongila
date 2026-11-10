@@ -1,5 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readTalentVetting, writeTalentVetting, getRequestUser } from '@kongila/database';
+import {
+  readTalentVetting,
+  writeTalentVetting,
+  getRequestUser,
+  ensureVettingPipeline
+} from '@kongila/database';
 import { VettingStageRecord } from '@kongila/shared-types';
 
 /**
@@ -9,19 +14,12 @@ import { VettingStageRecord } from '@kongila/shared-types';
 const TALENT_ACTIONS: Record<string, number> = {
   COMPLETE_STAGE_4: 3, // Personality Test
   SUBMIT_STAGE_5: 4, // Remote Readiness
-  START_STAGE_6: 5, // Work Simulation, begin
-  SUBMIT_STAGE_6: 5 // Work Simulation, submit
+  START_STAGE_6: 5 // Work Simulation, begin
 };
 
-const STAGE_META = [
-  { name: 'Application Screening', responsible: 'Talent Manager' },
-  { name: 'Skill Assessment', responsible: 'Skill Assessor' },
-  { name: 'Behavioural Interview', responsible: 'Talent Manager' },
-  { name: 'Personality Test', responsible: 'System (Auto)' },
-  { name: 'Remote Readiness', responsible: 'Ops Team' },
-  { name: 'Work Simulation', responsible: 'Team Lead' },
-  { name: 'Final Review', responsible: 'Review Panel' }
-];
+// The stage list used to be copied here, and a third time in the talent
+// dashboard. It lives in @kongila/matching-engine, which is also what writes
+// the pipeline, so there is nothing left to copy.
 
 /** A stage is behind us only if it passed or was deliberately skipped. */
 const COMPLETED_STATUSES = new Set(['passed', 'skipped']);
@@ -45,16 +43,6 @@ function findIncompletePriorStage(pipeline: VettingStageRecord[], stageIndex: nu
   return null;
 }
 
-function buildDefaultPipeline(): VettingStageRecord[] {
-  const now = new Date().toISOString();
-  return STAGE_META.map((meta, i) => ({
-    stageIndex: i,
-    stageName: meta.name,
-    status: i === 0 ? 'in_progress' : 'pending',
-    assignee: meta.responsible,
-    startedAt: i === 0 ? now : null
-  })) as VettingStageRecord[];
-}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end();
@@ -93,8 +81,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: 'Talent not found' });
     }
 
-    const pipeline: VettingStageRecord[] =
-      snapshot.pipeline.length > 0 ? [...snapshot.pipeline] : buildDefaultPipeline();
+    // A candidate with no pipeline used to have one invented here, which is
+    // how four different surfaces ended up each making their own. The
+    // pipeline is created in one place, when onboarding completes. A
+    // candidate who predates that gets theirs created now, by the same
+    // function, rather than by a copy of it living in this route.
+    let stages = snapshot.pipeline;
+    if (stages.length === 0) {
+      await ensureVettingPipeline(String(talentId));
+      const reread = await readTalentVetting(String(talentId));
+      stages = reread?.pipeline || [];
+      if (stages.length === 0) {
+        return res.status(409).json({
+          error: 'Your vetting has not started yet. Finish onboarding first; if you already have, reload and try again.'
+        });
+      }
+    }
+
+    const pipeline: VettingStageRecord[] = [...stages];
 
     const currentStage = pipeline[Number(stageIndex)];
     if (!currentStage) {
@@ -138,13 +142,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } else if (action === 'START_STAGE_6') {
       // Talent explicitly started the simulation
       currentStage.startedAt = now;
-    } else if (action === 'SUBMIT_STAGE_6') {
-      currentStage.status = 'passed';
-      currentStage.completedAt = now;
-      currentStage.submissionData = payload; // Store the submission payload directly on the pipeline stage
-
-      // Advance to Stage 7
-      pipeline[6] = { ...pipeline[6], status: 'in_progress', startedAt: now };
     } else if (action === 'COMPLETE_STAGE_4') {
       currentStage.status = 'passed';
       currentStage.completedAt = now;

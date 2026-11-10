@@ -12,7 +12,7 @@
  * client who is billed for twenty things and shown fifteen will query it.
  */
 
-import { buildPdf, textWidth, PAGE_WIDTH, type DrawOp } from './pdf';
+import { buildPdf, textWidth, PAGE_WIDTH, type DrawOp } from './pdf.ts';
 
 export interface InvoicePdfLine {
   description: string;

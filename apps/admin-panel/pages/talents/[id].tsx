@@ -4,7 +4,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, KongilaLoader } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
-import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
+import { vettingScoreState } from '@kongila/matching-engine';
 import { calculateTalentProfileCompletion } from '@kongila/shared-types';
 import { supabase } from '../../lib/supabaseClient';
 import {
@@ -363,12 +363,40 @@ export default function TalentProfileView() {
               <h4 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '8px' }}>Preferences & Compensation</h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '13px' }}>
                 {[
-                  { label: 'Preferred Engagement', val: talent.preferredEngagementType || talent.employmentPreference },
-                  { label: 'Preferred Work Hours', val: talent.preferredWorkHours || talent.hourlyMonthly },
-                  { label: 'Preferred Project Type', val: talent.preferredProjectType },
-                  { label: 'Available Start Date', val: talent.availableStartDate },
-                  { label: 'Salary Expectation (USD)', val: talent.salaryExpectationUsd ? `USD ${formatCurrency(talent.salaryExpectationUsd)}` : talent.salaryExpectation ? `USD ${formatCurrency(talent.salaryExpectation)}` : 'Not provided' },
-                  { label: 'Local Currency', val: talent.salaryExpectationCurrency || talent.currency },
+                  { label: 'Employment Preference', val: talent.employmentPreference },
+                  { label: 'Paid By', val: talent.preferredWorkHours || talent.hourlyMonthly },
+                  // Labelled "Available Start Date" and fed from
+                  // availableStartDate, which onboarding writes from the
+                  // notice period question. The figure was right and the label
+                  // asked a different question.
+                  { label: 'Notice Period', val: talent.noticePeriod || talent.availableStartDate },
+                  // The band the candidate actually gave. This showed one
+                  // figure, so an operator could not see the range they said
+                  // they would accept, which is the number that matters when
+                  // matching against a client's budget.
+                  {
+                    label: 'Expected Salary Band (USD)',
+                    val: (() => {
+                      const min = Number(talent.salaryExpectationMinUsd || 0);
+                      const max = Number(talent.salaryExpectationMaxUsd || 0);
+                      if (min > 0 && max > 0 && min !== max) {
+                        return `USD ${formatCurrency(min)} – ${formatCurrency(max)}`;
+                      }
+                      const single = max || min || Number(talent.salaryExpectationUsd || talent.salaryExpectation || 0);
+                      return single > 0 ? `USD ${formatCurrency(single)}` : undefined;
+                    })()
+                  },
+                  {
+                    label: 'As Quoted',
+                    val: (() => {
+                      const currency = talent.salaryExpectationCurrency || talent.currency;
+                      if (!currency) return undefined;
+                      const min = Number(talent.salaryExpectationMin || 0);
+                      const max = Number(talent.salaryExpectationMax || 0);
+                      if (min > 0 && max > 0 && min !== max) return `${currency} ${min.toLocaleString()} – ${max.toLocaleString()}`;
+                      return currency;
+                    })()
+                  },
                 ].map(({ label, val }) => (
                   <div key={label}>
                     <div style={{ color: 'var(--text-muted)', marginBottom: '4px', fontSize: '11px', textTransform: 'uppercase' }}>{label}</div>
@@ -378,9 +406,21 @@ export default function TalentProfileView() {
               </div>
             </GlassCard>
 
-            {/* Work Setup & Equipment */}
+            {/* Work Setup & Equipment.
+                These four were collected by the Remote Readiness step of
+                talent onboarding, which has been removed: they were free text
+                nobody vetted against. They are now produced by stage 4 of
+                vetting, which the operations team administers, so this card
+                shows what that stage recorded. For a candidate who has not
+                reached stage 4 there is nothing to show, and the card says so
+                rather than printing four "Not provided" rows. */}
             <GlassCard>
               <h4 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '8px' }}>Work Setup & Equipment</h4>
+              {!talent.workSetup && !talent.devices && !talent.internetQuality && !talent.communicationTools ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  Recorded at the Remote Readiness stage of vetting. Nothing has been entered for this candidate yet.
+                </div>
+              ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', fontSize: '13px' }}>
                 {[
                   { label: 'Primary Work Setup', val: talent.workSetup },
@@ -390,10 +430,11 @@ export default function TalentProfileView() {
                 ].map(({ label, val }) => (
                   <div key={label}>
                     <div style={{ color: 'var(--text-muted)', marginBottom: '4px', fontSize: '11px', textTransform: 'uppercase' }}>{label}</div>
-                    <div style={{ fontWeight: 500, color: val ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{val || 'Not provided'}</div>
+                    <div style={{ fontWeight: 500, color: val ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{val || 'Not recorded'}</div>
                   </div>
                 ))}
               </div>
+              )}
             </GlassCard>
 
             {/* Identity & Compliance */}
@@ -466,7 +507,19 @@ export default function TalentProfileView() {
                   ))}
                   <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '8px' }}>
                     <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Composite Grade</span>
-                    <span style={{ fontSize: '20px', fontWeight: 900, color: getGradeColor(talent.grade) }}>{talent.grade} — {calculateCompositeVettingGrade(talent.vettingScores).score}%</span>
+                    {(() => {
+                      // Was `{talent.grade} — {composite}%`, which printed a
+                      // dash and 0% for a candidate nobody had assessed.
+                      const state = vettingScoreState(talent.vettingScores);
+                      return (
+                        <span style={{ fontSize: '20px', fontWeight: 900, color: getGradeColor(talent.grade || '') }}>
+                          {talent.grade || 'Ungraded'}
+                          {state.isScored
+                            ? ` — ${state.score}%${state.isFullyScored ? '' : ' so far'}`
+                            : ' — not yet scored'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               ) : (

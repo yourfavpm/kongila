@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getStatusBadgeStyles } from '@kongila/utils';
+import { Mascot } from './mascot';
 
 export interface GlassCardProps {
   children: React.ReactNode;
@@ -230,30 +231,152 @@ export const AgentBadge: React.FC<AgentBadgeProps> = ({ name }) => {
     </span>
   );
 };
-export const KongilaLoader = ({ text = "Loading..." }: { text?: string }) => {
+/**
+ * The loader every portal already calls.
+ *
+ * It used to be a pulsing blue square. Rewiring it to the mascot upgrades
+ * every existing call site at once — admin, candidate and client — without
+ * touching any of them, which is the only realistic way to get one loading
+ * state across three portals that were each doing their own thing.
+ */
+export const KongilaLoader = ({ text = 'Loading...' }: { text?: string }) => (
+  <MascotLoader message={text} variant="panel" />
+);
+
+/* ─── Kon, the mascot ─────────────────────────────────────────────────────
+ *
+ * Three components, one vocabulary. Every portal had its own idea of what
+ * "waiting", "nothing here" and "that failed" look like, so a person moving
+ * between their dashboard and a form met a different language each time.
+ *
+ *   MascotLoader   something is in flight
+ *   MascotNotice   a result worth stopping on
+ *   MascotEmpty    a list with nothing in it yet
+ *
+ * Deliberately plain to call: a component nobody can remember the props for
+ * gets bypassed, and then the vocabulary drifts again.
+ */
+
+export { Mascot } from './mascot';
+export type { MascotState, MascotTone, MascotProps } from './mascot';
+
+export interface MascotLoaderProps {
+  /** One short line. Say what is happening, not "Please wait". */
+  message?: string;
+  /** 'page' fills the viewport, 'panel' its container, 'inline' sits in a row. */
+  variant?: 'page' | 'panel' | 'inline';
+  size?: number;
+}
+
+export const MascotLoader: React.FC<MascotLoaderProps> = ({
+  message = 'Loading',
+  variant = 'panel',
+  size
+}) => {
+  const dimension = size ?? (variant === 'inline' ? 28 : variant === 'page' ? 92 : 64);
+
+  if (variant === 'inline') {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+        <Mascot state="loading" size={dimension} label="" />
+        <span style={{ fontSize: 13, color: 'var(--text-secondary, #6B7A99)', fontWeight: 500 }}>{message}</span>
+      </span>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: '16px' }}>
-      <style>{`
-        @keyframes pulse-glow {
-          0% { box-shadow: 0 0 0 0 rgba(0, 71, 204, 0.4); transform: scale(0.95); }
-          70% { box-shadow: 0 0 0 15px rgba(0, 71, 204, 0); transform: scale(1); }
-          100% { box-shadow: 0 0 0 0 rgba(0, 71, 204, 0); transform: scale(0.95); }
-        }
-      `}</style>
-      <div style={{
-        width: 48, height: 48, borderRadius: '12px',
-        background: 'linear-gradient(135deg, #0047CC 0%, #003399 100%)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        animation: 'pulse-glow 1.5s infinite',
-      }}>
-        <svg width={26} height={26} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M5 3V21M19 3L11 11M5 13L15 21" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
-      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>{text}      </div>
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        minHeight: variant === 'page' ? '100vh' : '50vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 18,
+        padding: 32,
+        textAlign: 'center'
+      }}
+    >
+      <Mascot state="loading" size={dimension} label="" />
+      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary, #526180)' }}>{message}</div>
     </div>
   );
 };
+
+export interface MascotNoticeProps {
+  state: 'matched' | 'happy' | 'congratulations' | 'sad' | 'failed';
+  title: string;
+  /** One or two sentences. If there is nothing to add, leave it out. */
+  detail?: string;
+  action?: React.ReactNode;
+  compact?: boolean;
+}
+
+export const MascotNotice: React.FC<MascotNoticeProps> = ({
+  state,
+  title,
+  detail,
+  action,
+  compact
+}) => {
+  const critical = state === 'failed';
+  return (
+    <div
+      role={critical ? 'alert' : 'status'}
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 16,
+        padding: compact ? '14px 16px' : '22px 24px',
+        borderRadius: 14,
+        background: critical ? '#FEF2F2' : '#F4F8FF',
+        border: '1px solid ' + (critical ? '#FBD5D3' : '#D7E4FB')
+      }}
+    >
+      <Mascot state={state} size={compact ? 40 : 56} label="" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: compact ? 14 : 15.5, fontWeight: 600, color: '#0E1726', letterSpacing: '-0.01em' }}>
+          {title}
+        </div>
+        {detail && (
+          <p style={{ margin: '5px 0 0', fontSize: 13.5, lineHeight: 1.6, color: '#526180' }}>{detail}</p>
+        )}
+        {action && <div style={{ marginTop: 14 }}>{action}</div>}
+      </div>
+    </div>
+  );
+};
+
+export interface MascotEmptyProps {
+  title: string;
+  /** Say what would put something here, not merely that it is empty. */
+  detail?: string;
+  action?: React.ReactNode;
+  size?: number;
+}
+
+export const MascotEmpty: React.FC<MascotEmptyProps> = ({ title, detail, action, size = 72 }) => (
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 14,
+      padding: '48px 24px',
+      textAlign: 'center'
+    }}
+  >
+    <Mascot state="empty" size={size} label="" />
+    <div style={{ fontSize: 15, fontWeight: 600, color: '#0E1726', letterSpacing: '-0.01em' }}>{title}</div>
+    {detail && (
+      <p style={{ margin: 0, maxWidth: 380, fontSize: 13.5, lineHeight: 1.62, color: '#6B7A99' }}>{detail}</p>
+    )}
+    {action && <div style={{ marginTop: 6 }}>{action}</div>}
+  </div>
+);
 
 export interface Toast {
   id: string;

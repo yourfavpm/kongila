@@ -69,6 +69,87 @@ export const VETTING_STAGES: Array<{
 ];
 
 /**
+ * The same seven stages, as a candidate reads them.
+ *
+ * The talent dashboard carried its own copy of the stage list and
+ * `/api/vetting/advance` carried a third. They had already drifted: stage 2
+ * is "Behavioural Interview" here and in the `vetting_stage` column, and the
+ * dashboard called it "Live Interview". Two names for one stage, one of them
+ * stored and one of them shown, with nothing keeping them in step.
+ *
+ * So the canonical name stays above, because it is what the database holds
+ * and what operations uses, and this is what the candidate reads. One file,
+ * one source of truth, two audiences. `label` falls back to the canonical
+ * name wherever the two agree.
+ *
+ * `waitingOn` is what the candidate is told when the stage is not theirs to
+ * act on. `candidateAction` is null for exactly those stages: the four they
+ * can act on are 1 (sit the assessment), 3, 4 and 5.
+ */
+export interface CandidateStageView {
+  index: number;
+  /** What the candidate sees. Defaults to the canonical stage name. */
+  label: string;
+  icon: string;
+  /** One line on what this stage is. */
+  summary: string;
+  /** What the candidate must do, or null when it is not their move. */
+  candidateAction: string | null;
+  /** Who holds it while the candidate waits. */
+  waitingOn: string;
+}
+
+export const CANDIDATE_STAGE_VIEW: CandidateStageView[] = [
+  {
+    index: 0, label: 'Application Screening', icon: '📋',
+    summary: 'Kongila reviews your profile, documents and availability.',
+    candidateAction: null,
+    waitingOn: 'Your talent manager is reviewing your application.'
+  },
+  {
+    index: 1, label: 'Skill Assessment', icon: '🧪',
+    summary: 'A role-specific assessment set by the vetting team.',
+    candidateAction: 'Sit the assessment assigned to you. You will see it here and by email.',
+    waitingOn: 'Your assessment is being marked.'
+  },
+  {
+    index: 2, label: 'Live Interview', icon: '🎙️',
+    summary: 'A structured interview on how you work and how you communicate.',
+    candidateAction: null,
+    waitingOn: 'Your talent manager will send interview times.'
+  },
+  {
+    index: 3, label: 'Personality Test', icon: '🧠',
+    summary: 'A short psychometric questionnaire.',
+    candidateAction: 'Complete the questionnaire. It takes about fifteen minutes.',
+    waitingOn: 'Your results are being processed.'
+  },
+  {
+    index: 4, label: 'Remote Readiness', icon: '🌐',
+    summary: 'A check of your internet, hardware, power and workspace.',
+    candidateAction: 'Fill in the readiness checklist so we can confirm your setup.',
+    waitingOn: 'The operations team is confirming your setup.'
+  },
+  {
+    index: 5, label: 'Work Simulation', icon: '🔬',
+    summary: 'A take-home task reviewed by a senior team lead.',
+    candidateAction: 'Start the task, then submit your work before the deadline.',
+    waitingOn: 'Your submission is being reviewed.'
+  },
+  {
+    index: 6, label: 'Final Review', icon: '⭐',
+    summary: 'Reference checks and compliance, then your grade is set.',
+    candidateAction: null,
+    waitingOn: 'The review panel is making its decision.'
+  }
+];
+
+/** The candidate's view of one stage, by index. */
+export function candidateStageView(stageIndex: number): CandidateStageView | undefined {
+  return CANDIDATE_STAGE_VIEW[stageIndex];
+}
+
+/**
  * Creates a fresh 7-stage vetting pipeline for a new talent.
  * Stage 0 starts as 'in_progress'; the rest are 'pending'.
  */
@@ -414,5 +495,40 @@ export {
   UNMEASURED_DIMENSIONS,
   GRADE_THRESHOLDS,
   gradeForScore,
-  calculateCompositeVettingGrade
+  calculateCompositeVettingGrade,
+  vettingScoreState
 } from './grading';
+
+export type { VettingScoreState } from './grading';
+
+// ─── Pipeline validation ──────────────────────────────────────────────────
+//
+// Also import-free, for the same reason as grading.ts: it can be tested on
+// its own. `validatePostedPipeline` is the wiring, so a caller does not have
+// to assemble the stage specs itself.
+
+export type { StageSpec, StageStatus } from './pipelineValidation';
+export { STAGE_STATUSES, validatePipelineShape } from './pipelineValidation';
+
+import { validatePipelineShape as checkShape, type StageSpec } from './pipelineValidation';
+
+/** The stage specs the validator needs, derived from VETTING_STAGES. */
+export function pipelineStageSpecs(): StageSpec[] {
+  return VETTING_STAGES.map(stage => ({
+    index: stage.index,
+    name: stage.name,
+    requiresScore: Boolean(stage.scoreKey)
+  }));
+}
+
+/**
+ * Checks a pipeline that arrived in a request against the real seven stages.
+ *
+ * Returns the reason it cannot be stored, or null when it can. The server
+ * calls this before writing; the admin portal's own
+ * `validateStageDecision` still runs at the moment a decision is made, so
+ * an operator gets the specific message about the decision they just took.
+ */
+export function validatePostedPipeline(pipeline: unknown): string | null {
+  return checkShape(pipeline, pipelineStageSpecs());
+}

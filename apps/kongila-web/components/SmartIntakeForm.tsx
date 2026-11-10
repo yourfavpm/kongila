@@ -2,18 +2,34 @@ import { apiFetch } from '../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
-import { ServiceRequest, ServiceType } from '@kongila/shared-types';
+import {
+  ServiceRequest,
+  ServiceType,
+  requestTitle,
+  validateRequestRoles,
+  MAX_ROLES_PER_REQUEST,
+  MAX_COUNT_PER_ROLE
+} from '@kongila/shared-types';
+import { TIMEZONE_OPTIONS } from '@kongila/utils';
 import { COUNTRIES_AND_CODES } from '../lib/onboarding-constants';
 
 interface SmartIntakeFormProps {
   currentUser?: any;
-  onComplete: (request: ServiceRequest) => void;
+  /**
+   * Every request the brief produced. A brief with three roles files three
+   * requests, so this is a list; a single-role brief sends a list of one.
+   */
+  onComplete: (requests: ServiceRequest[]) => void;
   onCancel?: () => void;
 }
 
 export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: SmartIntakeFormProps) {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set once the request is filed. While it holds a value the wizard is
+  // replaced by the confirmation panel, so nobody can resubmit by pressing
+  // Back and Submit again.
+  const [confirmation, setConfirmation] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [phoneCodeSearch, setPhoneCodeSearch] = useState('');
@@ -69,6 +85,46 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  // ─── Roles ──────────────────────────────────────────────────────────────────
+  //
+  // A client hiring across several roles used to fill this whole wizard once
+  // per role, re-entering the same company, budget, timezones and urgency each
+  // time, and come away with three unconnected references. The shared context
+  // is answered once, below; this step collects the roles it covers.
+  //
+  // A client hiring one person sees one role card and no array: the controls
+  // for adding and removing only appear once there is a reason for them.
+  const roles: any[] = Array.isArray((formData as any).roles) && (formData as any).roles.length > 0
+    ? (formData as any).roles
+    : [{ id: `role-1`, title: '', count: 1, requiredSkills: [] }];
+
+  const setRoles = (next: any[]) => setFormData(prev => ({ ...prev, roles: next } as any));
+
+  const updateRole = (index: number, field: string, value: any) => {
+    setRoles(roles.map((role, i) => (i === index ? { ...role, [field]: value } : role)));
+  };
+
+  const addRole = () => {
+    if (roles.length >= MAX_ROLES_PER_REQUEST) {
+      setErrorMsg(`You can add up to ${MAX_ROLES_PER_REQUEST} roles to one request. `
+        + 'Submit this one and file a second for the rest, or talk to us and we will set it up for you.');
+      return;
+    }
+    setErrorMsg('');
+    setRoles([...roles, { id: `role-${roles.length + 1}`, title: '', count: 1, requiredSkills: [] }]);
+  };
+
+  const removeRole = (index: number) => {
+    if (roles.length <= 1) return;
+    setErrorMsg('');
+    setRoles(roles.filter((_, i) => i !== index));
+  };
+
+  const totalHeadcount = roles.reduce(
+    (total, role) => total + (Number(role.count) > 0 ? Math.floor(Number(role.count)) : 1),
+    0
+  );
+
   const handleNext = () => {
     // Validation Gate
     setErrorMsg('');
@@ -79,9 +135,26 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     
     if (step === 2) {
       if (formData.serviceType === 'Hire Talent' || formData.serviceType === 'placement') {
-        if (!formData.roleTitle || !formData.seniorityLevel || !formData.numOfTalents) {
-          setErrorMsg('Role Title, Seniority Level, and Number of Hires are required.'); return;
+        // Named, so a client with four roles open is told which one is short
+        // rather than being sent back to find it.
+        for (let i = 0; i < roles.length; i++) {
+          const role = roles[i];
+          const label = roles.length > 1 ? `Role ${i + 1}` : 'This role';
+          if (!String(role.title || '').trim()) {
+            setErrorMsg(`${label}: please give the role a title.`); return;
+          }
+          if (!role.seniorityLevel) {
+            setErrorMsg(`${label} (${role.title}): please choose a seniority level.`); return;
+          }
+          if (!(Array.isArray(role.requiredSkills) ? role.requiredSkills.filter(Boolean).length : 0)) {
+            setErrorMsg(`${label} (${role.title}): please list at least one skill.`); return;
+          }
+          if (!String(role.description || '').trim()) {
+            setErrorMsg(`${label} (${role.title}): please describe what this person will be doing.`); return;
+          }
         }
+        const reason = validateRequestRoles(roles);
+        if (reason) { setErrorMsg(reason); return; }
       } else if (formData.serviceType === 'Outsource Talent' || formData.serviceType === 'outsourcing' || formData.serviceType === 'Managed Workforce' || formData.serviceType === 'managed_workforce') {
         if (!formData.teamSize || !formData.coverageType) {
           setErrorMsg('Team Size and Coverage Type are required.'); return;
@@ -94,8 +167,8 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     }
     
     if (step === 3) {
-      if (!formData.engagementType || !formData.durationType || !formData.startDate) {
-        setErrorMsg('Engagement Type, Duration, and Start Date are required.'); return;
+      if (!formData.commitmentLevel || !formData.durationType || !formData.startDate) {
+        setErrorMsg('Please say whether this is full-time or part-time, how long for, and when you need them.'); return;
       }
     }
     
@@ -124,11 +197,24 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     try {
       let finalUserId = currentUser?.id;
       let finalClientName = currentUser ? `${currentUser.name} (${currentUser.companyName || 'Company'})` : '';
+      // What provisioning tells us about the company it created, so the
+      // confirmation can name it instead of saying "account created".
+      let provisionedAccount: any = null;
 
       if (!currentUser) {
         if (!authData.tosAccepted) throw new Error('You must accept the Terms of Service.');
         
         if (authData.mode === 'signup') {
+          // Checked here as well as on the server. Provisioning refuses a
+          // client account with no company name rather than inventing one, and
+          // a 400 arriving after the whole request has been typed out is a poor
+          // way to learn that a field further up the page was left empty.
+          if (!authData.fullName.trim()) throw new Error('Please enter your full name.');
+          if (!authData.companyName.trim()) {
+            throw new Error('Please enter your company name. The account is created for the company, not for you personally.');
+          }
+          if (!authData.jobTitle.trim()) throw new Error('Please enter the position you hold at the company.');
+
           // Check free email warning
           const freeDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com'];
           const emailDomain = authData.businessEmail.split('@')[1];
@@ -169,6 +255,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           if (!provisionRes.ok || !provision?.ok) {
             throw new Error(provision?.error || 'Could not finish creating your account.');
           }
+          provisionedAccount = provision;
         } else {
           // Login Flow
           const { data: loginRes, error: loginErr } = await supabase.auth.signInWithPassword({
@@ -188,37 +275,74 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       // Everything the form collected, then the named mappings on top.
       //
       // This used to be an explicit field list, and fifteen answers the client
-      // had typed were thrown away on submit: roleTitle, seniorityLevel,
-      // mustHaveQualifications, coverageType, teamDescription,
-      // supervisionLevel, reportingStructure, projectName, projectDeadline,
-      // estimatedScope, partTimeHours, durationMonths, urgencyLevel,
-      // roleCriticality and additionalNotes. The payload column is jsonb, so
-      // there was never a reason to drop them.
+      // had typed were thrown away on submit — roleTitle, seniorityLevel,
+      // coverageType, teamDescription, supervisionLevel, projectName,
+      // projectDeadline, partTimeHours, durationMonths, urgencyLevel and
+      // additionalNotes among them. The payload column is jsonb, so there was
+      // never a reason to drop them. Spreading formData keeps whatever the
+      // form collected; the named mappings below settle the few fields the
+      // rest of the product reads under a different name.
+      // The roles go up as a list and the server files one request for each.
+      //
+      // They used to be folded into a single request, with the first role's
+      // answers copied into the flat fields and the rest carried underneath.
+      // That cannot hold: matching, interviews, offers and contracts all
+      // happen per role, so one request covering three roles had a single
+      // status for three separate conversations, and the second and third
+      // roles were only visible by opening the first.
+      //
+      // The client still answers the shared context once. The split happens
+      // on the server, where each role becomes a request with its own
+      // reference, and a group id records that they were filed together.
+      const isHirePath = formData.serviceType === 'Hire Talent' || formData.serviceType === 'placement';
+      const submittedRoles = isHirePath
+        ? roles
+            .filter(role => String(role.title || '').trim())
+            .map((role, i) => ({
+              ...role,
+              id: role.id || `role-${i + 1}`,
+              title: String(role.title).trim(),
+              count: Number(role.count) > 0 ? Math.floor(Number(role.count)) : 1,
+              requiredSkills: (role.requiredSkills || []).filter(Boolean)
+            }))
+        : null;
+      const leadRole = submittedRoles?.[0];
+
       const payload: ServiceRequest = {
         ...(formData as any),
-        id: crypto.randomUUID(),
-        referenceNumber: refNumber,
+        // No id or reference from here. The server mints one per request, and
+        // sending one meant every request in a group shared it.
         clientId: finalUserId,
         clientName: finalClientName,
         serviceType: formData.serviceType as ServiceType,
         status: 'New Request' as any,
         createdAt: new Date().toISOString(),
 
-        // Field mappings
-        // teamDescription and projectName were not in this chain, so Outsource
-        // and Managed requests reached the admin with an empty role and the
-        // board fell back to showing the service type as the title.
-        roleDescription: formData.roleDescription
-          || (formData as any).roleTitle
-          || (formData as any).teamDescription
-          || (formData as any).projectDescription
-          || (formData as any).projectName
-          || formData.description
-          || '',
-        requiredSkills: formData.requiredSkills || [],
+        ...(submittedRoles ? { roles: submittedRoles } : {}),
+
+        // No title here any more. On the Hire Talent path each request is
+        // named after its own role, which only the server knows once it has
+        // split them; on the other paths the server derives it with the same
+        // function. Sending one meant every request in a group was named
+        // after the first role.
+
+        // The shared context, which every request in the group inherits.
+        // Per-role answers are not set here: the server takes each role's
+        // own title, skills, seniority, headcount and description.
+        roleDescription: submittedRoles
+          ? ''
+          : (formData.roleDescription
+            || (formData as any).teamDescription
+            || (formData as any).projectDescription
+            || (formData as any).projectName
+            || formData.description
+            || ''),
+        requiredSkills: submittedRoles ? [] : (formData.requiredSkills || []),
         duration: formData.duration || (formData as any).durationType || 'Flexible',
         commitmentLevel: formData.commitmentLevel || (formData as any).engagementType || 'Full-Time',
-        numberOfHires: formData.numberOfHires || (formData as any).numOfTalents || (formData as any).teamSize || 1,
+        numberOfHires: submittedRoles
+          ? undefined
+          : (formData.numberOfHires || (formData as any).numOfTalents || (formData as any).teamSize || 1),
         timezone: (formData.preferredTimezones || []).join(', ') || 'EST',
         startDate: formData.startDate || new Date().toISOString(),
         budget: formData.budgetMinUsd || 0,
@@ -248,9 +372,50 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       if (!requestRes.ok || !requestBody?.request) {
         throw new Error(requestBody?.error || 'Could not save your request.');
       }
+      const createdRequests = Array.isArray(requestBody.requests)
+        ? requestBody.requests
+        : [requestBody.request];
+      const expectedRoleTitles = submittedRoles?.map(role => role.title) || [];
+      const rolesWereSplit = expectedRoleTitles.length === 0
+        ? createdRequests.length === 1
+        : createdRequests.length === expectedRoleTitles.length
+          && createdRequests.every((request: any, index: number) =>
+            String(request.roleTitle || '').trim().toLowerCase() === expectedRoleTitles[index].trim().toLowerCase()
+          );
+      if (!rolesWereSplit) {
+        throw new Error(
+          `Your request was received, but the server returned ${createdRequests.length} separate request(s) `
+          + `for ${expectedRoleTitles.length || 1} submitted role(s). Do not submit it again; contact your Kongila team `
+          + 'so they can separate the saved roles without creating duplicates.'
+        );
+      }
 
       sessionStorage.removeItem('kongila_intake_draft');
-      onComplete(requestBody.request);
+
+      // A Kongila client account is a company, and the person filling this in
+      // is its primary contact and administrator. Nothing used to say so: the
+      // form closed and dropped them on the dashboard, so they never saw that
+      // an organisation had been created, what it was called, or that the
+      // company record was theirs to manage.
+      setConfirmation({
+        accountCreated: Boolean(provisionedAccount),
+        organizationName:
+          provisionedAccount?.organization?.name
+          || authData.companyName
+          || currentUser?.companyName
+          || null,
+        isPrimaryContact: provisionedAccount?.membership?.isPrimaryContact ?? null,
+        position: provisionedAccount?.membership?.position || authData.jobTitle || null,
+        permissionLevel: provisionedAccount?.membership?.permissionLevel || null,
+        contactEmail: provisionedAccount?.organization?.contactEmail || authData.businessEmail || null,
+        reference: requestBody.request?.referenceNumber || refNumber,
+        request: requestBody.request,
+        // Every request the brief produced, so a client who added three roles
+        // is told they now have three requests and sees all three references.
+        // They used to see one.
+        requests: createdRequests
+      });
+      setIsSubmitting(false);
 
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -302,38 +467,136 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         
         {isHire && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="form-group">
-              <label className="form-label">Role Title <span style={{color:'red'}}>*</span></label>
-              <input type="text" className="form-input" maxLength={100} value={formData.roleTitle || ''} onChange={e => updateForm('roleTitle', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Skills Required (comma separated) <span style={{color:'red'}}>*</span></label>
-              <input type="text" className="form-input" value={(formData.requiredSkills || []).join(', ')} onChange={e => updateForm('requiredSkills', e.target.value.split(',').map(s=>s.trim()))} />
-            </div>
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Seniority Level <span style={{color:'red'}}>*</span></label>
-                <select className="form-select" value={formData.seniorityLevel || ''} onChange={e => updateForm('seniorityLevel', e.target.value)}>
-                  <option value="">Select...</option>
-                  <option value="Junior (1-3 years)">Junior (1-3 years)</option>
-                  <option value="Mid-level (3-6 years)">Mid-level (3-6 years)</option>
-                  <option value="Senior (6-10 years)">Senior (6-10 years)</option>
-                  <option value="Lead (8-15 years)">Lead (8-15 years)</option>
-                  <option value="Executive (12+ years)">Executive (12+ years)</option>
-                </select>
+            {roles.length > 1 && (
+              <div style={{
+                fontSize: '13px', color: 'var(--text-secondary)', background: 'var(--bg-tertiary, #F8FAFC)',
+                border: '1px solid var(--border-glass, #E2E8F0)', borderRadius: '10px', padding: '12px 14px',
+                lineHeight: 1.6
+              }}>
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {roles.length} separate requests · {totalHeadcount} {totalHeadcount === 1 ? 'person' : 'people'}
+                </strong>
+                <br />
+                Each role gets its own request and reference, with its own candidates, progress and hiring
+                count. Your shared brief and company details are carried across all of them.
               </div>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Number of Hires <span style={{color:'red'}}>*</span></label>
-                <input type="number" min={1} max={50} className="form-input" value={formData.numOfTalents || ''} onChange={e => updateForm('numOfTalents', Number(e.target.value))} />
+            )}
+
+            {roles.map((role, index) => (
+              <div
+                key={role.id || index}
+                style={{
+                  display: 'flex', flexDirection: 'column', gap: '16px',
+                  padding: roles.length > 1 ? '18px' : '0',
+                  borderRadius: roles.length > 1 ? '14px' : '0',
+                  border: roles.length > 1 ? '1px solid var(--border-glass, #E2E8F0)' : 'none',
+                  background: roles.length > 1 ? 'var(--bg-secondary, #FFFFFF)' : 'transparent'
+                }}
+              >
+                {roles.length > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                      ROLE {index + 1}{role.title ? ` · ${role.title}` : ''}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeRole(index)}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: '#B91C1C', fontSize: '12px', fontWeight: 700, padding: '4px 6px'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label className="form-label">Role Title <span style={{color:'red'}}>*</span></label>
+                  <input
+                    type="text" className="form-input" maxLength={100}
+                    placeholder="e.g. Senior Backend Engineer"
+                    value={role.title || ''}
+                    onChange={e => updateRole(index, 'title', e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Skills Required (comma separated) <span style={{color:'red'}}>*</span></label>
+                  <input
+                    type="text" className="form-input"
+                    placeholder="e.g. TypeScript, Postgres, AWS"
+                    value={(role.requiredSkills || []).join(', ')}
+                    onChange={e => updateRole(index, 'requiredSkills', e.target.value.split(',').map((s: string) => s.trim()))}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">Seniority Level <span style={{color:'red'}}>*</span></label>
+                    <select
+                      className="form-select"
+                      value={role.seniorityLevel || ''}
+                      onChange={e => updateRole(index, 'seniorityLevel', e.target.value)}
+                    >
+                      <option value="">Select...</option>
+                      <option value="Junior (1-3 years)">Junior (1-3 years)</option>
+                      <option value="Mid-level (3-6 years)">Mid-level (3-6 years)</option>
+                      <option value="Senior (6-10 years)">Senior (6-10 years)</option>
+                      <option value="Lead (8-15 years)">Lead (8-15 years)</option>
+                      <option value="Executive (12+ years)">Executive (12+ years)</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label className="form-label">
+                      How many of this role <span style={{color:'red'}}>*</span>
+                    </label>
+                    <input
+                      type="number" min={1} max={MAX_COUNT_PER_ROLE} className="form-input"
+                      value={role.count ?? 1}
+                      onChange={e => {
+                        // An empty field gives NaN, which used to go into the
+                        // payload and come back as null.
+                        const n = parseInt(e.target.value, 10);
+                        updateRole(index, 'count', Number.isFinite(n) && n > 0 ? n : 1);
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">What will they be doing? <span style={{color:'red'}}>*</span></label>
+                  <textarea
+                    className="form-input" style={{ minHeight: '80px' }}
+                    placeholder="What this person will own, and what a good first six months looks like."
+                    value={role.description || ''}
+                    onChange={e => updateRole(index, 'description', e.target.value)}
+                  />
+                </div>
               </div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Role Description <span style={{color:'red'}}>*</span></label>
-              <textarea className="form-input" style={{ minHeight: '80px' }} value={formData.roleDescription || ''} onChange={e => updateForm('roleDescription', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Must-Have Qualifications</label>
-              <textarea className="form-input" maxLength={500} value={formData.mustHaveQualifications || ''} onChange={e => updateForm('mustHaveQualifications', e.target.value)} />
+            ))}
+
+            {/* Share the brief once, then file and track each role separately. */}
+            <button
+              type="button"
+              onClick={addRole}
+              style={{
+                alignSelf: 'flex-start',
+                background: 'transparent',
+                border: '1px dashed var(--border-glass, #CBD5E1)',
+                borderRadius: '10px',
+                padding: '10px 16px',
+                color: 'var(--kongila-blue, #2563EB)',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer'
+              }}
+            >
+              ＋ Add another role
+            </button>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '-6px' }}>
+              Add each role here — the budget, timezones and timing you give next apply to all of them.
+              We will create one independently tracked request per role.
             </div>
           </div>
         )}
@@ -359,12 +622,11 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
                 </select>
               </div>
             </div>
-            {formData.coverageType === 'Custom' && (
-              <div className="form-group">
-                <label className="form-label">Custom Hours</label>
-                <input type="text" className="form-input" placeholder="e.g. 10AM - 2PM EST" value={formData.customHours || ''} onChange={e => updateForm('customHours', e.target.value)} />
-              </div>
-            )}
+            {/* "Custom Hours" was a free-text box that only appeared when
+                coverageType === 'Custom', and the option's stored value is
+                'Custom (Specify your own hours)', so the condition was never
+                true and the box never appeared. The hours now go in the team
+                description, which is read. */}
             <div className="form-group">
               <label className="form-label">
                 {isManaged ? 'Service Description & Outcomes' : 'Team Description'} <span style={{color:'red'}}>*</span>
@@ -373,30 +635,27 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               <textarea className="form-input" style={{ minHeight: '80px' }} value={formData.teamDescription || ''} onChange={e => updateForm('teamDescription', e.target.value)} />
             </div>
             
-            {isManaged ? (
-              <div className="form-group">
-                <label className="form-label">Supervision Level <span style={{color:'red'}}>*</span></label>
-                <select className="form-select" value={formData.supervisionLevel || ''} onChange={e => updateForm('supervisionLevel', e.target.value)}>
-                  <option value="">Select...</option>
-                  <option value="High">High</option>
-                  <option value="Standard">Standard</option>
-                  <option value="Light">Light</option>
-                </select>
-              </div>
-            ) : (
-              <div className="form-group">
-                <label className="form-label">
-                  Reporting Structure
-                  <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>How will the talent be supervised and managed?</div>
-                </label>
-                <select className="form-select" value={formData.reportingStructure || ''} onChange={e => updateForm('reportingStructure', e.target.value)}>
-                  <option value="">Select...</option>
-                  <option value="Client direct (Talent reports directly to you)">Client direct (Talent reports directly to you)</option>
-                  <option value="Kongila supervisor (Kongila manages the talent's day-to-day)">Kongila supervisor (Kongila manages the talent's day-to-day)</option>
-                  <option value="Hybrid (Shared supervision)">Hybrid (Shared supervision)</option>
-                </select>
-              </div>
-            )}
+            {/* One question instead of two.
+                Managed Workforce was asked for a "Supervision Level" of High,
+                Standard or Light — which says nothing about who actually
+                manages the person — and Outsource was asked for a "Reporting
+                Structure", which does. They were never asked together, so
+                this is not a duplicate being removed but two half-questions
+                becoming one, stored in supervisionLevel on both paths. */}
+            <div className="form-group">
+              <label className="form-label">
+                Who manages them day to day? <span style={{color:'red'}}>*</span>
+                <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>
+                  This decides how we set the engagement up, and who you go to when something needs changing.
+                </div>
+              </label>
+              <select className="form-select" value={formData.supervisionLevel || ''} onChange={e => updateForm('supervisionLevel', e.target.value)}>
+                <option value="">Select...</option>
+                <option value="Client direct (they report to your team)">Client direct — they report to your team</option>
+                <option value="Kongila supervisor (we manage their day-to-day)">Kongila supervisor — we manage their day to day</option>
+                <option value="Hybrid (shared supervision)">Hybrid — shared supervision</option>
+              </select>
+            </div>
           </div>
         )}
 
@@ -415,16 +674,10 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               <input type="text" className="form-input" placeholder="e.g. React, Node.js" value={(formData.requiredSkills || []).join(', ')} onChange={e => updateForm('requiredSkills', e.target.value.split(',').map(s=>s.trim()))} />
             </div>
             <div style={{ display: 'flex', gap: '16px' }}>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Estimated Scope <span style={{color:'red'}}>*</span></label>
-                <select className="form-select" value={formData.estimatedScope || ''} onChange={e => updateForm('estimatedScope', e.target.value)}>
-                  <option value="">Select...</option>
-                  <option value="Small">Small</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Large">Large</option>
-                  <option value="Enterprise">Enterprise</option>
-                </select>
-              </div>
+              {/* "Estimated Scope" asked Small / Medium / Large / Enterprise
+                  about a project whose budget range and deadline are both
+                  asked for a moment later. It was a vaguer restatement of two
+                  precise answers, and nothing read it. */}
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Project Deadline <span style={{color:'red'}}>*</span></label>
                 <input type="date" className="form-input" value={formData.projectDeadline || ''} onChange={e => updateForm('projectDeadline', e.target.value)} />
@@ -440,18 +693,23 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>Engagement Details</h3>
       <div style={{ display: 'flex', gap: '16px' }}>
+        {/* Stored as commitmentLevel, which is the field the rest of the
+            product reads. It was collected as engagementType and mapped on
+            submit, with the two sets of values differing by a hyphen and a
+            capital — 'Full-time' here against 'Full-Time' everywhere else —
+            so anything comparing them directly never matched. */}
         <div className="form-group" style={{ flex: 1 }}>
-          <label className="form-label">Engagement Type <span style={{color:'red'}}>*</span></label>
-          <select className="form-select" value={formData.engagementType || ''} onChange={e => updateForm('engagementType', e.target.value)}>
+          <label className="form-label">Full-time or part-time? <span style={{color:'red'}}>*</span></label>
+          <select className="form-select" value={formData.commitmentLevel || ''} onChange={e => updateForm('commitmentLevel', e.target.value)}>
             <option value="">Select...</option>
-            <option value="Full-time">Full-time</option>
-            <option value="Part-time">Part-time</option>
-            <option value="Either">Either</option>
+            <option value="Full-Time">Full-time</option>
+            <option value="Part-Time">Part-time</option>
+            <option value="Either">Either — whichever suits the right person</option>
           </select>
         </div>
-        {(formData.engagementType === 'Part-time' || formData.engagementType === 'Either') && (
+        {(formData.commitmentLevel === 'Part-Time' || formData.commitmentLevel === 'Either') && (
           <div className="form-group" style={{ flex: 1 }}>
-            <label className="form-label">Part-Time Hours/Week</label>
+            <label className="form-label">Hours a week</label>
             <input type="number" min={1} max={39} className="form-input" value={formData.partTimeHours || ''} onChange={e => updateForm('partTimeHours', Number(e.target.value))} />
           </div>
         )}
@@ -478,8 +736,27 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         <input type="date" className="form-input" value={formData.startDate || ''} onChange={e => updateForm('startDate', e.target.value)} />
       </div>
       <div className="form-group">
-        <label className="form-label">Preferred Timezone</label>
-        <input type="text" className="form-input" placeholder="e.g. EST, GMT" value={(formData.preferredTimezones || []).join(', ')} onChange={e => updateForm('preferredTimezones', e.target.value.split(',').map(s=>s.trim()))} />
+        {/* Free text before, so a client typed "EST, GMT" and nothing could
+            line those up against a candidate's zone. Same shared list the
+            candidate picks from, and more than one may be chosen. */}
+        <label className="form-label">Preferred Timezones</label>
+        <select
+          className="form-select"
+          multiple
+          size={8}
+          value={formData.preferredTimezones || []}
+          onChange={e => updateForm(
+            'preferredTimezones',
+            Array.from(e.target.selectedOptions).map(o => o.value)
+          )}
+        >
+          {TIMEZONE_OPTIONS.map(tz => (
+            <option key={tz.value} value={tz.value}>{tz.label}</option>
+          ))}
+        </select>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+          Hold Ctrl (Cmd on a Mac) to choose more than one. Leave empty if any timezone works.
+        </div>
       </div>
     </div>
   );
@@ -525,20 +802,13 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           <option value="no_rush">No Rush</option>
         </select>
       </div>
+      {/* "Role Criticality" asked how urgent this is, directly beneath a
+          question asking how urgent this is. Its own help text — "how urgently
+          does this role impact your core business operations?" — is the
+          urgency question again in other words. Urgency is the one the board
+          reads and sorts on; this was collected and never looked at. */}
       <div className="form-group">
-        <label className="form-label">
-          Role Criticality
-          <div style={{fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400, marginTop: '2px'}}>How urgently does this role impact your core business operations?</div>
-        </label>
-        <select className="form-select" value={formData.roleCriticality || ''} onChange={e => updateForm('roleCriticality', e.target.value)}>
-          <option value="">Select...</option>
-          <option value="Nice to have (Not urgent)">Nice to have (Not urgent)</option>
-          <option value="Important (Needed for upcoming goals)">Important (Needed for upcoming goals)</option>
-          <option value="Business-critical (Operations are affected without this hire)">Business-critical (Operations are affected without this hire)</option>
-        </select>
-      </div>
-      <div className="form-group">
-        <label className="form-label">Additional Notes</label>
+        <label className="form-label">Anything else your team should know</label>
         <textarea className="form-input" maxLength={1000} style={{ minHeight: '80px' }} value={formData.additionalNotes || ''} onChange={e => updateForm('additionalNotes', e.target.value)} />
       </div>
     </div>
@@ -566,16 +836,22 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       {authData.mode === 'signup' && (
         <>
           <div className="form-group">
-            <label className="form-label">Full Name</label>
+            <label className="form-label">Full Name <span style={{color:'red'}}>*</span></label>
             <input type="text" className="form-input" value={authData.fullName} onChange={e => setAuthData({...authData, fullName: e.target.value})} />
           </div>
           <div className="form-group">
-            <label className="form-label">Company Name</label>
-            <input type="text" className="form-input" maxLength={200} value={authData.companyName} onChange={e => setAuthData({...authData, companyName: e.target.value})} />
+            <label className="form-label">Company Name <span style={{color:'red'}}>*</span></label>
+            <input type="text" className="form-input" maxLength={200} value={authData.companyName} onChange={e => setAuthData({...authData, companyName: e.target.value})} placeholder="The company this account is for" />
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+              The account is created for this company. You become its primary contact and administrator, and can invite colleagues once you are in.
+            </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Job Title</label>
-            <input type="text" className="form-input" value={authData.jobTitle} onChange={e => setAuthData({...authData, jobTitle: e.target.value})} />
+            {/* Called "Job Title" here, which read as the role being hired
+                for rather than the signer's own role. The field name and the
+                column it lands in (client_profiles.position) are unchanged. */}
+            <label className="form-label">Position Held <span style={{color:'red'}}>*</span></label>
+            <input type="text" className="form-input" value={authData.jobTitle} onChange={e => setAuthData({...authData, jobTitle: e.target.value})} placeholder="e.g. Head of Operations" />
           </div>
           <div className="form-group">
             <label className="form-label">Phone</label>
@@ -684,6 +960,103 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       )}
     </div>
   );
+
+  // ── Confirmation ──────────────────────────────────────────────────────────
+  //
+  // Shown once the request is filed. It states the three facts the client had
+  // no way of knowing before: that their organisation exists, what it is
+  // called, and that they are its primary contact and administrator.
+  if (confirmation) {
+    const row = (label: string, value: string) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', padding: '10px 0', borderBottom: '1px solid var(--border-glass)' }}>
+        <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{label}</span>
+        <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', textAlign: 'right' }}>{value}</span>
+      </div>
+    );
+
+    return (
+      <div style={{ padding: '24px', boxSizing: 'border-box', width: '100%' }}>
+        <GlassCard className="intake-card" style={{ maxWidth: '650px', width: '100%', margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <div style={{ fontSize: '56px', lineHeight: 1, color: 'var(--accent-green)' }}>✓</div>
+            <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', margin: '12px 0 6px 0' }}>
+              {confirmation.accountCreated ? 'Your company account is set up' : 'Your request is in'}
+            </h2>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
+              {(confirmation.requests || []).length > 1
+                ? `We have filed ${confirmation.requests.length} requests, one for each role you added`
+                  + (confirmation.accountCreated ? ', and created your company account' : '')
+                  + '. Kongila reviews new requests within one business day.'
+                : confirmation.accountCreated
+                  ? 'We have created the account and filed your first request. Kongila reviews new requests within one business day.'
+                  : 'Kongila reviews new requests within one business day.'}
+            </p>
+          </div>
+
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: '12px', padding: '4px 18px 14px 18px', marginBottom: '20px' }}>
+            {confirmation.organizationName && row('Organisation', confirmation.organizationName)}
+            {confirmation.accountCreated && confirmation.isPrimaryContact && (
+              row('Your role', `Primary contact and administrator${confirmation.position ? ` (${confirmation.position})` : ''}`)
+            )}
+            {confirmation.accountCreated && confirmation.isPrimaryContact === false && (
+              row('Your role', confirmation.position || 'Team member')
+            )}
+            {confirmation.permissionLevel && row('Access level', confirmation.permissionLevel)}
+            {confirmation.contactEmail && row('Account email', confirmation.contactEmail)}
+            {/* One reference per role, because one brief with three roles is
+                three requests. Showing a single reference for three roles
+                left two of them with no reference the client could quote. */}
+            {(confirmation.requests || []).length <= 1
+              ? row('Request reference', confirmation.reference)
+              : (
+                <div style={{ padding: '12px 0', borderTop: '1px solid var(--border-glass, #E2E8F0)' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                    {confirmation.requests.length} requests, one for each role
+                  </div>
+                  {confirmation.requests.map((r: any) => (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', gap: '12px',
+                        padding: '7px 0', fontSize: '13px', flexWrap: 'wrap'
+                      }}
+                    >
+                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.title}</span>
+                      <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '12px' }}>
+                        {r.referenceNumber}
+                      </span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px', lineHeight: 1.6 }}>
+                    Each one is sourced and tracked on its own, so they can move at
+                    different speeds. You will see all of them under My Requests.
+                  </div>
+                </div>
+              )}
+          </div>
+
+          {confirmation.accountCreated && confirmation.isPrimaryContact && (
+            <div style={{ background: 'rgba(0, 71, 204, 0.06)', border: '1px solid rgba(0, 71, 204, 0.18)', borderRadius: '10px', padding: '14px 16px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                The account belongs to {confirmation.organizationName || 'your company'}, not to you personally.
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                As primary contact you can edit the company details, invite colleagues and set what each of them can see, all from My Company in your portal.
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            {/* Every request goes back, so the portal lists all of them
+                rather than only the first. */}
+            <NeonButton onClick={() => onComplete(confirmation.requests || [confirmation.request])}>
+              Go to my portal
+            </NeonButton>
+          </div>
+        </GlassCard>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: '24px', boxSizing: 'border-box', width: '100%' }}>

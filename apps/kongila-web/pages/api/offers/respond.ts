@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { getRequestUser, getSupabaseClient, notifyAdmins, notifyUsers } from '@kongila/database';
+import { matchingProgressStatus } from '@kongila/workflows';
 
 /**
  * The candidate accepts or declines an offer.
@@ -14,6 +15,67 @@ import { getRequestUser, getSupabaseClient } from '@kongila/database';
  */
 
 const RESPONDABLE = new Set(['sent_to_talent']);
+
+async function advanceRequestStage(
+  supabase: any,
+  requestId: string | null,
+  event: 'offer_accepted' | 'offer_declined'
+): Promise<string | null> {
+  if (!requestId) return null;
+
+  let { data: request, error } = await supabase
+    .from('talent_requests')
+    .select('*')
+    .eq('id', requestId)
+    .maybeSingle();
+  if (error) return `The offer response was saved, but its role request could not be loaded: ${error.message}`;
+  if (!request) {
+    const result = await supabase
+      .from('talent_requests')
+      .select('*')
+      .eq('payload->>id', requestId)
+      .maybeSingle();
+    request = result.data;
+    error = result.error;
+  }
+  if (error) return `The offer response was saved, but its role request could not be loaded: ${error.message}`;
+  if (!request) return 'The offer response was saved, but its role request no longer exists.';
+
+  if (event === 'offer_declined') {
+    const requestIds = Array.from(new Set([
+      String(request.id),
+      String(request.payload?.id || '')
+    ].filter(Boolean)));
+    const { data: acceptedOffers, error: offersError } = await supabase
+      .from('offers')
+      .select('id')
+      .in('request_id', requestIds)
+      .in('status', ['accepted', 'contract_active']);
+    if (offersError) {
+      return `The offer response was saved, but other accepted offers could not be checked: ${offersError.message}`;
+    }
+    if (acceptedOffers?.length) return null;
+  }
+
+  const payload = { ...(request.payload || {}) };
+  const nextStatus = matchingProgressStatus(
+    payload.status || request.status,
+    event
+  );
+  if (!nextStatus) return null;
+
+  payload.status = nextStatus;
+  const { error: updateError } = await supabase
+    .from('talent_requests')
+    .update({
+      payload,
+      status: nextStatus.toLowerCase().replace(/ /g, '_')
+    })
+    .eq('id', request.id);
+  return updateError
+    ? `The offer response was saved, but the role stage did not update: ${updateError.message}`
+    : null;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -55,7 +117,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // An expired offer is answered by the clock, not the candidate.
     if (offer.talent_response_deadline && new Date(offer.talent_response_deadline) < new Date()) {
-      await supabase.from('offers').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', offerId);
+      const { error: expiryError } = await supabase
+        .from('offers')
+        .update({ status: 'expired', updated_at: new Date().toISOString() })
+        .eq('id', offerId)
+        .eq('status', 'sent_to_talent');
+      if (expiryError) return res.status(500).json({ error: `Could not expire this offer: ${expiryError.message}` });
       return res.status(409).json({ error: 'This offer has expired. Ask your talent manager for a new one.' });
     }
 
@@ -63,29 +130,75 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ── Decline ──────────────────────────────────────────────────────────────
     if (decision === 'decline') {
-      const { error } = await supabase
+      const { data: declined, error } = await supabase
         .from('offers')
         .update({ status: 'declined', talent_decline_reason: reason || null, updated_at: now })
-        .eq('id', offerId);
+        .eq('id', offerId)
+        .eq('status', 'sent_to_talent')
+        .select('id')
+        .maybeSingle();
       if (error) {
         console.error('[offers/respond] decline failed:', error.message);
         return res.status(500).json({ error: `Could not record your response: ${error.message}` });
       }
-      return res.status(200).json({ ok: true, status: 'declined' });
+      if (!declined) return res.status(409).json({ error: 'This offer has already been answered.' });
+      const stageWarning = await advanceRequestStage(supabase, offer.request_id, 'offer_declined');
+      const roleTitle = offer.role_title || 'the role';
+      const notice = offer.client_id
+        ? await notifyUsers(String(offer.client_id), 'offer_declined', {
+            roleTitle,
+            reason: String(reason || '').trim() || undefined
+          }, { sourceRecordId: String(offer.id) })
+        : { warnings: ['The client could not be notified because this offer has no client.'] };
+      const opsNotice = await notifyAdmins('offer_declined', {
+        roleTitle,
+        reason: String(reason || '').trim() || undefined
+      }, { sourceRecordId: String(offer.id) });
+      const warnings = [...notice.warnings, ...opsNotice.warnings];
+      if (stageWarning) warnings.push(stageWarning);
+      return res.status(200).json({
+        ok: true,
+        status: 'declined',
+        warnings
+      });
     }
 
     // ── Accept ───────────────────────────────────────────────────────────────
-    const { error: acceptError } = await supabase
+    const { data: accepted, error: acceptError } = await supabase
       .from('offers')
       .update({ status: 'accepted', accepted_at: now, updated_at: now })
-      .eq('id', offerId);
+      .eq('id', offerId)
+      .eq('status', 'sent_to_talent')
+      .select('id')
+      .maybeSingle();
 
     if (acceptError) {
       console.error('[offers/respond] accept failed:', acceptError.message);
       return res.status(500).json({ error: `Could not record your response: ${acceptError.message}` });
     }
+    if (!accepted) return res.status(409).json({ error: 'This offer has already been answered.' });
 
     const warnings: string[] = [];
+    const stageWarning = await advanceRequestStage(supabase, offer.request_id, 'offer_accepted');
+    if (stageWarning) warnings.push(stageWarning);
+    if (offer.match_id) {
+      const { error: matchError } = await supabase
+        .from('matches')
+        .update({ status: 'accepted' })
+        .eq('id', offer.match_id)
+        .eq('talent_id', offer.talent_id);
+      if (matchError) warnings.push(`Your acceptance was recorded, but the match stage did not update: ${matchError.message}`);
+    }
+    const roleTitle = offer.role_title || 'the role';
+    const notice = offer.client_id
+      ? await notifyUsers(String(offer.client_id), 'offer_accepted', {
+          roleTitle
+        }, { sourceRecordId: String(offer.id) })
+      : { warnings: ['The client could not be notified because this offer has no client.'] };
+    const opsNotice = await notifyAdmins('offer_accepted', {
+      roleTitle
+    }, { sourceRecordId: String(offer.id) });
+    warnings.push(...notice.warnings, ...opsNotice.warnings);
 
     // The contract exists because a candidate accepted, never before.
     const { data: contract, error: contractError } = await supabase

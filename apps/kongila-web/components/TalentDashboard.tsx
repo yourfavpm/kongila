@@ -2,7 +2,7 @@ import { apiFetch } from '../lib/apiFetch';
 import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { formatCurrency, interviewInstant, formatForBothParties, viewerTimeZone, wallClockToUtc, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
+import { formatCurrency, interviewInstant, formatForBothParties, viewerTimeZone, wallClockToUtc, countUnreadMessages, countUnreadNotifications, countUnreadByModule, TIMEZONE_OPTIONS } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
 
 /**
@@ -21,19 +21,54 @@ function whenForTalent(interview: any, fallbackZone?: string | null) {
   return formatForBothParties(iso, talentZone, clientZone, "client's time");
 }
 import type { Interview, Contract } from '@kongila/shared-types';
-import { calculateCompositeVettingGrade } from '@kongila/matching-engine';
+import {
+  calculateCompositeVettingGrade,
+  vettingScoreState,
+  VETTING_STAGES,
+  CANDIDATE_STAGE_VIEW,
+  candidateStageView
+} from '@kongila/matching-engine';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import TalentMessagesPanel from './TalentMessagesPanel';
 import TalentNotificationsPanel from './TalentNotificationsPanel';
 import TalentSettingsPanel from './TalentSettingsPanel';
 import TalentSupportPanel from './TalentSupportPanel';
 
-export const MOCK_PLATFORM_SETTINGS = {
+/**
+ * Platform policy for what a candidate may see of their own assessment.
+ *
+ * These were called MOCK_PLATFORM_SETTINGS, which misread as placeholder
+ * data. They are not data about anyone: they are the platform's default
+ * policy, and they gate real behaviour, so they stay until the settings a
+ * person actually configures are stored and served. `platformSettingsFor`
+ * prefers a stored setting when one reaches the profile and falls back to
+ * these, so nothing has to change here when that lands.
+ */
+export const PLATFORM_VISIBILITY_DEFAULTS = {
   globalScoreVisibility: 'full' as 'full' | 'grade-only' | 'hidden',
   interviewOutcomeVisibility: true
 };
 
-export const MOCK_TAG_DICTIONARY: Record<string, string> = {
+export const platformSettingsFor = (profile?: any) => {
+  const stored = Array.isArray(profile?.platformSettings) ? profile.platformSettings[0] : profile?.platformSettings;
+  return {
+    globalScoreVisibility: stored?.globalScoreVisibility
+      || stored?.global_score_visibility
+      || PLATFORM_VISIBILITY_DEFAULTS.globalScoreVisibility,
+    interviewOutcomeVisibility: stored?.interviewOutcomeVisibility
+      ?? stored?.interview_outcome_visibility
+      ?? PLATFORM_VISIBILITY_DEFAULTS.interviewOutcomeVisibility
+  };
+};
+
+/**
+ * What each vetting tag means, shown as a tooltip beside the tag.
+ *
+ * Static copy, not a claim about any candidate: a tag only appears when
+ * operations has assigned it. A stored dictionary on the profile wins when
+ * there is one.
+ */
+export const TAG_DESCRIPTIONS: Record<string, string> = {
   'Top 1%': 'Ranked in the 99th percentile of all applicants globally based on technical assessments.',
   'React Expert': 'Demonstrated advanced proficiency in React architecture, hooks, and state management.',
   'Fast Communicator': 'Consistently responds to messages and requests within 1 hour.',
@@ -62,7 +97,7 @@ interface TalentDashboardProps {
   talentSkillAssessments?: any[];
   skillAssessmentResults?: any[];
   workSimulationTasks?: any[];
-  onSubmitAssessment?: (result: any) => Promise<void>;
+  onSubmitAssessment?: (result: any) => Promise<any>;
   onSignOut?: () => void;
   onUpdateProfile?: (updatedProfile: any) => void;
   onUpdateMatch?: (updatedMatch: any) => void;
@@ -314,9 +349,10 @@ const PROFILE_COMPLETION_FIELDS: Array<{ key: string; label: string; test?: (pro
   { key: 'seniorityLevel', label: 'Seniority Level' },
   { key: 'experienceYears', label: 'Years of Experience', test: profile => Number(profile?.experienceYears) > 0 },
   { key: 'primarySkills', label: 'Primary Skills', test: profile => Array.isArray(profile?.primarySkills) ? profile.primarySkills.length > 0 : Array.isArray(profile?.skills) ? profile.skills.length > 0 : Boolean(profile?.skills) },
-  { key: 'preferredEngagementType', label: 'Engagement Type', test: profile => Boolean(profile?.preferredEngagementType || profile?.employmentPreference) },
+  // Engagement Type and Project Type were here. Onboarding no longer asks for
+  // either, so counting them held every new candidate's profile short of 100%
+  // with nothing they could do about it.
   { key: 'preferredWorkHours', label: 'Work Hours', test: profile => Boolean(profile?.preferredWorkHours || profile?.hourlyMonthly) },
-  { key: 'preferredProjectType', label: 'Project Type' },
   { key: 'noticePeriod', label: 'Notice Period', test: profile => Boolean(profile?.noticePeriod || profile?.availableStartDate) },
   { key: 'salaryExpectationUsd', label: 'Salary Expectation', test: profile => Number(profile?.salaryExpectationUsd ?? profile?.salaryExpectation ?? 0) > 0 },
   { key: 'bio', label: 'Bio' },
@@ -324,7 +360,7 @@ const PROFILE_COMPLETION_FIELDS: Array<{ key: string; label: string; test?: (pro
   { key: 'cvUrl', label: 'CV Upload', test: profile => Boolean(profile?.cvUrl || (Array.isArray(profile?.documents) && profile.documents.some((doc: any) => String(doc?.name || '').toLowerCase().includes('.pdf')))) },
   { key: 'portfolioUrl', label: 'Portfolio' },
   { key: 'certificationFiles', label: 'Certifications', test: profile => Array.isArray(profile?.certificationFiles) ? profile.certificationFiles.length > 0 : Boolean(profile?.certifications) },
-  { key: 'linkedIn', label: 'LinkedIn' },
+  { key: 'linkedIn', label: 'LinkedIn', test: profile => Boolean(profile?.linkedIn || profile?.linkedinUrl) },
   { key: 'githubUrl', label: 'GitHub' },
   { key: 'websiteUrl', label: 'Website' },
 ];
@@ -358,24 +394,36 @@ const maskClientName = (clientName?: string) => {
   return `${parts[0]} ${parts.slice(1).map(part => `${part.charAt(0)}${'*'.repeat(Math.max(0, part.length - 1))}`).join(' ')}`;
 };
 
+/**
+ * What the candidate should read on the overview card for the stage they are
+ * on.
+ *
+ * This was a fifth hand-written copy of the stage copy, with its own wording
+ * for each of the seven, so the overview card and the vetting progress
+ * section described the same stage differently. It now reads the shared list:
+ * the action when the move is the candidate's, and who is holding it when it
+ * is not.
+ */
 const getStageNextAction = (stageIdx: number, status: string, stage?: any) => {
-  const actions = [
-    'The Talent Manager is screening your application and profile documents.',
-    'Complete the skill assessment once it is assigned to you.',
-    stage?.interviewDate || stage?.interviewId ? 'Please attend your scheduled live interview at the designated time.' : 'Waiting for admin to schedule your live interview.',
-    'Complete the personality test when the system sends the invite.',
-    'Keep your remote readiness details current for ops review.',
-    'Submit the work simulation task before the deadline.',
-    'Await final review and deployment approval.',
-  ];
-  const action = actions[stageIdx] || 'Await the next update from the Kongila team.';
   if (status === 'passed' && stageIdx === 6) {
-    return 'You are fully vetted. The matching team can now deploy or shortlist you.';
+    return 'You are fully vetted. The matching team can now shortlist you for client requests.';
   }
   if (status === 'failed') {
     return 'Check your notifications for the next steps and any required follow-up.';
   }
-  return action;
+
+  const view = candidateStageView(stageIdx);
+  if (!view) return 'Await the next update from the Kongila team.';
+
+  // Stage 2 is the candidate's only once a time has been set, so it reads as
+  // theirs or as a wait depending on what is on the record.
+  if (stageIdx === 2) {
+    return stage?.interviewDate || stage?.interviewId
+      ? 'Attend your scheduled interview at the agreed time. Joining details are on the stage below.'
+      : view.waitingOn;
+  }
+
+  return view.candidateAction || view.waitingOn;
 };
 
 const getStageStateLabel = (stage: any, totalStages: number) => {
@@ -432,6 +480,54 @@ const resolveTalentSkillAssessment = (
   );
 };
 
+/**
+ * Has an assessment deadline passed?
+ *
+ * A deadline set as a date alone arrives as midnight at the start of that
+ * day, so comparing it to now marked the assessment overdue for the whole of
+ * the day it was due — a candidate told "due the 14th" found it locked on the
+ * 14th. Due a date means that date is still a day you can work.
+ *
+ * The same rule runs on the server in submitAssessment, so the button and the
+ * route agree. If they disagree the candidate either sees a button that
+ * fails, or no button when submitting would have worked.
+ */
+/**
+ * One vocabulary for submission types.
+ *
+ * Three were in use: shared-types said 'file' | 'essay' | 'link', the admin
+ * picker wrote 'essay', and the server accepts 'file' | 'link' | 'text'. The
+ * candidate's panel tested for 'essay', so a task stored as 'text' matched no
+ * branch and rendered no input at all — a task with nothing to fill in and a
+ * submit button that could never succeed. 'text' is the server's word and so
+ * the real one; 'essay' is accepted for rows written before this.
+ */
+/** End-of-day semantics, matching the server's check. */
+function workSimulationDeadlinePassed(deadline: any): boolean {
+  if (!deadline) return false;
+  const due = new Date(deadline);
+  if (Number.isNaN(due.getTime())) return false;
+  const end = new Date(due);
+  if (due.getUTCHours() === 0 && due.getUTCMinutes() === 0) end.setUTCHours(23, 59, 59, 999);
+  return Date.now() > end.getTime();
+}
+
+function normalisedSubmissionType(value: any): 'file' | 'link' | 'text' {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'link' || raw === 'url') return 'link';
+  if (raw === 'text' || raw === 'essay') return 'text';
+  return 'file';
+}
+
+const assessmentDeadlinePassed = (deadline: string | null | undefined): boolean => {
+  if (!deadline) return false;
+  const due = new Date(deadline);
+  if (Number.isNaN(due.getTime())) return false;
+  const end = new Date(due);
+  if (due.getUTCHours() === 0 && due.getUTCMinutes() === 0) end.setUTCHours(23, 59, 59, 999);
+  return Date.now() > end.getTime();
+};
+
 const isAssessmentSubmittable = (
   tsa: any | undefined,
   talentId: string | undefined,
@@ -450,9 +546,9 @@ const isAssessmentSubmittable = (
   if (hasResult) return false;
 
   if (tsa) {
-    const lockedStatuses = ['submitted', 'graded', 'Passed', 'Failed'];
+    const lockedStatuses = ['submitted', 'marked', 'graded', 'expired', 'Passed', 'Failed'];
     if (lockedStatuses.includes(tsa.status)) return false;
-    if (tsa.deadline && new Date(tsa.deadline).getTime() < Date.now()) return false;
+    if (tsa.deadline && assessmentDeadlinePassed(tsa.deadline)) return false;
   }
 
   return Boolean(ref || tsa);
@@ -531,8 +627,54 @@ const ProfileSection = ({
   const activeVettingStage = getActiveVettingStage(profile);
   const activeStageIndex = Number(activeVettingStage?.stageIndex ?? 0);
   const totalStages = profile?.vettingPipeline?.length || 7;
-  const passedCount = pipeline.filter((s: any) => s.status === 'passed').length;
-  const hasCompletedVetting = passedCount >= totalStages || ['Vetted', 'Matched', 'Deployed'].includes(vettingStatus);
+  // Passed or deliberately skipped. A skipped stage is settled, and counting
+  // only 'passed' here while Vetting Progress counted both was one of the two
+  // ways these screens could disagree about the same candidate.
+  const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
+
+  // Vetting is complete only when operations says so.
+  //
+  // This read `passedCount >= totalStages`, and totalStages falls back to 7
+  // when the pipeline is empty. Any profile whose pipeline had fewer stages
+  // than it claimed, which is every candidate the moment they finish
+  // onboarding, satisfied it, so a brand new candidate was told their vetting
+  // was complete before an administrator had seen their name. The pipeline now
+  // has to exist and have at least one stage before the count can mean
+  // anything.
+  const hasVettingPipeline = pipeline.length > 0;
+
+  // Completion is decided by the pipeline, not by a status string.
+  //
+  // This read the status alone — `['Vetted','Matched','Deployed'].includes(...)`
+  // — so a row carrying 'Vetted' was shown as fully vetted, with a grade, no
+  // matter what its stages said. A candidate who onboarded while the vetting
+  // columns were missing has exactly that: a status with no pipeline behind
+  // it. Their overview announced "Vetting Complete - A" while the Vetting
+  // Progress tab beside it correctly said 0 of 7.
+  //
+  // Trusting the status would also have come back the moment the pipeline was
+  // created, because the stale 'Vetted' would still be sitting there with
+  // seven pending stages under it. So the pipeline is the evidence, and it
+  // has to be finished. 'Matched' and 'Deployed' stand on their own: a
+  // candidate on a contract has demonstrably been through this.
+  const hasCompletedVetting =
+    ['Matched', 'Deployed'].includes(vettingStatus) ||
+    (hasVettingPipeline && passedCount >= pipeline.length);
+
+  // A grade only exists once there is something to grade. 'Ungraded' is what
+  // the server writes on the first save, and the old code treated any falsy
+  // grade as a reason to print 'VETTED'.
+  //
+  // It also has to belong to a vetting that finished. A stale grade sitting
+  // on a row whose stages are all pending is not this candidate's grade, and
+  // showing it is how a candidate who has not been assessed is told they
+  // scored an A.
+  const rawProfileGrade = String(profile?.grade || activeContract?.grade || '').trim();
+  const awardedGrade = hasCompletedVetting
+    && rawProfileGrade
+    && !/^(ungraded|none|n\/a|pending)$/i.test(rawProfileGrade)
+    ? rawProfileGrade
+    : '';
   const isNewTalent = (() => {
     const createdAt = profile?.createdAt || profile?.created_at;
     if (!createdAt) return vettingStatus === 'Applied' || vettingStatus === 'Review';
@@ -562,10 +704,14 @@ const ProfileSection = ({
   const vettingProgressPercent = Math.round((passedCount / Math.max(1, totalStages)) * 100);
   const vettingProgressLabel = hasCompletedVetting
     ? 'Vetting complete'
-    : `Stage ${Math.min(activeStageIndex + 1, totalStages)} of ${totalStages}`;
+    : hasVettingPipeline
+      ? `Stage ${Math.min(activeStageIndex + 1, totalStages)} of ${totalStages}`
+      : 'Awaiting review';
   const vettingBadgeText = hasCompletedVetting
-    ? String(profile?.grade || activeContract?.grade || 'VETTED').toUpperCase()
-    : `STAGE ${Math.min(activeStageIndex + 1, totalStages)}`;
+    ? (awardedGrade ? awardedGrade.toUpperCase() : 'VETTED')
+    : hasVettingPipeline
+      ? `STAGE ${Math.min(activeStageIndex + 1, totalStages)}`
+      : 'SUBMITTED';
   const activeSkillAssessment = resolveTalentSkillAssessment(
     activeVettingStage?.assessmentId,
     profile?.id,
@@ -584,9 +730,15 @@ const ProfileSection = ({
     }
   };
 
-  const displayStatus = hasCompletedVetting 
-    ? (vettingStatus === 'Rejected' ? 'Rejected' : `Vetting Complete - ${profile?.grade || activeContract?.grade || 'VETTED'}`)
-    : (vettingStatus === 'Applied' && passedCount === 0 && activeVettingStage?.status === 'pending' ? 'Applied' : 'Vetting In Progress');
+  const displayStatus = hasCompletedVetting
+    ? (vettingStatus === 'Rejected'
+        ? 'Rejected'
+        : awardedGrade
+          ? `Vetting Complete - ${awardedGrade}`
+          : 'Vetting Complete')
+    : !hasVettingPipeline
+      ? 'Applied - awaiting review'
+      : (vettingStatus === 'Applied' && passedCount === 0 && activeVettingStage?.status === 'pending' ? 'Applied' : 'Vetting In Progress');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -743,7 +895,11 @@ const ProfileSection = ({
             <div style={{ fontSize: '16px', fontWeight: 900, color: '#1A2340', margin: '6px 0 2px 0' }}>{(activeVettingStage?.stageName === 'Behavioural Interview' ? 'Live Interview' : activeVettingStage?.stageName) || 'Application Screening'}</div>
             <div style={{ fontSize: '12px', color: '#6B7A99', marginBottom: '12px' }}>{getStageAgeLabel(activeVettingStage, profile?.createdAt || profile?.user?.createdAt)}</div>
             <p style={{ fontSize: '13px', color: '#475569', margin: 0, maxWidth: '720px' }}>
-              {hasCompletedVetting ? 'Your vetting cycle has been completed. Any future review updates will appear here.' : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending', activeVettingStage)}
+              {hasCompletedVetting
+                ? 'Your vetting cycle has been completed. Any future review updates will appear here.'
+                : !hasVettingPipeline
+                  ? 'Your profile has been submitted. Kongila reviews new applications in the order they arrive and will open your first vetting stage here, so there is nothing for you to do yet.'
+                  : getStageNextAction(activeStageIndex, activeVettingStage?.status || 'pending', activeVettingStage)}
             </p>
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '160px' }}>
@@ -767,11 +923,27 @@ const ProfileSection = ({
               <>
                 <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#475569' }}>
                   Complete the assigned assessment to move to the next vetting stage.
-                  {activeSkillAssessment?.deadline && (
-                    <span style={{ display: 'block', color: '#EF4444', fontWeight: 700, marginTop: '4px' }}>
-                      ⚠️ Deadline: {new Date(activeSkillAssessment.deadline).toLocaleDateString()}
-                    </span>
-                  )}
+                  {activeSkillAssessment?.deadline && (() => {
+                    // Days left, not just the date. A date on its own does not
+                    // tell a candidate whether they have a month or until
+                    // tonight, and this is the one thing on the card that is
+                    // time critical.
+                    const due = new Date(activeSkillAssessment.deadline);
+                    const endOfDue = new Date(due);
+                    if (due.getUTCHours() === 0 && due.getUTCMinutes() === 0) endOfDue.setUTCHours(23, 59, 59, 999);
+                    const daysLeft = Math.ceil((endOfDue.getTime() - Date.now()) / 86400000);
+                    const urgent = daysLeft <= 2;
+                    return (
+                      <span style={{ display: 'block', color: urgent ? '#B91C1C' : '#92400E', fontWeight: 700, marginTop: '6px' }}>
+                        Due {due.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
+                        {daysLeft <= 0
+                          ? ' — today is the last day'
+                          : daysLeft === 1
+                            ? ' — tomorrow'
+                            : ` — ${daysLeft} days left`}
+                      </span>
+                    );
+                  })()}
                 </p>
                 <button
                   onClick={() => onOpenAssessment?.(activeSkillAssessment?.id || activeVettingStage.assessmentId)}
@@ -791,7 +963,7 @@ const ProfileSection = ({
               </>
             ) : (
               <p style={{ margin: 0, fontSize: '13px', color: '#475569' }}>
-                {activeSkillAssessment?.deadline && new Date(activeSkillAssessment.deadline).getTime() < Date.now() && !skillAssessmentResults.some((r: any) => r.talentSkillAssessmentId === activeSkillAssessment?.id) ? (
+                {activeSkillAssessment?.deadline && assessmentDeadlinePassed(activeSkillAssessment.deadline) && !skillAssessmentResults.some((r: any) => r.talentSkillAssessmentId === activeSkillAssessment?.id) ? (
                   <span style={{ color: '#EF4444', fontWeight: 700 }}>⚠️ The deadline for this assessment has passed. You can no longer submit it.</span>
                 ) : (
                   "Your assessment has been submitted and is awaiting review by the vetting team. You will be notified once it has been graded."
@@ -1224,54 +1396,14 @@ const ProfessionalSection = ({ profile }: { profile: any }) => {
 };
 
 // ─── Section 2.5: Interviews (KT-INTERVIEW) ─────────────────────────────────────────
-const MOCK_INTERVIEWS: Interview[] = [
-  {
-    id: 'int-1',
-    requestId: 'req-1',
-    matchId: 'm-1',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    clientName: 'Nexus Health',
-    title: 'Lead React Architect',
-    date: '2026-07-10',
-    time: '15:00',
-    status: 'Proposed',
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'int-2',
-    requestId: 'req-2',
-    matchId: 'm-2',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    clientName: 'Horizon Fintech',
-    title: 'Senior Frontend Engineer',
-    date: '2026-07-12',
-    time: '10:00',
-    status: 'Scheduled',
-    meetingLink: undefined,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'int-3',
-    requestId: 'req-3',
-    matchId: 'm-3',
-    talentId: 't-1',
-    talentName: 'Talent User',
-    clientName: 'Global Corp',
-    title: 'React Native Developer',
-    date: '2026-07-01',
-    time: '14:00',
-    status: 'Completed',
-    outcome: 'Proceeded',
-    talentNotes: 'The technical interview went well. They asked a lot about React Native performance.',
-    createdAt: new Date().toISOString()
-  }
-];
 
 const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { scheduledInterviews?: any[]; profile?: any; onRespond?: (interviewId: string, accept: boolean) => void }) => {
   const [activeTab, setActiveTab] = useState<'upcoming'|'reschedules'|'past'>('upcoming');
-  const interviews = scheduledInterviews || MOCK_INTERVIEWS;
+  // Was `scheduledInterviews || MOCK_INTERVIEWS`, a two-item fixture with a
+  // client called Nexus Health and a July date. A candidate with no
+  // interviews was shown invented ones and had no way to know they were not
+  // real. No interviews now means no interviews.
+  const interviews = scheduledInterviews || [];
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
 
@@ -1520,7 +1652,7 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { schedu
                   </div>
                 </div>
 
-                {MOCK_PLATFORM_SETTINGS.interviewOutcomeVisibility && i.outcome && (
+                {platformSettingsFor(profile).interviewOutcomeVisibility && i.outcome && (
                   <div style={{ 
                     padding: '6px 12px', borderRadius: '16px', fontSize: '13px', fontWeight: 700,
                     background: i.outcome === 'Proceeded' ? '#DCFCE7' : i.outcome === 'Not Selected' ? '#FEE2E2' : '#FEF3C7',
@@ -3788,8 +3920,15 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   const vettingStageIndex = Number(vettingPipeline.find((stage: any) => stage?.status === 'in_progress')?.stageIndex ?? vettingPipeline.find((stage: any) => stage?.status !== 'passed' && stage?.status !== 'skipped')?.stageIndex ?? 0);
   const vettingStageCount = profile?.vettingPipeline?.length || 7;
   const passedStageCount = vettingPipeline.filter((stage: any) => stage?.status === 'passed').length;
-  const hasCompletedVetting = passedStageCount >= vettingStageCount || ['Vetted', 'Matched', 'Deployed'].includes(vettingStatus);
-  const vettingBadgeText = hasCompletedVetting ? 'VETTED' : `STAGE ${Math.min(vettingStageIndex + 1, vettingStageCount)}`;
+  // Same guard as the overview: an empty pipeline is not a finished one.
+  const hasCompletedVetting =
+    ['Vetted', 'Matched', 'Deployed'].includes(vettingStatus) ||
+    (vettingPipeline.length > 0 && passedStageCount >= vettingPipeline.length);
+  const vettingBadgeText = hasCompletedVetting
+    ? 'VETTED'
+    : vettingPipeline.length > 0
+      ? `STAGE ${Math.min(vettingStageIndex + 1, vettingStageCount)}`
+      : 'SUBMITTED';
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const headerPhotoInputRef = useRef<HTMLInputElement | null>(null);
@@ -4352,7 +4491,20 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
                   <div><label style={labelStyle}>Nationality</label><input value={nationality} onChange={e => setNationality(e.target.value)} style={inputStyle} /></div>
                   <div><label style={labelStyle}>City</label><input value={city} onChange={e => setCity(e.target.value)} style={inputStyle} /></div>
                   <div><label style={labelStyle}>Country</label><input value={country} onChange={e => setCountry(e.target.value)} style={inputStyle} /></div>
-                  <div><label style={labelStyle}>Timezone</label><input value={timezone} onChange={e => setTimezone(e.target.value)} style={inputStyle} /></div>
+                  {/* Free text before, so this field could hold anything and
+                      often disagreed with what onboarding stored. */}
+                  <div>
+                    <label style={labelStyle}>Timezone</label>
+                    <select value={timezone} onChange={e => setTimezone(e.target.value)} style={inputStyle}>
+                      <option value="">Select your timezone</option>
+                      {TIMEZONE_OPTIONS.map(tz => (
+                        <option key={tz.value} value={tz.value}>{tz.label}</option>
+                      ))}
+                      {timezone && !TIMEZONE_OPTIONS.some(tz => tz.value === timezone) && (
+                        <option value={timezone}>{timezone} (stored)</option>
+                      )}
+                    </select>
+                  </div>
                   <div><label style={labelStyle}>National ID (NIN)</label><input value={nationalId} onChange={e => setNationalId(e.target.value)} style={inputStyle} /></div>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px', borderTop: '1px solid #F1F5F9', paddingTop: '16px' }}>
@@ -6227,7 +6379,7 @@ interface AssessmentEngineProps {
   assessment: any;               // the Assessment object
   categories: any[];             // AssessmentCategory[]
   questions: any[];              // AssessmentQuestion[]
-  onSubmit: (result: any) => Promise<void>;
+  onSubmit: (result: any) => Promise<any>;
   onClose: () => void;
 }
 
@@ -6262,6 +6414,7 @@ const SkillAssessmentEngine = ({
   // ── Submission state
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<any>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   // ── Flag: was auto-submitted due to timer?
   const [autoSubmitted, setAutoSubmitted] = useState(false);
@@ -6311,6 +6464,7 @@ const SkillAssessmentEngine = ({
   const handleSubmit = useCallback(async (isAuto = false) => {
     if (submitting) return;
     setSubmitting(true);
+    setSubmissionError(null);
 
     const endTime = Date.now();
     const autoScore = computeAutoScore();
@@ -6340,10 +6494,16 @@ const SkillAssessmentEngine = ({
     };
 
     try {
-      await onSubmit(result);
-      setSubmitResult(result);
+      const saved = await onSubmit(result);
+      setSubmitResult({
+        ...result,
+        ...saved,
+        hasSubjective: saved?.awaitingReview ?? result.hasSubjective
+      });
       setPhase('submitted');
       if (isAuto) setAutoSubmitted(true);
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Your assessment was not submitted. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -6596,6 +6756,11 @@ const SkillAssessmentEngine = ({
         </div>
 
         {/* ── BOTTOM ACTION BAR */}
+        {submissionError && (
+          <div role="alert" style={{ background: '#7F1D1D', color: '#FEE2E2', padding: '12px 24px', fontSize: '13px', lineHeight: 1.5 }}>
+            {submissionError} Your answers are still here. Please retry when you are ready.
+          </div>
+        )}
         <div style={{ background: '#0A1120', borderTop: '1px solid rgba(255,255,255,0.07)', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <button
             onClick={() => setCategoryIdx(prev => Math.max(0, prev - 1))}
@@ -6870,17 +7035,35 @@ const QuestionCard = ({
 
 // ─── Section: Vetting Progress (Dedicated Full View) ─────────────────────────
 const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], workSimulationTasks = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; workSimulationTasks?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
-  const STAGE_META = [
-    { name: 'Application Screening', color: '#EF4444', icon: '📋', responsible: 'Talent Manager', desc: 'Initial review of your application and submitted documents.' },
-    { name: 'Skill Assessment',       color: '#3B82F6', icon: '🧪', responsible: 'Skill Assessor', desc: 'Role-specific technical evaluation assigned by the vetting team.' },
-    { name: 'Live Interview',         color: '#8B5CF6', icon: '🎙️', responsible: 'Talent Manager', desc: 'Structured interview covering situational and behavioural competencies.' },
-    { name: 'Personality Test',       color: '#10B981', icon: '🧠', responsible: 'System (Auto)', desc: 'Automated psychometric profile assessment via external platform.' },
-    { name: 'Remote Readiness',       color: '#F59E0B', icon: '🌐', responsible: 'Ops Team', desc: 'Infrastructure check: internet, device, workspace and timezone compatibility.' },
-    { name: 'Work Simulation',        color: '#F97316', icon: '🔬', responsible: 'Team Lead', desc: 'Live task or case-study simulation evaluated by a senior team lead.' },
-    { name: 'Final Review',           color: '#EAB308', icon: '⭐', responsible: 'Review Panel', desc: 'Panel-level classification into the Kongila Vetted Talent Pool.' },
-  ];
+  // Built from the shared stage list rather than copied. This was a local
+  // array of seven, and it had already drifted: it called stage 2 "Live
+  // Interview" while the engine and the vetting_stage column both say
+  // "Behavioural Interview". The candidate-facing label, icon and summary now
+  // come from CANDIDATE_STAGE_VIEW, and the colour and responsible party from
+  // VETTING_STAGES, so a change to the pipeline cannot leave this screen
+  // describing a different one.
+  const STAGE_META = VETTING_STAGES.map(stage => {
+    const view = CANDIDATE_STAGE_VIEW[stage.index];
+    return {
+      name: view?.label || stage.name,
+      canonicalName: stage.name,
+      color: stage.color,
+      icon: view?.icon || stage.icon,
+      responsible: stage.responsible,
+      desc: view?.summary || stage.description,
+      candidateAction: view?.candidateAction || null,
+      waitingOn: view?.waitingOn || ''
+    };
+  });
 
-  const [pipeline, setPipeline] = useState<any[]>(profile?.vettingPipeline || STAGE_META.map((s, i) => ({ stageIndex: i, stageName: s.name, status: i===0?'in_progress':'pending', assignee: s.responsible })));
+  // This read `profile?.vettingPipeline || STAGE_META.map(...)`, in three
+  // places in this component. A candidate whose pipeline had not been created
+  // was shown seven stages that existed only in their browser, with stage 1
+  // apparently in progress, while the overview card above said they were
+  // awaiting review and the server held nothing at all. The pipeline is
+  // created server side when onboarding completes, so an empty one here means
+  // vetting genuinely has not started, and the view now says that.
+  const [pipeline, setPipeline] = useState<any[]>(Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : []);
   const [loading, setLoading] = useState(false);
   const [stage5ModalOpen, setStage5ModalOpen] = useState(false);
   const [form5, setForm5] = useState({ speed: '', hardware: false, quiet: false });
@@ -6904,13 +7087,13 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
             onUpdateProfile({ ...profile, vettingPipeline: data.pipeline });
             setPipeline(data.pipeline);
           } else {
-            setPipeline(profile?.vettingPipeline || STAGE_META.map((s, i) => ({ stageIndex: i, stageName: s.name, status: i===0?'in_progress':'pending', assignee: s.responsible })));
+            setPipeline(Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : []);
           }
           setLoading(false);
         }
       } catch (e) {
         if (mounted) {
-          setPipeline(profile?.vettingPipeline || STAGE_META.map((s, i) => ({ stageIndex: i, stageName: s.name, status: i===0?'in_progress':'pending', assignee: s.responsible })));
+          setPipeline(Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : []);
           setLoading(false);
         }
       }
@@ -6948,24 +7131,67 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
     const task = workSimulationTasks.find((t: any) => t.id === getActiveVettingStage(profile)?.taskId);
     if (!task) return;
 
-    setSubmittingWS(true);
-    let payload: any = { submissionType: task.submissionType };
+    // Where the submission goes.
+    //
+    // This posted to /api/vetting/advance, which moves the pipeline and
+    // stores nothing else: the answer, the link, the uploaded file and the
+    // time of submission all went nowhere, and operations had a stage marked
+    // submitted with no work attached to mark. It goes to the work
+    // simulation route, which writes the row, stamps submittedAt, enforces
+    // the deadline and tells operations there is something to review.
+    const kind = normalisedSubmissionType(task.submissionType);
+    const body: any = { action: 'submit', taskId: task.id };
 
-    if (task.submissionType === 'link') {
-      payload.submissionLink = submissionLink;
-    } else if (task.submissionType === 'essay') {
-      payload.submissionText = submissionText;
-    } else if (task.submissionType === 'file' && submissionFile) {
+    if (kind === 'link') {
+      const link = submissionLink.trim();
+      if (!link) { alert('Add the link to your work before submitting.'); return; }
+      body.submissionUrl = link;
+    } else if (kind === 'text') {
+      const text = submissionText.trim();
+      if (!text) { alert('Write your response before submitting.'); return; }
+      body.submissionText = text;
+    } else {
+      if (!submissionFile) { alert('Choose a file before submitting.'); return; }
+      setSubmittingWS(true);
       try {
         const uploaded = await uploadFile('talent_document', submissionFile);
-        payload.submissionFileUrl = uploaded.url;
-      } catch (err) {
-        console.error("Upload error", err);
+        if (!uploaded?.url) throw new Error('The upload returned no address.');
+        body.submissionUrl = uploaded.url;
+        body.submissionName = submissionFile.name;
+      } catch (err: any) {
+        // A failed upload used to be logged and then submitted anyway, so
+        // the stage advanced with an empty submission and the candidate was
+        // marked on nothing.
+        setSubmittingWS(false);
+        alert(`Your file did not upload, so nothing was submitted: ${err?.message || 'unknown error'}. Try again.`);
+        return;
       }
     }
 
-    await handleAction('SUBMIT_STAGE_6', 5, payload);
-    setSubmittingWS(false);
+    setSubmittingWS(true);
+    try {
+      const res = await apiFetch('/api/work-simulation', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That submission was not accepted.');
+        return;
+      }
+      // The work is stored. Now move the stage, which is what the pipeline
+      // route is for — it marks the stage submitted and awaiting review.
+      // Operations passes or fails it when they mark the task.
+      await handleAction('SUBMIT_STAGE_6', 5, {
+        taskId: task.id,
+        submissionType: kind,
+        submittedAt: result?.data?.submittedAt || new Date().toISOString()
+      });
+    } catch (err: any) {
+      alert(err?.message || 'That submission was not accepted.');
+    } finally {
+      setSubmittingWS(false);
+    }
   };
 
 
@@ -6973,8 +7199,16 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   const passedCount = pipeline.filter((s: any) => s.status === 'passed' || s.status === 'skipped').length;
   const overallProgress = Math.round((passedCount / 7) * 100);
   const scores = profile?.vettingScores || {};
-  const { score: compositeScore, grade: rawGrade } = calculateCompositeVettingGrade(scores);
-  const grade = passedCount===0?'—':(rawGrade==='Reject'?'C':rawGrade);
+  // A grade is only shown once every measured stage has produced a score.
+  //
+  // This computed one from whatever was in `scores`, and the dimensions
+  // nobody had scored counted as zero, so a candidate with nothing assessed
+  // graded Reject, which this then relabelled 'C' and printed as their grade.
+  // The `passedCount===0` guard caught only the very first moment; a
+  // candidate one stage in was back to being shown a C.
+  const scoreState = vettingScoreState(scores);
+  const compositeScore = scoreState.score;
+  const grade = scoreState.grade ?? '—';
   const gradeColor = grade==='A+'?'#10B981':grade==='A'?'#3B82F6':grade==='B'?'#F59E0B':grade==='—'?'#94A3B8':'#EF4444';
 
   const getStageUI = (sIdx: number, stat: string, color: string, slaBreached: boolean) => {
@@ -7040,6 +7274,21 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
         </div>
       </Card>
 
+      {/* An empty pipeline is a candidate whose vetting has not been opened
+          yet. The seven stages below render as locked, which is accurate, but
+          without this they look like a stalled assessment rather than one
+          that has not begun. */}
+      {pipeline.length === 0 && (
+        <Card style={{padding:'20px',background:'#EFF6FF',border:'1px solid #BFDBFE'}}>
+          <div style={{fontSize:'15px',fontWeight:800,color:'#1A2340',marginBottom:'6px'}}>
+            Your vetting has not started yet
+          </div>
+          <div style={{fontSize:'13px',color:'#475569',lineHeight:1.6}}>
+            Your profile is with Kongila. Once a talent manager opens your application, the first stage below becomes active and you will see exactly what is needed from you. Nothing is required from you in the meantime.
+          </div>
+        </Card>
+      )}
+
       {/* Stage Cards */}
       <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
         {STAGE_META.map((meta,idx)=>{
@@ -7049,6 +7298,17 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
           const ss=getStageUI(idx,stat,meta.color,sr.slaBreached);
           const tsa=resolveTalentSkillAssessment(sr.assessmentId, profile?.id, talentSkillAssessments);
           const canStartAssessment=isAssessmentSubmittable(tsa, profile?.id, skillAssessmentResults, sr.assessmentId);
+          // Does this card already show the candidate something to do? The
+          // four stages they drive each have their own block below, but two of
+          // them only appear once operations has set something up: the
+          // assessment needs assigning, the interview needs scheduling. In
+          // between, and on the three stages that are not theirs at all, the
+          // card showed a status pill and nothing else, so an open stage read
+          // as either silence or a demand with no instruction.
+          const hasOwnActionBlock =
+            (idx===1 && Boolean(sr.assessmentId) && canStartAssessment) ||
+            (idx===2 && Boolean(sr.interviewDate || sr.interviewTime)) ||
+            idx===3 || idx===4 || idx===5;
           
           return(
             <Card key={idx} style={{padding:'20px',background:ss.bg,border:`1px solid ${isCurrent?meta.color:ss.border}`,boxShadow:isCurrent?`0 4px 20px ${meta.color}15`:'none', opacity: stat==='pending'?0.7:1}}>
@@ -7071,6 +7331,38 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                   </div>
                   
                   {sr.notes&&stat!=='pending'&&<p style={{fontSize:'12px',color:'#6B7A99',margin:'10px 0 0 0',fontStyle:'italic',lineHeight:'1.5'}}>"{sr.notes}"</p>}
+
+                  {/* What is happening, when this stage is open and there is
+                      nothing for the candidate to press. Either their own
+                      action is not available yet, or the stage is somebody
+                      else's work and they are told whose. */}
+                  {isCurrent && !hasOwnActionBlock && (
+                    <div style={{marginTop:'12px',padding:'12px 14px',background:'#F8FAFC',borderRadius:'10px',border:'1px solid #E2E8F0'}}>
+                      <div style={{fontSize:'11px',fontWeight:800,textTransform:'uppercase',letterSpacing:'0.06em',color:'#64748B',marginBottom:'4px'}}>
+                        {meta.candidateAction ? 'Waiting on Kongila' : 'In progress'}
+                      </div>
+                      <div style={{fontSize:'12px',color:'#475569',lineHeight:1.6}}>
+                        {meta.waitingOn}
+                      </div>
+                      {meta.candidateAction && (
+                        <div style={{fontSize:'12px',color:'#475569',lineHeight:1.6,marginTop:'6px'}}>
+                          Then it is your turn: {meta.candidateAction.charAt(0).toLowerCase() + meta.candidateAction.slice(1)}
+                        </div>
+                      )}
+                      <div style={{fontSize:'11px',color:'#94A3B8',marginTop:'8px'}}>
+                        Handled by {meta.responsible}. You do not need to do anything right now.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A stage the candidate must act on, where they can. The
+                      instruction comes from the shared stage list so it says
+                      the same thing here as everywhere else. */}
+                  {isCurrent && hasOwnActionBlock && meta.candidateAction && (
+                    <div style={{marginTop:'12px',fontSize:'12px',color:'#475569',lineHeight:1.6}}>
+                      <strong style={{color:'#1A2340'}}>Your move:</strong> {meta.candidateAction}
+                    </div>
+                  )}
                   
                   {/* Stage 1 Clarification */}
                   {idx===0&&stat==='needs_clarification'&&(
@@ -7135,12 +7427,17 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                               <div style={{fontSize:'14px',fontWeight:800,color:'#9F1239'}}>{task.title}</div>
                               <p style={{fontSize:'12px',color:'#BE123C',margin:'4px 0 0 0',whiteSpace:'pre-wrap'}}>{task.description}</p>
                             </div>
-                            <div style={{fontSize:'11px',fontWeight:700,color:'#E11D48'}}>
-                              Deadline: {new Date(task.deadline).toLocaleDateString()}
-                            </div>
+                            {task.deadline && !Number.isNaN(new Date(task.deadline).getTime()) ? (
+                              <div style={{fontSize:'11px',fontWeight:700,color:'#E11D48'}}>
+                                Deadline: {new Date(task.deadline).toLocaleDateString()}
+                                {workSimulationDeadlinePassed(task.deadline) ? ' — passed' : ''}
+                              </div>
+                            ) : (
+                              <div style={{fontSize:'11px',fontWeight:700,color:'#9F1239'}}>No deadline set</div>
+                            )}
                             <div style={{background:'#fff',padding:'12px',borderRadius:'8px',border:'1px solid #FECDD3'}}>
                               <div style={{fontSize:'11px',fontWeight:700,color:'#9F1239',marginBottom:'8px',textTransform:'uppercase'}}>Your Submission</div>
-                              {task.submissionType === 'link' && (
+                              {normalisedSubmissionType(task.submissionType) === 'link' && (
                                 <input 
                                   type="url" 
                                   value={submissionLink} 
@@ -7150,7 +7447,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                                   style={{width:'100%',fontSize:'13px'}} 
                                 />
                               )}
-                              {task.submissionType === 'essay' && (
+                              {normalisedSubmissionType(task.submissionType) === 'text' && (
                                 <textarea 
                                   value={submissionText} 
                                   onChange={e => setSubmissionText(e.target.value)} 
@@ -7160,7 +7457,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                                   style={{width:'100%',fontSize:'13px',resize:'vertical'}} 
                                 />
                               )}
-                              {task.submissionType === 'file' && (
+                              {normalisedSubmissionType(task.submissionType) === 'file' && (
                                 <input 
                                   type="file" 
                                   onChange={e => e.target.files && setSubmissionFile(e.target.files[0])} 
@@ -7240,34 +7537,43 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   );
 };
 
+/** Turns a score dimension key into something a candidate can read. */
+const formatDimension = (key: string) => ({
+  technical: 'Skill Assessment',
+  behavioral: 'Live Interview',
+  personality: 'Personality Test',
+  remoteReadiness: 'Remote Readiness',
+  workSimulation: 'Work Simulation'
+} as Record<string, string>)[key] || key;
+
 // ─── Section: Scores & Grades ─────────────────────────────────────────────────
 const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile: any; skillAssessmentResults?: any[] }) => {
-  const visibility = MOCK_PLATFORM_SETTINGS.globalScoreVisibility;
+  const visibility = platformSettingsFor(profile).globalScoreVisibility;
   if (visibility === 'hidden') return null;
 
   const scores = profile?.vettingScores || {};
-  const { score: compositeScore, grade: rawGrade } = calculateCompositeVettingGrade(scores);
-  const grade = rawGrade==='Reject'?'C':rawGrade;
-  const gradeColor = grade==='A+'?'#10B981':grade==='A'?'#3B82F6':grade==='B'?'#F59E0B':grade==='C'?'#EF4444':'#94A3B8';
+  // Same rule as the vetting progress header: no grade until the assessment
+  // is complete. 'Reject' was also being relabelled 'C', which is not a grade
+  // the platform issues and is not what operations sees on the same candidate.
+  const scoreState = vettingScoreState(scores);
+  const compositeScore = scoreState.score;
+  const grade = scoreState.grade;
+  const gradeColor = grade==='A+'?'#10B981':grade==='A'?'#3B82F6':grade==='B'?'#F59E0B':grade==='Reject'?'#EF4444':'#94A3B8';
 
   const isGradeOnly = visibility === 'grade-only';
 
-  const mockReviews = profile?.performanceReviews || [
-    { cycleName: 'M1', score: 72, date: '2026-03-01' },
-    { cycleName: 'M2', score: 78, date: '2026-04-01' },
-    { cycleName: 'M3', score: 85, date: '2026-05-01' }
-  ];
+  // Three invented review cycles sat behind this `||`, so the trend chart
+  // drew a rising line for a candidate who had never been reviewed.
+  const performanceReviews = profile?.performanceReviews || [];
 
-  const personality = profile?.personalitySnapshot || {
-    workStyle: 'Autonomous Executer',
-    communicationPreference: 'Asynchronous / Written',
-    topStrengths: ['Analytical Thinking', 'Time Management', 'Adaptability']
-  };
+  // These three had fixtures behind `||`, so a candidate who had never been
+  // assessed was shown a personality profile nobody wrote, a classification
+  // history saying they were graded B in January and raised to A in June, and
+  // three skill tags. All of it read as fact about them. Empty now, and the
+  // sections below render nothing rather than inventing a past.
+  const personality = profile?.personalitySnapshot || null;
 
-  const history = profile?.classificationHistory || [
-    { date: '2026-01-15', previousGrade: '—', newGrade: 'B', reason: 'Initial Vetting' },
-    { date: '2026-06-01', previousGrade: 'B', newGrade: 'A', reason: '6-Month Re-assessment' }
-  ];
+  const history = profile?.classificationHistory || [];
 
   const scoreCategories = [
     {label:'Technical Skill',key:'technical',weight:'30%',icon:'💻',color:'#3B82F6'},
@@ -7277,8 +7583,10 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
     {label:'Remote Readiness',key:'remoteReadiness',weight:'10%',icon:'🌐',color:'#F59E0B'},
   ];
 
-  const assignedTags = profile?.tags || ['Top 1%', 'React Expert', 'Self-Starter'];
-  const isDeployed = profile?.vettingStatus === 'Deployed' || mockReviews.length > 0; // Mock check
+  const assignedTags = profile?.tags || [];
+  // Deployment is a vetting status, not something inferred from whether any
+  // reviews happen to exist.
+  const isDeployed = profile?.vettingStatus === 'Deployed';
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:'24px'}}>
@@ -7292,20 +7600,35 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
           {/* Grade Hero Card */}
           <Card style={{background:'linear-gradient(135deg,#1A2340 0%,#0047CC 100%)',padding:'32px',borderRadius:'16px',display:'flex',alignItems:'center',gap:'32px',color:'white',border:'none'}}>
             <div style={{textAlign:'center',flexShrink:0}}>
-              <div style={{fontSize:'72px',fontWeight:900,color:gradeColor,lineHeight:1,textShadow:'0 2px 16px rgba(0,0,0,0.3)'}}>{grade}</div>
-              <div style={{fontSize:'12px',fontWeight:700,color:'rgba(255,255,255,0.6)',marginTop:'8px',textTransform:'uppercase',letterSpacing:'0.1em'}}>Overall Grade</div>
+              <div style={{fontSize: grade ? '72px' : '34px',fontWeight:900,color:gradeColor,lineHeight:1,textShadow:'0 2px 16px rgba(0,0,0,0.3)'}}>
+                {grade || 'Not yet graded'}
+              </div>
+              <div style={{fontSize:'12px',fontWeight:700,color:'rgba(255,255,255,0.6)',marginTop:'8px',textTransform:'uppercase',letterSpacing:'0.1em'}}>
+                {grade ? 'Overall Grade' : `${scoreState.scoredDimensions.length} of ${scoreState.scoredDimensions.length + scoreState.missingDimensions.length} stages scored`}
+              </div>
             </div>
             
             <div style={{flex:1}}>
-              {!isGradeOnly && (
+              {!isGradeOnly && scoreState.isScored && (
                 <>
-                  <div style={{fontSize:'14px',fontWeight:700,color:'rgba(255,255,255,0.8)',marginBottom:'6px'}}>Composite Score</div>
+                  <div style={{fontSize:'14px',fontWeight:700,color:'rgba(255,255,255,0.8)',marginBottom:'6px'}}>
+                    {scoreState.isFullyScored ? 'Composite Score' : 'Composite Score so far'}
+                  </div>
                   <div style={{fontSize:'40px',fontWeight:900,color:'white',lineHeight:1}}>{compositeScore}<span style={{fontSize:'20px',color:'rgba(255,255,255,0.5)'}}>/100</span></div>
                   <div style={{marginTop:'14px',height:'8px',background:'rgba(255,255,255,0.15)',borderRadius:'4px',overflow:'hidden'}}>
                     <div style={{height:'100%',width:`${compositeScore}%`,background:'linear-gradient(90deg,#3B82F6,#10B981)',borderRadius:'4px',transition:'width 0.8s ease'}}/>
                   </div>
-                  <div style={{fontSize:'12px',color:'rgba(255,255,255,0.5)',marginTop:'8px'}}>Weighted across 5 vetting dimensions</div>
+                  <div style={{fontSize:'12px',color:'rgba(255,255,255,0.5)',marginTop:'8px'}}>
+                    {scoreState.isFullyScored
+                      ? 'Weighted across 5 vetting dimensions'
+                      : `Stages still to be scored: ${scoreState.missingDimensions.map(formatDimension).join(', ')}. Those count as zero until they are, so this figure will rise.`}
+                  </div>
                 </>
+              )}
+              {!isGradeOnly && !scoreState.isScored && (
+                <div style={{fontSize:'14px',color:'rgba(255,255,255,0.8)',lineHeight:1.6}}>
+                  None of your vetting stages have been scored yet. Your grade is set at Final Review, once every stage is complete, and appears here then.
+                </div>
               )}
               {isGradeOnly && (
                 <div style={{fontSize:'14px',color:'rgba(255,255,255,0.8)',lineHeight:1.6}}>
@@ -7328,14 +7651,14 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
           )}
 
           {/* Performance Trend Chart */}
-          {isDeployed && mockReviews.length > 0 && (
+          {isDeployed && performanceReviews.length > 0 && (
             <Card style={{padding:'24px'}}>
               <h3 style={{fontSize:'15px',fontWeight:800,color:'#1A2340',margin:'0 0 8px 0'}}>📈 Performance Trend</h3>
               <p style={{fontSize:'12px',color:'#6B7A99',margin:'0 0 24px 0'}}>Your composite performance score across completed Remotan review cycles.</p>
               
               <div style={{height:'250px',width:'100%'}}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={mockReviews} margin={{top:10,right:10,left:-20,bottom:0}}>
+                  <LineChart data={performanceReviews} margin={{top:10,right:10,left:-20,bottom:0}}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                     <XAxis dataKey="cycleName" axisLine={false} tickLine={false} tick={{fill:'#6B7A99',fontSize:12,fontWeight:600}} dy={10} />
                     <YAxis domain={[50,100]} axisLine={false} tickLine={false} tick={{fill:'#6B7A99',fontSize:12,fontWeight:600}} />
@@ -7379,7 +7702,7 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
             <h3 style={{fontSize:'15px',fontWeight:800,color:'#1A2340',margin:'0 0 16px 0'}}>🏷️ Talent Tags</h3>
             <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
               {assignedTags.map((tag:string, i:number) => {
-                const desc = MOCK_TAG_DICTIONARY[tag] || 'Tag assigned by the vetting team.';
+                const desc = TAG_DESCRIPTIONS[tag] || 'Tag assigned by the vetting team.';
                 return (
                   <div key={i} style={{padding:'12px',background:'#F8FAFC',borderRadius:'8px',border:'1px solid #E2E8F0'}}>
                     <div style={{display:'inline-block',background:'#EEF3FF',color:'#0047CC',fontSize:'11px',fontWeight:800,padding:'4px 10px',borderRadius:'6px',marginBottom:'8px'}}>
@@ -7395,7 +7718,9 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
             </div>
           </Card>
 
-          {/* Personality Snapshot */}
+          {/* Personality Snapshot. Hidden until the assessment that produces
+              it has actually been scored. */}
+          {personality && (
           <Card style={{padding:'24px',background:'linear-gradient(180deg,#F0FDF4 0%,#FFF 100%)',border:'1px solid #BBF7D0'}}>
             <h3 style={{fontSize:'15px',fontWeight:800,color:'#15803D',margin:'0 0 16px 0'}}>🧠 Personality Snapshot</h3>
             <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
@@ -7410,13 +7735,14 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
               <div>
                 <div style={{fontSize:'11px',fontWeight:700,color:'#166534',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:'4px'}}>Top Strengths</div>
                 <div style={{display:'flex',flexWrap:'wrap',gap:'6px',marginTop:'4px'}}>
-                  {personality.topStrengths.map((str:string, i:number) => (
+                  {(personality.topStrengths || []).map((str:string, i:number) => (
                     <span key={i} style={{background:'#DCFCE7',color:'#166534',fontSize:'11px',fontWeight:700,padding:'3px 8px',borderRadius:'4px'}}>{str}</span>
                   ))}
                 </div>
               </div>
             </div>
           </Card>
+          )}
 
           {/* Score Breakdown (Sidebar) */}
           {!isGradeOnly && (
@@ -7816,8 +8142,24 @@ export default function TalentDashboard({
         if (res.ok) {
           const fetchedData = await res.json();
           const allAsmnts = fetchedData.assessments || [];
-          asmnt = allAsmnts.find((a: any) => a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId)
-            || allAsmnts.find((a: any) => a.status === 'published');
+          // Only the assessment that was actually assigned.
+          //
+          // This fell back to `allAsmnts.find(a => a.status === 'published')`
+          // — any published assessment at all — so a candidate whose own
+          // assessment could not be found was handed somebody else's paper
+          // and their answers were marked against the wrong key.
+          asmnt = allAsmnts.find((a: any) =>
+            a.id === asmntRef || a.id === tsaId || a.id === activeVettingStage?.assessmentId);
+
+          // The route also returns the assignments. If the prop was stale,
+          // this is where the real row turns up.
+          if (!tsa && Array.isArray(fetchedData.talentSkillAssessments)) {
+            tsa = fetchedData.talentSkillAssessments.find((t: any) =>
+              t.id === tsaId || t.assessmentId === asmntRef || t.assessmentId === activeVettingStage?.assessmentId);
+            if (tsa && !asmnt) {
+              asmnt = allAsmnts.find((a: any) => a.id === tsa.assessmentId);
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to fetch fallback assessments:', err);
@@ -7829,17 +8171,50 @@ export default function TalentDashboard({
       return;
     }
 
+    // No assignment row means there is nothing to submit against.
+    //
+    // This used to invent one, with an id of `tsa_<talentId>_<assessmentId>`
+    // that exists nowhere. The candidate could then sit the whole assessment
+    // and lose every answer on submit, because the server looks the
+    // assignment up by id and answers 404 — "that assessment was not
+    // assigned to you" — after they had done the work.
+    //
+    // Failing here, before they start, is the kinder of the two.
     if (!tsa) {
-      tsa = {
-        id: `tsa_${talentProfile?.id || 'talent'}_${asmnt.id}`,
-        talentId: talentProfile?.id,
-        assessmentId: asmnt.id,
-        assignedAt: activeVettingStage?.started_at || new Date().toISOString(),
-        status: 'assigned'
-      };
+      alert(
+        'This assessment has not been assigned to your account yet, so there is nothing to submit against. '
+        + 'Ask your Kongila contact to assign it, then refresh this page.'
+      );
+      return;
     }
 
-    if (!isAssessmentSubmittable(tsa, talentProfile?.id, skillAssessmentResults, asmnt.id)) return;
+    // Say why, rather than doing nothing.
+    //
+    // This was a bare `return`, so pressing Start Assessment when the
+    // assignment was not submittable did nothing at all — no message, no
+    // console line, no change on screen. A candidate whose assessment had
+    // already been submitted, whose deadline had passed, or whose assignment
+    // row was never written saw exactly the same thing: a button that does
+    // not work.
+    if (!isAssessmentSubmittable(tsa, talentProfile?.id, skillAssessmentResults, asmnt.id)) {
+      const alreadyDone = skillAssessmentResults.some((r: any) =>
+        (r.talentId === talentProfile?.id || r.talent_id === talentProfile?.id) &&
+        (r.talentSkillAssessmentId === tsa?.id || r.assessmentId === asmnt.id)
+      );
+      const expired = tsa?.deadline && assessmentDeadlinePassed(tsa.deadline);
+
+      alert(
+        alreadyDone
+          ? 'You have already submitted this assessment. Your result will appear in Scores & Grades once it has been marked.'
+          : expired
+            ? `The deadline for this assessment was ${new Date(tsa.deadline).toLocaleDateString()}. `
+              + 'Ask your Kongila contact to reopen it if you still need to sit it.'
+            : tsa?.status === 'submitted' || tsa?.status === 'marked'
+              ? 'This assessment has already been submitted.'
+              : 'This assessment cannot be opened right now. Your Kongila contact can reassign it.'
+      );
+      return;
+    }
 
     setActiveAssessmentSession({ talentSkillAssessment: tsa, assessment: asmnt });
   };
@@ -7912,8 +8287,10 @@ export default function TalentDashboard({
         categories={assessmentCategories}
         questions={assessmentQuestions}
         onSubmit={async (result) => {
-          if (onSubmitAssessment) await onSubmitAssessment(result);
+          if (!onSubmitAssessment) throw new Error('Assessment submission is unavailable. Please contact support.');
+          const saved = await onSubmitAssessment(result);
           setActiveAssessmentSession(null);
+          return saved;
         }}
         onClose={() => setActiveAssessmentSession(null)}
       />
@@ -7966,7 +8343,7 @@ export default function TalentDashboard({
             
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
               {NAV_ITEMS.map(item => {
-                if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
+                if (item.id === 'scores_grades' && platformSettingsFor(talentProfile).globalScoreVisibility === 'hidden') return null;
                 // if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
                 const isLocked = item.id === 'scores_grades' && passedCount < 7;
@@ -8047,7 +8424,7 @@ export default function TalentDashboard({
         {/* Nav */}
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
           {NAV_ITEMS.map(item => {
-            if (item.id === 'scores_grades' && MOCK_PLATFORM_SETTINGS.globalScoreVisibility === 'hidden') return null;
+            if (item.id === 'scores_grades' && platformSettingsFor(talentProfile).globalScoreVisibility === 'hidden') return null;
             // if (item.id === 'vetting_progress' && passedCount === 7) return null;
 
             const isLocked = item.id === 'scores_grades' && passedCount < 7;

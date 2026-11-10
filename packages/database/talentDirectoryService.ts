@@ -11,6 +11,7 @@
  */
 
 import { getSupabaseClient } from './index';
+import { canAccessRequest } from './requestAccess';
 import type { RequestActor as Actor } from './scope';
 import { signDbFileUrls } from './index';
 
@@ -193,10 +194,16 @@ export async function getMatchingBoard(
 
   if (!rows || rows.length === 0) return fail(404, 'That request does not exist.');
   const row = rows[0];
+  try {
+    if (!await canAccessRequest(supabase, actor, row)) return fail(404, 'That request does not exist.');
+  } catch (accessError: any) {
+    return fail(500, `Request ownership could not be verified: ${accessError.message}`);
+  }
 
   const request = {
     ...(row.payload || {}),
-    id: row.payload?.id || row.id,
+    id: row.id,
+    payloadId: row.payload?.id || null,
     rowId: row.id,
     clientId: row.client_id,
     serviceType: row.payload?.serviceType || row.service_type,

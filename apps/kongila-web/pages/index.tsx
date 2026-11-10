@@ -4,15 +4,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import Head from 'next/head';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
-import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc } from '@kongila/utils';
+import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, TIMEZONE_OPTIONS } from '@kongila/utils';
 import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
 import { 
   TalentProfile, ServiceRequest, Match, Contract, ServiceType, calculateTalentProfileCompletion, hasCoreTalentProfileChanges
 } from '@kongila/shared-types';
 import { coerceRequestStatus } from '@kongila/workflows';
 import { supabase } from '../lib/supabaseClient';
-import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES } from '../lib/onboarding-constants';
+import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES, currencyForCountry } from '../lib/onboarding-constants';
 import TalentDashboard from '../components/TalentDashboard';
+import { MascotLoader } from '../components/brand/MascotFeedback';
+import { SiteHeader, SiteFooter } from '../components/marketing/SiteChrome';
+import HomePage from '../components/marketing/HomePage';
 import ClientDashboard from '../components/ClientDashboard';
 import SmartIntakeForm from '../components/SmartIntakeForm';
 
@@ -85,6 +88,20 @@ const NOTICE_PERIOD_OPTIONS = [
   'One Month Plus',
 ] as const;
 
+/**
+ * Marks a field the candidate cannot continue without.
+ *
+ * Every compulsory field in the wizard carries one. Before, nothing on the
+ * form said which fields were compulsory: a candidate filled in what looked
+ * reasonable, pressed Continue, and only then got a list of what was missing.
+ */
+const Required = () => (
+  <span style={{ color: '#EF4444', fontWeight: 700 }} aria-hidden="true">
+    {' *'}
+    <span style={{ fontSize: '11px', fontWeight: 600, color: '#EF4444', marginLeft: '4px' }}>(required)</span>
+  </span>
+);
+
 // Seniority levels with corresponding years-of-experience ranges.
 const SENIORITY_LEVELS = [
   { label: 'Entry Level',  min: 0, max: 1 },
@@ -131,6 +148,13 @@ export default function KongilaWeb() {
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
   const [interviews, setInterviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // True once the first database load has come back, successfully or not.
+  // Both dashboards used to render the instant the user was known, with
+  // every list still empty, so a signed-in person's first sight of their
+  // portal was an empty one that filled in a second or two later. The
+  // landing page is deliberately not gated on this — it has nothing to wait
+  // for and should appear at once.
+  const [dataReady, setDataReady] = useState(false);
 
   // Assessment state for talent-side
   const [assessments, setAssessments] = useState<any[]>([]);
@@ -153,7 +177,7 @@ export default function KongilaWeb() {
   const [companyInput, setCompanyInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
-  // Talent Wizard Steps (1 to 6)
+  // Talent Wizard Steps (1 to 5)
   const [talentWizardStep, setTalentWizardStep] = useState(1);
   const [wizardStepErrors, setWizardStepErrors] = useState<string[]>([]);
   const [talentOnboardingData, setTalentOnboardingData] = useState({
@@ -178,9 +202,7 @@ export default function KongilaWeb() {
     secondarySkills: '',
     skillLevels: {} as Record<string, 'Beginner' | 'Intermediate' | 'Expert'>,
     employmentPreference: '',
-    preferredEngagementType: '',
     preferredWorkHours: '',
-    preferredProjectType: '',
     noticePeriod: '',
     availableStartDate: '',
     availability: '',
@@ -188,6 +210,9 @@ export default function KongilaWeb() {
     salaryExpectationMax: '',
     hourlyMonthly: 'Monthly',
     currency: 'USD',
+    // Set the moment the candidate picks a currency themselves, so the
+    // country default in step 1 stops overwriting their choice.
+    currencyTouched: false,
     cvName: '',
     cvUrl: '',
     cvSize: 0,
@@ -196,11 +221,10 @@ export default function KongilaWeb() {
     linkedInUrl: '',
     githubUrl: '',
     websiteUrl: '',
-    certifications: '',
-    internetQuality: '',
-    workSetup: '',
-    devices: '',
-    communicationTools: ''
+    certifications: ''
+    // internetQuality, workSetup, devices and communicationTools were here,
+    // collected by the Remote Readiness step. That step is gone: the four
+    // answers were free text nobody vetted against and nothing matched on.
   });
 
   const [skillSearch, setSkillSearch] = useState('');
@@ -271,11 +295,14 @@ export default function KongilaWeb() {
     priority: '' as 'Low' | 'Medium' | 'High'
   });
 
-  // Sandbox Challenge State
-  const [showAssessment, setShowAssessment] = useState(false);
-  const [assessmentStep, setAssessmentStep] = useState(1);
-  const [codeAnswer, setCodeAnswer] = useState('// Write code to optimize PostgreSQL transaction pooling here...\n\n');
-  const [assessmentFeedback, setAssessmentFeedback] = useState('');
+  // The Workload Optimization Sandbox state was here. The modal it drove was
+  // unreachable: nothing ever called setShowAssessment(true). On submit it
+  // announced a score of 92/100 and grade A+ after a 1.5 second timer, then
+  // wrote vetting status Review and grade A into local state. Nothing was
+  // sent to a server and nothing was scored, but the candidate was shown a
+  // grade. Real assessments run through openAssessmentSession in
+  // TalentDashboard and POST to /api/assessments/submit, which marks the
+  // paper server side against the answer key.
 
   // Calendar Modal State
   const [showCalendar, setShowCalendar] = useState(false);
@@ -302,6 +329,7 @@ export default function KongilaWeb() {
   // Custom Notifications & Banners
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [bannerType, setBannerType] = useState<'success' | 'info' | 'error'>('success');
+  const resourceLoadErrorShownRef = useRef(false);
 
   // Navigation Dropdown States
   const [signInDropdownOpen, setSignInDropdownOpen] = useState(false);
@@ -352,12 +380,55 @@ export default function KongilaWeb() {
 
   // Invite states
   const [inviteOrgId, setInviteOrgId] = useState<string | null>(null);
+  // The company an invited colleague is joining, so the form can state it
+  // rather than asking them to type a company name that provisioning ignores.
+  const [inviteOrgName, setInviteOrgName] = useState<string>('');
   const [invitePermission, setInvitePermission] = useState<string | null>(null);
   const [inviteEmailLocked, setInviteEmailLocked] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   // Kept so provisioning can re-verify the signature server-side rather than
   // trusting the organisation and permission level held in client state.
   const [inviteTokenRaw, setInviteTokenRaw] = useState<string | null>(null);
+
+  useEffect(() => {
+    // The bridge from the public site into the portal.
+    //
+    // The marketing pages are real routes; the portal is this one page with
+    // its view held in React state. Without this, /get-started and /join can
+    // only dump someone on the homepage and hope they find the button again.
+    // Each marketing entry point sets the state it means:
+    //
+    //   /?intake=1&model=direct-hire   open the service request, preselected
+    //   /?view=signup&role=talent      open talent signup
+    //   /?view=login                   open sign in
+    //
+    // Only values this page already understands are accepted, and the query
+    // is stripped afterwards so a refresh does not reopen what the person
+    // just closed.
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('invite')) return; // the invitation flow owns that case
+
+    const view = params.get('view');
+    const role = params.get('role');
+    const wantsIntake = params.get('intake') === '1';
+    let consumed = false;
+
+    if (wantsIntake) {
+      setClientIntakeActive(true);
+      setClientIntakeStep(1);
+      consumed = true;
+    } else if (view === 'signup' || view === 'login') {
+      setAuthView(view);
+      if (role === 'talent' || role === 'client') setAuthRole(role);
+      consumed = true;
+    }
+
+    if (consumed) {
+      const clean = window.location.pathname + window.location.hash;
+      window.history.replaceState(null, '', clean);
+    }
+  }, []);
 
   useEffect(() => {
     // Invitations arrive as one signed token. The organisation and permission
@@ -407,6 +478,7 @@ export default function KongilaWeb() {
         setInviteEmailLocked(data.email);
         if (data.name) setNameInput(data.name);
         setInviteOrgId(data.orgId);
+        setInviteOrgName(data.organizationName || '');
         setInvitePermission(data.permissionLevel);
       } catch (e) {
         setInviteError('Could not check this invitation. Try the link again.');
@@ -421,6 +493,13 @@ export default function KongilaWeb() {
   useEffect(() => {
     if (currentUser?.role === 'talent') loadTalentOffers();
   }, [currentUser?.id, currentUser?.role]);
+
+  // A client who reached the signup view without an invitation. Their account
+  // is a company account and is created at the end of the intake form, so this
+  // sends them there instead of through a form that builds a thinner
+  // organisation. An invited colleague is joining a company that already
+  // exists and keeps using the form.
+  const clientNeedsIntake = authRole === 'client' && !inviteTokenRaw;
 
   // Trigger temporary floating notification
   const triggerBanner = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -453,13 +532,27 @@ export default function KongilaWeb() {
         'assessmentQuestions', 'talentSkillAssessments', 'skillAssessmentResults',
         'workSimulationTasks'
       ];
-      const resourceResults = await Promise.all(resourceNames.map(async name => {
-        const response = await apiFetch(`/api/resources/${name}`).catch(() => null);
-        if (!response?.ok) return [name, []] as const;
-        const body = await response.json().catch(() => ({}));
-        return [name, body.data || []] as const;
-      }));
-      const resourceData = Object.fromEntries(resourceResults);
+      // One request, not eighteen. Each /api/resources/<name> call ran a full
+      // readDbAsync server side — every table read, the whole snapshot scoped
+      // and signed — to return a single array. The batch route does that work
+      // once for all of them.
+      const activeUser = currentUserRef.current;
+      const resourceRes = await apiFetch(`/api/resources?names=${resourceNames.join(',')}`);
+      if (!resourceRes.ok && activeUser) {
+        const detail = await resourceRes.json().catch(() => ({}));
+        throw new Error(detail?.error || `Could not load account data (${resourceRes.status}).`);
+      }
+      const resourceBody = resourceRes.ok ? await resourceRes.json().catch(() => ({})) : {};
+      if (resourceRes.ok && (!resourceBody?.data || typeof resourceBody.data !== 'object')) {
+        throw new Error('The resources API returned an invalid response.');
+      }
+      resourceLoadErrorShownRef.current = false;
+      const resourceData = Object.fromEntries(
+        resourceNames.map(name => [
+          name,
+          Array.isArray(resourceBody?.data?.[name]) ? resourceBody.data[name] : []
+        ])
+      );
       const res = { ok: true, json: async () => resourceData } as Response;
 
       if (res && res.ok) {
@@ -476,7 +569,6 @@ export default function KongilaWeb() {
 
         setTalents(dbData.talents || []);
         
-        const activeUser = currentUserRef.current;
         // Client requests are read through the authenticated resource API.
         // The browser must not query the table directly.
         const requestResponse = activeUser?.role === 'client'
@@ -560,9 +652,17 @@ export default function KongilaWeb() {
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
+      if (currentUserRef.current && !resourceLoadErrorShownRef.current) {
+        triggerBanner(
+          `Unable to load your account data: ${e instanceof Error ? e.message : 'Please try again.'}`,
+          'error'
+        );
+        resourceLoadErrorShownRef.current = true;
+      }
     } finally {
       clearTimeout(safetyTimeout);
       setLoading(false);
+      setDataReady(true);
     }
   };
 
@@ -629,7 +729,11 @@ export default function KongilaWeb() {
             const parsed = JSON.parse(dbTalentProfile.bio);
             if (parsed?.__kongila_draft === true) {
               draftOnboardingData = parsed.onboardingData || null;
-              draftWizardStep = parsed.wizardStep || 1;
+              // Clamped to the five steps the wizard now has. A draft saved
+              // before the Remote Readiness step was removed can carry step 6,
+              // which would restore a candidate onto a step that no longer
+              // renders and leave them looking at an empty card.
+              draftWizardStep = Math.min(Math.max(Number(parsed.wizardStep) || 1, 1), 5);
             }
           } catch (e) { /* no draft */ }
         }
@@ -657,7 +761,16 @@ export default function KongilaWeb() {
       if (!isOnboardingComplete && role === 'talent') {
         // Restore draft data so user continues from where they left off
         if (draftOnboardingData) {
-          setTalentOnboardingData(prev => ({ ...prev, ...draftOnboardingData }));
+          // A saved currency that is not the one the country would suggest was
+          // chosen on purpose, so treat it as touched and leave it alone.
+          const savedCurrency = String((draftOnboardingData as any).currency || '');
+          const savedCountry = String((draftOnboardingData as any).country || '');
+          const deliberateCurrency = Boolean(savedCurrency) && savedCurrency !== currencyForCountry(savedCountry);
+          setTalentOnboardingData(prev => ({
+            ...prev,
+            ...draftOnboardingData,
+            currencyTouched: deliberateCurrency
+          }));
           setTalentWizardStep(draftWizardStep);
         } else {
           // Fresh onboarding — pre-fill name from this user's auth metadata
@@ -710,8 +823,30 @@ export default function KongilaWeb() {
       }
     });
 
-    // Poll DB every 5 seconds for updates
-    const interval = setInterval(syncFromDb, 5000);
+    // Polling, and why it is no longer every five seconds.
+    //
+    // Each poll asks for the whole database — every table read, scoped and
+    // signed — so a dashboard left open hammered the server for ever, and a
+    // fresh sign-in had to wait behind that traffic. The realtime channels
+    // below already push what changes; this is the safety net for the rest,
+    // and it runs rarely and only while the tab is actually being looked at.
+    const POLL_MS = 30000;
+    let interval: any = null;
+    const startPolling = () => {
+      if (interval === null) interval = setInterval(syncFromDb, POLL_MS);
+    };
+    const stopPolling = () => {
+      if (interval !== null) { clearInterval(interval); interval = null; }
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) { stopPolling(); return; }
+      syncFromDb();
+      startPolling();
+    };
+    if (typeof document !== 'undefined') {
+      if (!document.hidden) startPolling();
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    }
     
     // Realtime subscription to talent_requests
     const requestChannel = supabase
@@ -746,7 +881,10 @@ export default function KongilaWeb() {
       .subscribe();
 
     return () => {
-      clearInterval(interval);
+      stopPolling();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
       subscription.unsubscribe();
       supabase.removeChannel(requestChannel);
       supabase.removeChannel(invoicesChannel);
@@ -1020,15 +1158,32 @@ export default function KongilaWeb() {
       // same upsert used to carry the whole row, so a half-finished signup
       // could set a grade on the way past. talent_profiles has RLS off in
       // the live database, so it landed.
+      // currencyTouched only exists to stop the country default overwriting a
+      // deliberate choice. It is interface state, not a fact about the
+      // candidate, so it does not go to the server.
+      const { currencyTouched, ...draftData } = data as any;
       await apiFetch('/api/profile/talent', {
         method: 'PATCH',
-        body: JSON.stringify({ action: 'draft', step, data })
+        body: JSON.stringify({ action: 'draft', step, data: draftData })
       });
     } catch (e) {
       // Non-critical — draft save failure should not block user
       console.warn('[Onboarding] Draft save failed:', e);
     }
   };
+
+  // The salary step opens on the currency of the country chosen in step 1.
+  // It stops following the country as soon as the candidate picks a currency
+  // themselves, so a deliberate choice is never overwritten by going back and
+  // editing the country.
+  useEffect(() => {
+    if (talentOnboardingData.currencyTouched) return;
+    const suggested = currencyForCountry(talentOnboardingData.country);
+    if (suggested === talentOnboardingData.currency) return;
+    setTalentOnboardingData(prev =>
+      prev.currencyTouched ? prev : { ...prev, currency: suggested }
+    );
+  }, [talentOnboardingData.country, talentOnboardingData.currencyTouched, talentOnboardingData.currency]);
 
   // Returns a list of missing/invalid field labels for each wizard step.
   const validateWizardStep = (step: number): string[] => {
@@ -1060,13 +1215,20 @@ export default function KongilaWeb() {
       if (d.skills.length === 0) errors.push('At least one Primary Skill');
       if (!d.employmentPreference) errors.push('Employment Preference');
     } else if (step === 3) {
-      if (!d.preferredEngagementType) errors.push('Preferred Engagement Type');
       if (!d.hourlyMonthly) errors.push('Expected Salary Format');
       if (!d.noticePeriod) errors.push('Notice Period');
       if (!d.salaryExpectationMin) errors.push('Salary Range (minimum)');
       if (!d.salaryExpectationMax) errors.push('Salary Range (maximum)');
+      if (!d.currency) errors.push('Currency');
     } else if (step === 4) {
       if (!d.cvUrl) errors.push('CV / Resume (PDF)');
+      // LinkedIn is compulsory. Operations uses it to confirm the work
+      // history on the CV before a candidate reaches a client.
+      if (!d.linkedInUrl?.trim()) {
+        errors.push('LinkedIn URL');
+      } else if (!/^https?:\/\/(www\.)?linkedin\.com\/.+/i.test(d.linkedInUrl.trim())) {
+        errors.push('LinkedIn URL must be a full linkedin.com profile address');
+      }
     }
     return errors;
   };
@@ -1258,15 +1420,18 @@ export default function KongilaWeb() {
         primaryRoleCategory: talentOnboardingData.primaryRoleCategory || '',
         seniorityLevel: talentOnboardingData.seniorityLevel || talentOnboardingData.primaryRoleCategory || '',
         employmentPreference: talentOnboardingData.employmentPreference || '',
-        preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
         preferredWorkHours: talentOnboardingData.hourlyMonthly || talentOnboardingData.preferredWorkHours || '',
-        preferredProjectType: talentOnboardingData.preferredProjectType || '',
         noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
         availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
         currency: salaryCurrency,
         salaryExpectationUsd: resolvedSalaryUsd,
         salaryExpectationMinUsd: resolvedSalaryMinUsd,
         salaryExpectationMaxUsd: resolvedSalaryMaxUsd,
+        // The band as the candidate typed it, in their own currency. Only the
+        // USD conversion was sent, so operations saw a single converted figure
+        // and never the range the candidate said they would accept.
+        salaryExpectationMin: salaryMinLocal || 0,
+        salaryExpectationMax: salaryMaxLocal || 0,
         salaryExpectationCurrency: salaryCurrency,
         portfolioUrl: talentOnboardingData.portfolioUrl || '',
         linkedIn: talentOnboardingData.linkedInUrl || '',
@@ -1283,10 +1448,6 @@ export default function KongilaWeb() {
         skillLevels: talentOnboardingData.skillLevels || {},
         skills: skillsList,
         bio: bioText,
-        internetQuality: talentOnboardingData.internetQuality || '',
-        workSetup: talentOnboardingData.workSetup || '',
-        devices: talentOnboardingData.devices || '',
-        communicationTools: talentOnboardingData.communicationTools || '',
         workExperience: [],
         profileCompletionPercent: 0,
         requiresReReview: false,
@@ -1307,9 +1468,7 @@ export default function KongilaWeb() {
         experienceYears: Number(talentOnboardingData.yearsExperience) || 0,
         primarySkills,
         skills: skillsList,
-        preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
         preferredWorkHours: talentOnboardingData.preferredWorkHours || talentOnboardingData.hourlyMonthly || '',
-        preferredProjectType: talentOnboardingData.preferredProjectType || '',
         noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
         availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
         salaryExpectationUsd: resolvedSalaryUsd || 0,
@@ -1323,8 +1482,9 @@ export default function KongilaWeb() {
         nationality: talentOnboardingData.nationality || '',
         profilePhotoUrl: talentOnboardingData.profilePhotoUrl || '',
         cvUrl: talentOnboardingData.cvUrl || '',
+        linkedIn: talentOnboardingData.linkedInUrl || '',
         documents: []
-      });
+      } as any);
 
       if (!completionCheck.coreComplete) {
         triggerBanner(`Please fill in all required fields before finishing: ${completionCheck.coreIncomplete.join(', ')}`, 'error');
@@ -1455,9 +1615,7 @@ export default function KongilaWeb() {
           nationality: talentOnboardingData.nationality || '',
           primaryRoleCategory: talentOnboardingData.primaryRoleCategory || '',
           employmentPreference: talentOnboardingData.employmentPreference || '',
-          preferredEngagementType: talentOnboardingData.preferredEngagementType || talentOnboardingData.employmentPreference || '',
           preferredWorkHours: talentOnboardingData.hourlyMonthly || talentOnboardingData.preferredWorkHours || '',
-          preferredProjectType: talentOnboardingData.preferredProjectType || '',
           noticePeriod: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
           availableStartDate: talentOnboardingData.noticePeriod || talentOnboardingData.availableStartDate || '',
           currency: salaryCurrency,
@@ -1469,10 +1627,6 @@ export default function KongilaWeb() {
           websiteUrl: talentOnboardingData.websiteUrl || '',
           certifications: talentOnboardingData.certifications || '',
           certificationFiles: talentOnboardingData.certificationFiles || [],
-          internetQuality: talentOnboardingData.internetQuality || '',
-          workSetup: talentOnboardingData.workSetup || '',
-          devices: talentOnboardingData.devices || '',
-          communicationTools: talentOnboardingData.communicationTools || '',
           profilePhotoUrl: talentOnboardingData.profilePhotoUrl || '',
           profilePhotoName: talentOnboardingData.profilePhotoName || '',
           profilePhotoSize: talentOnboardingData.profilePhotoSize || 0,
@@ -1508,40 +1662,6 @@ export default function KongilaWeb() {
     setActiveTab('talent');
     setLoading(false);
     triggerBanner('Onboarding Complete! Your profile is live. Workspace deployed.', 'success');
-  };
-
-  // Simulate Specialized Assessment Sandbox
-  const handleAssessmentSubmit = () => {
-    if (codeAnswer.length < 50) {
-      setAssessmentFeedback('Error: Optimization strategy too brief. Provide structural workflow optimization proposals.');
-      return;
-    }
-
-    setAssessmentFeedback('Analyzing workflow efficiency & execution footprint...');
-    setTimeout(async () => {
-      setAssessmentFeedback('Success: Vetting score calculated at 92/100 (Grade A+ Elite)! Optimization strategy verified.');
-      
-      // Update talent vetting score in central DB
-      const currentTalent = talents.find(t => t.email.toLowerCase() === currentUser?.email?.toLowerCase());
-      if (currentTalent) {
-        const updatedTalents = talents.map(t => 
-          t.id === currentTalent.id 
-            ? { 
-                ...t, 
-                vettingStage: 'Behavioural Interview' as const, 
-                vettingStatus: 'Review' as const,
-                vettingScores: { ...t.vettingScores, technical: 92 },
-                grade: 'A' as const
-              } 
-            : t
-        );
-        // The whole-database save that used to follow is gone. It posted
-        // the browser's talents, clientRequests, matches and contracts back
-        // through /api/db, which upserts all of them, so a stale snapshot
-        // could overwrite rows the server had just written.
-        setTalents(updatedTalents);
-      }
-    }, 1500);
   };
 
 
@@ -1934,952 +2054,19 @@ export default function KongilaWeb() {
         {/* MARKETING HUB & HERO (Shown if not logged in AND not inside intake/auth) */}
         {/* ====================================================================== */}
         {!currentUser && !authView && !clientIntakeActive && (
-          <div style={{ backgroundColor: '#FAFAFA', minHeight: '100vh', width: '100%', overflowX: 'hidden' }}>
-            
-            {/* 1. STICKY NAVIGATION BAR */}
-            <header style={{
-              position: 'sticky',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '72px',
-              backgroundColor: 'rgba(250, 250, 250, 0.85)',
-              backdropFilter: 'blur(16px)',
-              borderBottom: '1px solid var(--border-glass)',
-              zIndex: 1000,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0 max(24px, 4%)',
-              transition: 'var(--transition-smooth)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => setActiveTab('home')}>
-                <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
-              </div>
-
-              {/* Navigation Links */}
-              <nav style={{ display: 'flex', gap: '32px' }} className="hide-mobile">
-                {['Solutions', 'Talent', 'Enterprise', 'How It Works', 'Pricing', 'Resources'].map((item) => (
-                  <span key={item} style={{
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                    transition: 'var(--transition-smooth)'
-                  }} onMouseEnter={e => e.currentTarget.style.color = '#0047CC'}
-                     onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}>
-                    {item}
-                  </span>
-                ))}
-              </nav>
-
-              {/* Auth Actions */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', position: 'relative' }}>
-                {/* Sign In Dropdown Trigger */}
-                <div style={{ position: 'relative' }}>
-                  <button 
-                    onClick={() => {
-                      setSignInDropdownOpen(!signInDropdownOpen);
-                      setGetStartedDropdownOpen(false);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-secondary)',
-                      fontSize: '14px',
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      transition: 'var(--transition-smooth)'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.color = '#0047CC'}
-                    onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-                  >
-                    Sign In
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                  </button>
-
-                  {/* Sign In Dropdown */}
-                  {signInDropdownOpen && (
-                    <div className="glass-panel" style={{
-                      position: 'absolute',
-                      top: '40px',
-                      right: 0,
-                      width: '200px',
-                      padding: '8px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      zIndex: 1010,
-                      animation: 'fadeIn 0.2s ease',
-                      border: '1px solid var(--border-glass)',
-                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)'
-                    }}>
-                      <div 
-                        onClick={() => { setAuthView('login'); setAuthRole('talent'); setSignInDropdownOpen(false); }}
-                        style={{ padding: '10px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 500, transition: 'var(--transition-smooth)' }}
-                        className="menu-item"
-                      >
-                        👨‍💻 Talent Portal
-                      </div>
-                      <div 
-                        onClick={() => { setAuthView('login'); setAuthRole('client'); setSignInDropdownOpen(false); }}
-                        style={{ padding: '10px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 500, transition: 'var(--transition-smooth)' }}
-                        className="menu-item"
-                      >
-                        💼 Client Portal
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Get Started Dropdown Trigger */}
-                <div style={{ position: 'relative' }}>
-                  <button 
-                    onClick={() => {
-                      setGetStartedDropdownOpen(!getStartedDropdownOpen);
-                      setSignInDropdownOpen(false);
-                    }}
-                    className="btn-primary"
-                    style={{
-                      height: '40px',
-                      fontSize: '14px',
-                      borderRadius: '10px',
-                      padding: '0 18px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    Get Started
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                  </button>
-
-                  {/* Get Started Dropdown */}
-                  {getStartedDropdownOpen && (
-                    <div className="glass-panel" style={{
-                      position: 'absolute',
-                      top: '48px',
-                      right: 0,
-                      width: '220px',
-                      padding: '8px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      zIndex: 1010,
-                      animation: 'fadeIn 0.2s ease',
-                      border: '1px solid var(--border-glass)',
-                      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)'
-                    }}>
-                      <div 
-                        onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); setGetStartedDropdownOpen(false); }}
-                        style={{ padding: '10px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 500, transition: 'var(--transition-smooth)' }}
-                        className="menu-item"
-                      >
-                        🛡️ Hire Talent
-                      </div>
-                      <div 
-                        onClick={() => { setAuthView('signup'); setAuthRole('talent'); setNameInput(''); setEmailInput(''); setPasswordInput(''); setGetStartedDropdownOpen(false); }}
-                        style={{ padding: '10px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 500, transition: 'var(--transition-smooth)' }}
-                        className="menu-item"
-                      >
-                        ⚡ Apply as Talent
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </header>
-
-            {/* 2. HERO SECTION */}
-            <section className="hero-grid" style={{
-              maxWidth: '1280px',
-              margin: '0 auto',
-              padding: '80px 24px 100px 24px'
-            }}>
-              {/* Left Side: Content */}
-              <div>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(0, 71, 204, 0.08)', border: '1px solid rgba(0, 71, 204, 0.1)', padding: '6px 12px', borderRadius: '99px', marginBottom: '24px' }}>
-                  <span style={{ width: '6px', height: '6px', backgroundColor: '#0047CC', borderRadius: '50%' }}></span>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#0047CC', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Workspace Operations Platform</span>
-                </div>
-                
-                <h1 style={{
-                  fontSize: '56px',
-                  fontWeight: 600,
-                  color: '#111827',
-                  lineHeight: '1.12',
-                  letterSpacing: '-0.03em',
-                  marginBottom: '24px',
-                  fontFamily: 'var(--font-display)'
-                }}>
-                  Build and Manage Global Teams Without Operational Complexity
-                </h1>
-                
-                <p style={{
-                  fontSize: '18px',
-                  color: 'var(--text-secondary)',
-                  lineHeight: '1.6',
-                  marginBottom: '40px',
-                  maxWidth: '560px'
-                }}>
-                  Kongila is the workforce infrastructure layer that connects vetted global talent with companies, managing sourcing, vetting, EOR compliance, consolidated payroll, and active task execution in one unified system.
-                </p>
-
-                {/* CTA Group */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginBottom: '48px' }}>
-                  <button 
-                    onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                    className="btn-primary"
-                    style={{ height: '48px', padding: '0 28px', fontSize: '15px', borderRadius: '12px' }}
-                  >
-                    Hire Talent
-                  </button>
-                  <button 
-                    onClick={() => { setAuthView('signup'); setAuthRole('talent'); setNameInput(''); setEmailInput(''); setPasswordInput(''); }}
-                    className="btn-secondary"
-                    style={{ height: '48px', padding: '0 28px', fontSize: '15px', borderRadius: '12px' }}
-                  >
-                    Join as Talent
-                  </button>
-                  <a 
-                    onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                    style={{ fontSize: '14px', fontWeight: 600, color: '#0047CC', textDecoration: 'none', cursor: 'pointer', marginLeft: '8px' }}
-                  >
-                    Explore Solutions ➔
-                  </a>
-                </div>
-
-                {/* Trust Indicators */}
-                <div style={{ display: 'flex', gap: '24px', borderTop: '1px solid var(--border-glass)', paddingTop: '24px' }}>
-                  {[
-                    { label: 'Sourcing & Placement', val: '7-Stage Vetting' },
-                    { label: 'Risk Coverage', val: 'Fully Compliant EOR' },
-                    { label: 'Ongoing Operations', val: '24/7 Global Support' }
-                  ].map((ind, idx) => (
-                    <div key={idx}>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>{ind.label}</div>
-                      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ color: '#16A34A' }}>✓</span> {ind.val}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Right Side: Soft Dashboard Preview */}
-              <div className="glass-panel" style={{
-                padding: '24px',
-                backgroundColor: '#FFFFFF',
-                borderRadius: '20px',
-                border: '1px solid var(--border-glass)',
-                boxShadow: '0 20px 40px -15px rgba(0,0,0,0.05)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '20px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '16px' }}>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <span style={{ width: '10px', height: '10px', backgroundColor: '#EF4444', borderRadius: '50%' }}></span>
-                    <span style={{ width: '10px', height: '10px', backgroundColor: '#F59E0B', borderRadius: '50%' }}></span>
-                    <span style={{ width: '10px', height: '10px', backgroundColor: '#10B981', borderRadius: '50%' }}></span>
-                  </div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Kongila Matching Engine</div>
-                </div>
-
-                {/* Dashboard Profile Widget */}
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px solid var(--border-glass)' }}>
-                  <div style={{ width: '44px', height: '44px', borderRadius: '50%', backgroundColor: '#0047CC', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px' }}>
-                    DO
-                  </div>
-                  <div style={{ flexGrow: 1 }}>
-                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Damilola O.</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Lead Operations Manager • Lagos, Nigeria (GMT+1)</div>
-                  </div>
-                  <span className="status-chip vetted" style={{ padding: '4px 8px', fontSize: '10px' }}>GRADE A+</span>
-                </div>
-
-                {/* Vetting Benchmarks */}
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.04em' }}>Vetting Evaluation Summary</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    {[
-                      { title: 'Operational Assessment', val: '96% Score' },
-                      { title: 'Remote Work Simulation', val: '94% Efficiency' },
-                      { title: 'Hardware Setup Audit', val: 'Fiber + UPS Verified' },
-                      { title: 'Compliance Checks', val: 'Passed (EOR Ready)' }
-                    ].map((bm, idx) => (
-                      <div key={idx} style={{ padding: '8px 12px', border: '1px solid var(--border-glass)', borderRadius: '10px', backgroundColor: '#fff' }}>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{bm.title}</div>
-                        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>{bm.val}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Active Deployment Execution Tracker */}
-                <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Transaction Pool Optimizer</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span className="status-chip vetted" style={{ fontSize: '9px', padding: '2px 6px' }}>DEPLOYED</span>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Optimize transaction connection pooling for pgBouncer</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ flexGrow: 1, height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{ width: '92%', height: '100%', backgroundColor: '#0047CC', borderRadius: '3px' }}></div>
-                    </div>
-                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-primary)' }}>92%</span>
-                  </div>
-                </div>
-
-                {/* Multi-Agent logs terminal preview */}
-                <div className="agent-terminal" style={{ fontSize: '11px' }}>
-                  <div className="terminal-header" style={{ padding: '8px 12px' }}>
-                    <span style={{ color: '#cbd5e1', fontWeight: 600 }}>Execution Logs Feed</span>
-                    <span style={{ color: '#64748b' }}>Live</span>
-                  </div>
-                  <div className="terminal-body" style={{ padding: '10px', height: '90px' }}>
-                    <div className="log-entry"><span className="log-time">[10:14]</span> <span className="log-success">COMPLETED</span> <span className="log-text">Intake profile successfully synced</span></div>
-                    <div className="log-entry"><span className="log-time">[11:00]</span> <span className="log-info">INFO</span> <span className="log-text">7-stage composite score evaluated: Grade A+</span></div>
-                    <div className="log-entry"><span className="log-time">[12:45]</span> <span className="log-warning">WARNING</span> <span className="log-text">Resource allocation bound to local EOR contracts</span></div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* 3. TRUST SECTION (SOCIAL PROOF) */}
-            <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '40px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '32px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', maxWidth: '280px' }}>
-                  Trusted by scale-ups and global modern organizations
-                </div>
-                <div style={{ display: 'flex', gap: '48px', alignItems: 'center', flexWrap: 'wrap' }} className="grayscale-logos">
-                  {['Linear', 'Stripe', 'Remote', 'Deel', 'Notion', 'Mercury'].map((logo) => (
-                    <span key={logo} style={{ fontSize: '18px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '-0.03em' }}>{logo}</span>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '24px' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#0047CC' }}>500+</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Deployed Professionals</div>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#0047CC' }}>99.8%</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>SLA Compliance</div>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#0047CC' }}>$12M+</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Managed Payroll</div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* 4. SERVICE OVERVIEW SECTION */}
-            <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              <div style={{ textAlign: 'center', marginBottom: '56px' }}>
-                <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '16px' }}>
-                  Workforce Services Orchestrated for Scale
-                </h2>
-                <p style={{ fontSize: '16px', color: 'var(--text-secondary)', maxWidth: '560px', margin: '0 auto' }}>
-                  We provide distinct, compliant service tiers tailored to your company's operational needs and management structure.
-                </p>
-              </div>
-
-              <div className="overview-grid" style={{}}>
-                {[
-                  {
-                    title: 'Managed Workforce',
-                    icon: '🛡️',
-                    desc: 'Kongila takes direct operational responsibility for team performance, providing continuous EOR protection, dedicated delivery oversight, and complete equipment setups.',
-                    link: 'Explore Managed Workforce'
-                  },
-                  {
-                    title: 'Talent Outsourcing',
-                    icon: '⚡',
-                    desc: 'Rapidly scale contractor capacity. Kongila acts as the Employer of Record and processes payments, while your internal leadership manages day-to-day tasks.',
-                    link: 'Explore Talent Outsourcing'
-                  },
-                  {
-                    title: 'Direct Placement',
-                    icon: '🔍',
-                    desc: 'Access our pre-vetted private candidate pool. We execute the complete 7-stage vetting pipeline and match top-tier global professionals directly to your team.',
-                    link: 'Explore Talent Placement'
-                  },
-                  {
-                    title: 'Project Execution',
-                    icon: '📋',
-                    desc: 'Deliver key operational milestones without recruitment overhead. We provide a fully staffed remote team, active project managers, and milestone compliance.',
-                    link: 'Explore Project Execution'
-                  }
-                ].map((srv, idx) => (
-                  <div key={idx} className="glass-panel" style={{
-                    padding: '32px',
-                    borderRadius: '16px',
-                    border: '1px solid var(--border-glass)',
-                    backgroundColor: '#FFFFFF',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '16px'
-                  }}>
-                    <span style={{ fontSize: '28px', width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px' }}>
-                      {srv.icon}
-                    </span>
-                    <h3 style={{ fontSize: '20px', fontWeight: 600, color: '#111827' }}>{srv.title}</h3>
-                    <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: '1.6', flexGrow: 1 }}>{srv.desc}</p>
-                    <a 
-                      onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                      style={{ fontSize: '13px', fontWeight: 600, color: '#0047CC', textDecoration: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                    >
-                      {srv.link} ➔
-                    </a>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* 5. HOW KONGILA WORKS (WORKFLOW TIMELINE) */}
-            <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '100px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                <div style={{ textAlign: 'center', marginBottom: '64px' }}>
-                  <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '16px' }}>
-                    How Kongila Works
-                  </h2>
-                  <p style={{ fontSize: '16px', color: 'var(--text-secondary)', maxWidth: '560px', margin: '0 auto' }}>
-                    From requirement matching to automated onboarding and deployment — our operational pipeline is built to protect your velocity.
-                  </p>
-                </div>
-
-                {/* Timeline Grid */}
-                <div className="timeline-grid" style={{ position: 'relative' }}>
-                  {[
-                    { step: '01', title: 'Submit Requirements', desc: 'Define your professional needs, target timezone preferences, and service models in under 3 minutes.' },
-                    { step: '02', title: 'Get Matched', desc: 'Our matching engine evaluates skill fit, timezone availability, and remote readiness to align you with top A+ talent.' },
-                    { step: '03', title: 'Interview & Approve', desc: 'Review comprehensive composite grades, interview selected candidates, and authorize the placement.' },
-                    { step: '04', title: 'Deploy & Scale', desc: 'Sign compliant EOR contracts and deploy talent. Kongila handles power backup guarantees, hardware, and payroll.' }
-                  ].map((step, idx) => (
-                    <div key={idx} style={{ position: 'relative' }}>
-                      {/* Connector Line */}
-                      {idx < 3 && (
-                        <div style={{
-                          position: 'absolute',
-                          top: '20px',
-                          left: '40px',
-                          right: '-140px',
-                          height: '1px',
-                          borderTop: '2.5px dashed var(--border-glass)',
-                          zIndex: 1
-                        }} className="hidden-tablet" />
-                      )}
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', zIndex: 2 }}>
-                        <span style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          backgroundColor: 'rgba(0, 71, 204, 0.08)',
-                          color: '#0047CC',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 700,
-                          fontSize: '14px',
-                          border: '1.5px solid rgba(0, 71, 204, 0.2)'
-                        }}>{step.step}</span>
-                        <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#111827' }}>{step.title}</h3>
-                        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{step.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            {/* 6. TALENT EXPERIENCE SECTION */}
-            <section className="experience-grid-1" style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              {/* Left Side: Copy */}
-              <div>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '12px' }}>Built For Global Professional Talent</span>
-                <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '20px', lineHeight: '1.2' }}>
-                  Accelerate Your Global Professional Career
-                </h2>
-                <p style={{ fontSize: '16px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '32px' }}>
-                  Join an elite network of professional talent across emerging markets. Kongila guarantees access to world-class enterprise clients, local EOR compliance backing, fully financed workspace setups, and automated monthly payouts.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '40px' }}>
-                  {[
-                    { title: 'Global Salaries', desc: 'Secure competitive salaries matching global standards, paid reliably.' },
-                    { title: 'Full Hardware & Infrastructure Financing', desc: 'Get backed with high-performance laptops and fiber-optic backup power matching.' },
-                    { title: 'Local Labor Law Protection', desc: 'Work confidently under local contracts with automated tax compliance.' }
-                  ].map((benefit, idx) => (
-                    <div key={idx} style={{ display: 'flex', gap: '12px' }}>
-                      <span style={{ color: '#0047CC', fontWeight: 700 }}>✓</span>
-                      <div>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{benefit.title}</div>
-                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>{benefit.desc}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <button 
-                  onClick={() => { setAuthView('signup'); setAuthRole('talent'); setNameInput(''); setEmailInput(''); setPasswordInput(''); }}
-                  className="btn-primary"
-                  style={{ borderRadius: '12px' }}
-                >
-                  Apply to the Network
-                </button>
-              </div>
-
-              {/* Right Side: Talent Dashboard Preview */}
-              <div className="glass-panel" style={{
-                backgroundColor: '#FFFFFF',
-                borderRadius: '20px',
-                border: '1px solid var(--border-glass)',
-                boxShadow: '0 20px 40px -15px rgba(0,0,0,0.05)',
-                padding: '24px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '20px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '16px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Talent Console</div>
-                  <span className="status-chip applied" style={{ fontSize: '10px' }}>ONBOARDING VERIFICATION</span>
-                </div>
-
-                {/* Progress Checklist */}
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.04em' }}>Onboarding Progress</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {[
-                      { step: 'Identity & KYC validation', checked: true },
-                      { step: '7-stage specialized vetting sandbox', checked: true },
-                      { step: 'Ergonomic hardware & backup power check', checked: false },
-                      { step: 'Automated EOR NDA contracts execution', checked: false }
-                    ].map((ch, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
-                        <span style={{ color: ch.checked ? '#16A34A' : '#9CA3AF' }}>{ch.checked ? '●' : '○'}</span>
-                        <span style={{ color: ch.checked ? 'var(--text-primary)' : 'var(--text-muted)', textDecoration: ch.checked ? 'line-through' : 'none' }}>{ch.step}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Vetting Assessment Result Card */}
-                <div style={{ padding: '16px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px solid var(--border-glass)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Vetting Outcome</span>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#16A34A' }}>GRADE APPROVED</span>
-                  </div>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Operational Assessment: 98% Score</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Evaluated: 100% Optimal operational workflows and process optimization.</div>
-                </div>
-
-                {/* Interview Schedule calendar */}
-                <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Upcoming Schedule</div>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px' }}>Client Introduction Call</div>
-                  </div>
-                  <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#0047CC', backgroundColor: 'rgba(0, 71, 204, 0.08)', padding: '4px 10px', borderRadius: '8px' }}>
-                    Tomorrow • 14:00 (GMT+1)
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* 7. CLIENT EXPERIENCE SECTION */}
-            <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '100px 24px' }}>
-              <div className="experience-grid-2" style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                
-                {/* Left Side: Client Console Mockup */}
-                <div className="glass-panel" style={{
-                  backgroundColor: '#FFFFFF',
-                  borderRadius: '20px',
-                  border: '1px solid var(--border-glass)',
-                  boxShadow: '0 20px 40px -15px rgba(0,0,0,0.05)',
-                  padding: '24px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '20px'
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '16px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Client Console</div>
-                    <span className="status-chip vetted" style={{ fontSize: '10px' }}>MATCH VERIFIED</span>
-                  </div>
-
-                  {/* Smart Placement Proposal */}
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px' }}>Active Talent Shortlist</div>
-                    <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-tertiary)' }}>
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Damilola O.</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Senior Operations Specialist (A+)</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 700, color: '#0047CC' }}>94% Compatibility</div>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Skill & Behavior index</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Dynamic Signature box */}
-                  <div style={{ border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '16px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Compliance NDA Binding</div>
-                    <div style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-tertiary)', padding: '10px', borderRadius: '8px', overflowY: 'auto', maxHeight: '72px', border: '1px solid var(--border-glass)' }}>
-                      This workforce agreement locks Employer of Record protections, IP ownership, and NDA guarantees...
-                    </div>
-                    <button 
-                      onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                      className="btn-primary" 
-                      style={{ width: '100%', height: '40px', fontSize: '12px', borderRadius: '8px', marginTop: '12px' }}
-                    >
-                      Authorize Matching Contract
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Side: Copy */}
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '12px' }}>Designed for Organizations</span>
-                  <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '20px', lineHeight: '1.2' }}>
-                    Deploy Fully Compliant Global Professional Teams
-                  </h2>
-                  <p style={{ fontSize: '16px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '32px' }}>
-                    Scale your operational capacity instantly while maintaining complete control. Kongila's automated client operations sandbox provides full EOR protection, smart matching calculations, integrated task trackers, and streamlined consolidated billing.
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '40px' }}>
-                    {[
-                      { title: 'Zero Compliance Burden', desc: 'No local entity setup required. Fully legally-insured contracts globally.' },
-                      { title: 'Talent Request Sourcing', desc: 'Our intake wizard automates team scoping, sourcing matched A+ professionals instantly.' },
-                      { title: 'Streamlined Invoicing', desc: 'Unified invoice processing. Pay all your global staff via a single billing gateway.' }
-                    ].map((perk, idx) => (
-                      <div key={idx} style={{ display: 'flex', gap: '12px' }}>
-                        <span style={{ color: '#0047CC', fontWeight: 700 }}>✓</span>
-                        <div>
-                          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{perk.title}</div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>{perk.desc}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <button 
-                    onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                    className="btn-primary"
-                    style={{ borderRadius: '12px' }}
-                  >
-                    Start Hiring Intake
-                  </button>
-                </div>
-
-              </div>
-            </section>
-
-            {/* 8. OPERATIONAL EXCELLENCE / WHY KONGILA */}
-            <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              <div style={{ textAlign: 'center', marginBottom: '64px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '12px' }}>Built For Modern Operations</span>
-                <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em' }}>
-                  Built for Modern Workforce Operations
-                </h2>
-              </div>
-
-              <div className="excellence-grid" style={{}}>
-                {[
-                  { title: 'Regulatory Compliance', icon: '⚖️', desc: 'Full adherence to local labor laws, employment contracts, automatic taxes processing, and complete IP protection across all hiring jurisdictions.' },
-                  { title: 'Consolidated Global Payroll', icon: '💳', desc: 'Support for multiple currencies. Process paychecks, benefits, bonuses, and contractor reimbursements in a single click.' },
-                  { title: 'Identity & Sourcing Trust', icon: '👤', desc: 'Automated KYC checks, verification of academic and professional credentials, and structured behavioral assessments.' },
-                  { title: 'Hardware & Infrastructure Matching', icon: '🔌', desc: 'Benchmark-verified remote setups. We guarantee secondary battery backups and fiber internet matching to eliminate power outages.' },
-                  { title: 'Active Performance Operations', icon: '📈', desc: 'Continuous task tracking. Automated blocker escalations protect projects, notifying clients immediately of any operational issues.' },
-                  { title: 'Scalable Platform Audits', icon: '📝', desc: 'Complete business audit trails. Review operational logs, active MRR calculations, and team performance metrics.' }
-                ].map((wh, idx) => (
-                  <div key={idx} className="glass-panel" style={{
-                    padding: '24px',
-                    borderRadius: '16px',
-                    border: '1px solid var(--border-glass)',
-                    backgroundColor: '#FFFFFF',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px'
-                  }}>
-                    <span style={{ fontSize: '24px' }}>{wh.icon}</span>
-                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#111827' }}>{wh.title}</h3>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{wh.desc}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* 9. PLATFORM FEATURES SECTION */}
-            <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '100px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                <div style={{ textAlign: 'center', marginBottom: '64px' }}>
-                  <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '16px' }}>
-                    All-in-One Platform Features
-                  </h2>
-                  <p style={{ fontSize: '16px', color: 'var(--text-secondary)', maxWidth: '560px', margin: '0 auto' }}>
-                    Everything you need to orchestrate global remote professional teams without leaving the Kongila system.
-                  </p>
-                </div>
-
-                <div className="all-features-grid" style={{}}>
-                  {[
-                    { title: 'Smart Matching Engine', desc: 'Uses skill, timezone, and behavior compatibility scores out of 100.' },
-                    { title: '7-Stage Vetting Sandbox', desc: 'Calculates specialized test, work simulation, and communication weights.' },
-                    { title: 'Workflow Automation', desc: 'Seamlessly transition from client intake scopes to active task boards.' },
-                    { title: 'NDA & Contract Management', desc: 'Automated, compliant E-signatures built directly into checkout.' },
-                    { title: 'Blocker Escalation Alerts', desc: 'Flags blocked Kanban tasks instantly to client sponsors.' },
-                    { title: 'PIP Performance Warnings', desc: 'Triggers platform evaluation plans if average efficiency slips.' },
-                    { title: 'Consolidated Billing Gateway', desc: 'Process global payroll across 12+ countries with one unified invoice.' },
-                    { title: 'Multi-Agent Auditing Feed', desc: 'Automated logging of platform events for complete operational audit transparency.' }
-                  ].map((feat, idx) => (
-                    <div key={idx} style={{
-                      padding: '20px',
-                      borderRadius: '12px',
-                      border: '1px solid var(--border-glass)',
-                      backgroundColor: 'var(--bg-primary)',
-                      transition: 'var(--transition-smooth)'
-                    }} className="menu-item">
-                      <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>{feat.title}</h3>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>{feat.desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            {/* 10. WORKFLOW VISUALIZATION SECTION */}
-            <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              <div style={{ textAlign: 'center', marginBottom: '56px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: '#0047CC', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '12px' }}>Operational Lifecycle</span>
-                <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '16px' }}>
-                  Visualizing the Kongila Lifecycle
-                </h2>
-                <p style={{ fontSize: '16px', color: 'var(--text-secondary)', maxWidth: '560px', margin: '0 auto' }}>
-                  A secure, audited operational loop built to guarantee deployment speed and performance reliability.
-                </p>
-              </div>
-
-              {/* Architectural flow */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFFFFF', border: '1px solid var(--border-glass)', padding: '24px', borderRadius: '16px', flexWrap: 'wrap', gap: '20px' }}>
-                {[
-                  { id: '1', title: 'Client Intake' },
-                  { id: '2', title: 'Matching Engine' },
-                  { id: '3', title: 'Shortlist & Interview' },
-                  { id: '4', title: 'NDA Contract E-Sign' },
-                  { id: '5', title: 'Onboarding & Hardware' },
-                  { id: '6', title: 'Remotan Portal Boot' },
-                  { id: '7', title: 'Continuous Monitoring' }
-                ].map((step, idx) => (
-                  <React.Fragment key={idx}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                      <span style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
-                        backgroundColor: idx === 6 ? '#16A34A' : '#0047CC',
-                        color: '#FFFFFF',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontWeight: 700,
-                        fontSize: '12px'
-                      }}>{step.id}</span>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>{step.title}</span>
-                    </div>
-                    {idx < 6 && (
-                      <span style={{ fontSize: '16px', color: '#9CA3AF' }} className="hide-mobile">➔</span>
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-            </section>
-
-            {/* 11. TESTIMONIAL SECTION */}
-            <section style={{ borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', backgroundColor: '#FFFFFF', padding: '100px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                <div style={{ textAlign: 'center', marginBottom: '64px' }}>
-                  <h2 style={{ fontSize: '32px', fontWeight: 600, color: '#111827', letterSpacing: '-0.02em', marginBottom: '16px' }}>
-                    Trusted by Operational Leaders & Exceptional Talents
-                  </h2>
-                </div>
-
-                <div className="testimonial-grid" style={{}}>
-                  {/* Testimonial 1 */}
-                  <div className="glass-panel" style={{
-                    padding: '32px',
-                    borderRadius: '16px',
-                    border: '1px solid var(--border-glass)',
-                    backgroundColor: '#FAFAFA',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '20px'
-                  }}>
-                    <p style={{ fontSize: '15px', color: 'var(--text-secondary)', lineHeight: '1.6', fontStyle: 'italic' }}>
-                      "Prior to partnering with Kongila, scaling our backend systems across multiple regional timezones was a regulatory and vetting headache. Their 7-stage composite vetting scores and auto-NDA frameworks reduced our onboarding times from 6 weeks to 3 days, backed by EOR protection."
-                    </p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#0047CC', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>DO</div>
-                      <div>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>David O.</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>VP of Operations • FinTech Global</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Testimonial 2 */}
-                  <div className="glass-panel" style={{
-                    padding: '32px',
-                    borderRadius: '16px',
-                    border: '1px solid var(--border-glass)',
-                    backgroundColor: '#FAFAFA',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '20px'
-                  }}>
-                    <p style={{ fontSize: '15px', color: 'var(--text-secondary)', lineHeight: '1.6', fontStyle: 'italic' }}>
-                      "Being a member of the Kongila professional network has completely transformed my career path. I enjoy direct access to elite international companies, compliant local labor contracts, fully financed premium workspaces, and completely synchronized monthly payouts."
-                    </p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#0B6E99', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>BA</div>
-                      <div>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Benita A.</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Senior Operations Specialist • Kongila Network</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* 12. FINAL CTA SECTION */}
-            <section style={{ maxWidth: '1280px', margin: '112px auto', padding: '0 24px' }}>
-              <div className="final-cta-container" style={{
-                background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.05) 0%, rgba(11, 110, 153, 0.05) 100%)',
-                border: '1px solid rgba(0, 71, 204, 0.15)',
-                borderRadius: '24px',
-                textAlign: 'center',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '24px'
-              }}>
-                <h2 style={{ fontSize: 'clamp(24px, 4vw, 40px)', fontWeight: 600, color: '#111827', letterSpacing: '-0.03em', maxWidth: '640px', lineHeight: '1.15' }}>
-                  Build Your Global Workforce with Complete Confidence
-                </h2>
-                
-                <p style={{ fontSize: '16px', color: 'var(--text-secondary)', maxWidth: '540px', lineHeight: '1.6' }}>
-                  Access top vetted talent, lock down labor law compliance, and coordinate remote task delivery in one system. Start your operations with Kongila today.
-                </p>
-
-                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
-                  <button 
-                    onClick={() => { setClientIntakeActive(true); setClientIntakeStep(1); }}
-                    className="btn-primary"
-                    style={{ height: '48px', padding: '0 32px', borderRadius: '12px', fontSize: '15px' }}
-                  >
-                    Hire Talent
-                  </button>
-                  <button 
-                    onClick={() => { setAuthView('signup'); setAuthRole('talent'); setNameInput(''); setEmailInput(''); setPasswordInput(''); }}
-                    className="btn-secondary"
-                    style={{ height: '48px', padding: '0 32px', borderRadius: '12px', fontSize: '15px' }}
-                  >
-                    Join as Talent
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            {/* 13. FOOTER */}
-            <footer style={{ backgroundColor: '#FFFFFF', borderTop: '1px solid var(--border-glass)', padding: '80px 24px 40px 24px' }}>
-              <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-                <div className="footer-grid" style={{ marginBottom: '64px' }}>
-                  
-                  {/* Left Column: Brand */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                      <img src="/images/kongilalogo.png" alt="Kongila" style={{ height: '28px', width: 'auto', objectFit: 'contain' }} />
-                    </div>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '24px', maxWidth: '240px' }}>
-                      Global workforce infrastructure and operational execution systems for modern enterprises.
-                    </p>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      © 2026 Kongila Systems Inc. All rights reserved.
-                    </div>
-                  </div>
-
-                  {/* Columns 2-5: Navigation links */}
-                  {[
-                    {
-                      title: 'Solutions',
-                      links: ['Managed Workforce', 'Talent Outsourcing', 'Direct Sourcing', 'Project Execution']
-                    },
-                    {
-                      title: 'Talent Network',
-                      links: ['Apply as Talent', 'Vetting Criteria', 'Workspace Matching', 'Resource Portal']
-                    },
-                    {
-                      title: 'Company',
-                      links: ['About Infrastructure', 'Brand Mission', 'Partner Hub', 'Careers']
-                    },
-                    {
-                      title: 'Legal & Risk',
-                      links: ['EOR Compliance', 'Privacy Policy', 'IP Ownership', 'NDA Frameworks']
-                    }
-                  ].map((col, idx) => (
-                    <div key={idx}>
-                      <h4 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px' }}>{col.title}</h4>
-                      <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '10px', padding: 0 }}>
-                        {col.links.map((link) => (
-                          <li key={link}>
-                            <a 
-                              onClick={() => {
-                                if (link.includes('Hire') || link.includes('Intake') || link.includes('Solutions')) {
-                                  setClientIntakeActive(true);
-                                  setClientIntakeStep(1);
-                                } else {
-                                  setAuthView('signup');
-                                  setAuthRole('talent');
-                                  setNameInput('');
-                                  setEmailInput('');
-                                  setPasswordInput('');
-                                }
-                              }}
-                              style={{ fontSize: '13px', color: 'var(--text-secondary)', textDecoration: 'none', cursor: 'pointer', transition: 'var(--transition-smooth)' }}
-                              onMouseEnter={e => e.currentTarget.style.color = '#0047CC'}
-                              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-                            >
-                              {link}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Bottom line: Social links & Compliance statement */}
-                <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '720px', lineHeight: '1.6' }}>
-                    Disclaimer: Kongila acts as Employer of Record (EOR) under regional partnership agreements in local hiring jurisdictions. All contractor compensation is structured through authorized local banking and payroll partners.
-                  </div>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    {['Twitter', 'GitHub', 'LinkedIn'].map((soc) => (
-                      <span key={soc} style={{ fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 500 }} onMouseEnter={e => e.currentTarget.style.color = '#0047CC'} onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}>{soc}</span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </footer>
-          </div>
+          /* The public site.
+           *
+             The marketing pages used to live here as roughly nine hundred lines
+             of inline JSX, which is why the nav, the footer and the service-model
+             names drifted from the approved copy and from each other. They are
+             components now, shared with the standalone routes under /solutions,
+             /talent and the rest, so the homepage and every page it links to
+             cannot disagree about what Kongila offers or what it is called. */
+          <>
+            <SiteHeader />
+            <HomePage />
+            <SiteFooter />
+          </>
         )}
 
         {/* ====================================================================== */}
@@ -2895,16 +2082,39 @@ export default function KongilaWeb() {
             justifyContent: 'center',
             boxSizing: 'border-box'
           }}>
-            <SmartIntakeForm 
-              onComplete={async (req) => {
-                // No matching here. The request goes to the admin matching
-                // queue, which scores it against the whole vetted pool.
-                setRequests([...requests, req]);
+            <SmartIntakeForm
+              /* currentUser was missing here, and this is the instance the
+                 marketing page renders. Without it the form cannot tell a
+                 signed-in client from a visitor: it falls through to
+                 `{step === 6 && !currentUser && renderStep6()}` and asks an
+                 existing client to sign in or create a second account at the
+                 end of a request they have already filled in. The copy inside
+                 ClientDashboard always passed it, which is why the same wizard
+                 behaved correctly from inside the portal and not from the
+                 public page. */
+              currentUser={currentUser}
+              onComplete={async (created) => {
+                // No matching here. The requests go to the admin matching
+                // queue, which scores each against the whole vetted pool.
+                //
+                // A list, because a brief with three roles files three
+                // requests. Replace rather than append: a signed-in client
+                // reaching this from the marketing page already has their
+                // requests loaded, so appending showed the new ones twice
+                // until the next refresh.
+                const filed = Array.isArray(created) ? created : [created];
+                const ids = new Set(filed.map((r: any) => r.id));
+                setRequests(prev => [...filed, ...prev.filter(r => !ids.has(r.id))]);
 
                 setClientIntakeActive(false);
                 setAuthView(null);
                 setActiveTab('client');
-                triggerBanner('Service Request Created Successfully', 'success');
+                triggerBanner(
+                  filed.length > 1
+                    ? `${filed.length} service requests created, one for each role`
+                    : 'Service Request Created Successfully',
+                  'success'
+                );
               }}
               onCancel={() => setClientIntakeActive(false)}
             />
@@ -3100,12 +2310,54 @@ export default function KongilaWeb() {
                   Join Kongila
                 </h2>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-                  Access premium remote EOR opportunities globally.
+                  {clientNeedsIntake
+                    ? 'Kongila client accounts are company accounts, and they start with a request.'
+                    : 'Access premium remote EOR opportunities globally.'}
                 </p>
 
 
 
+                {/* A client without an invitation does not sign up here. The
+                    account is created for a company, and the company record is
+                    built from what the intake form collects, so sending them
+                    through this form produced a thinner organisation with no
+                    position, no phone and sometimes no real company name. One
+                    door in, one shape of organisation out. */}
+                {clientNeedsIntake && (
+                  <div>
+                    <div style={{
+                      background: 'rgba(0, 71, 204, 0.06)',
+                      border: '1px solid rgba(0, 71, 204, 0.18)',
+                      borderRadius: '10px',
+                      padding: '16px 18px',
+                      marginBottom: '20px',
+                      lineHeight: 1.6
+                    }}>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                        Tell us what you need first
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        We set the account up for your company at the end of the request, and you become its primary contact and administrator. It takes a couple of minutes, and you can invite colleagues afterwards.
+                      </div>
+                    </div>
+                    <NeonButton
+                      onClick={() => {
+                        setAuthView(null);
+                        setClientIntakeActive(true);
+                        setClientIntakeStep(1);
+                      }}
+                      style={{ width: '100%' }}
+                    >
+                      Start a request
+                    </NeonButton>
+                    <div style={{ fontSize: '12px', textAlign: 'center', marginTop: '16px', color: 'var(--text-secondary)' }}>
+                      Joining a company that already uses Kongila? Ask their primary contact to invite you from My Company.
+                    </div>
+                  </div>
+                )}
+
                 {/* Form */}
+                {!clientNeedsIntake && (
                 <form onSubmit={handleSignUpSubmit}>
                   <div className="form-group">
                     <label className="form-label">Full Name</label>
@@ -3118,16 +2370,31 @@ export default function KongilaWeb() {
                     />
                   </div>
 
-                  {authRole === 'client' && (
-                    <div className="form-group">
-                      <label className="form-label">Company Name</label>
-                      <input 
-                        type="text" 
-                        className="form-input" 
-                        value={companyInput}
-                        onChange={e => setCompanyInput(e.target.value)}
-                        placeholder="e.g. Vanguard Tech Corp"
-                      />
+                  {/* An invited colleague is joining a company that already
+                      exists. This used to be an editable Company Name field,
+                      and provisioning ignored whatever they typed in favour of
+                      the organisation inside the signed token, so the form
+                      could show one company while creating a membership of
+                      another. It states the company instead. */}
+                  {authRole === 'client' && inviteTokenRaw && (
+                    <div style={{
+                      background: 'rgba(0, 71, 204, 0.06)',
+                      border: '1px solid rgba(0, 71, 204, 0.18)',
+                      borderRadius: '10px',
+                      padding: '14px 16px',
+                      marginBottom: '16px'
+                    }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                        You are joining
+                      </div>
+                      <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {inviteOrgName || 'your colleague’s company'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: 1.6 }}>
+                        {invitePermission
+                          ? `You were invited with ${invitePermission} access. The company's primary contact can change that later.`
+                          : 'Your access level was set by whoever invited you.'}
+                      </div>
                     </div>
                   )}
 
@@ -3206,6 +2473,7 @@ export default function KongilaWeb() {
                     ) : 'Create Account'}
                   </button>
                 </form>
+                )}
 
                 <div style={{ fontSize: '12px', textAlign: 'center', marginTop: '24px', color: 'var(--text-secondary)' }}>
                   Already have an account? <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setAuthView('login')}>Sign In</span>
@@ -3325,12 +2593,12 @@ export default function KongilaWeb() {
                 <span style={{ fontSize: '20px' }}>🧙‍♂️</span>
                 <h2 style={{ fontSize: '20px', fontWeight: 800 }}>Talent Onboarding Wizard</h2>
               </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Step {talentWizardStep} of 6</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Step {talentWizardStep} of 5</div>
             </div>
 
             {/* Wizard Steps Timeline */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '32px' }}>
-              {[1, 2, 3, 4, 5, 6].map(s => (
+              {[1, 2, 3, 4, 5].map(s => (
                 <div 
                   key={s} 
                   style={{
@@ -3352,7 +2620,7 @@ export default function KongilaWeb() {
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>We use this to verify your identity and personalize your dashboard experience.</p>
 
                 <div className="form-group">
-                  <label className="form-label">Profile Photo</label>
+                  <label className="form-label">Profile Photo<Required /></label>
                   <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{
                       width: '72px',
@@ -3396,7 +2664,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Full Name</label>
+                  <label className="form-label">Full Name<Required /></label>
                   {talentOnboardingData.fullName ? (
                     <div style={{
                       padding: '12px 14px',
@@ -3421,7 +2689,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Mobile Phone Number</label>
+                  <label className="form-label">Mobile Phone Number<Required /></label>
                   <div style={{ display: 'flex', gap: '8px', position: 'relative' }}>
                     {/* Phone code searchable dropdown */}
                     <div style={{ position: 'relative', width: '140px', flexShrink: 0 }}>
@@ -3478,7 +2746,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
-                    <label className="form-label">Country</label>
+                    <label className="form-label">Country<Required /></label>
                     {/* Searchable country dropdown */}
                     <div style={{ position: 'relative' }}>
                       <div
@@ -3527,7 +2795,7 @@ export default function KongilaWeb() {
                     </div>
                   </div>
                   <div>
-                    <label className="form-label">City</label>
+                    <label className="form-label">City<Required /></label>
                     <input
                       type="text"
                       className="form-input"
@@ -3539,13 +2807,13 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Date of Birth</label>
+                  <label className="form-label">Date of Birth<Required /></label>
                   <input type="date" className="form-input" value={talentOnboardingData.dateOfBirth} onChange={e => setTalentOnboardingData({ ...talentOnboardingData, dateOfBirth: e.target.value })} />
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
-                    <label className="form-label">Gender</label>
+                    <label className="form-label">Gender<Required /></label>
                     <select className="form-input" value={talentOnboardingData.gender} onChange={e => setTalentOnboardingData({ ...talentOnboardingData, gender: e.target.value })}>
                       <option value="">Select gender</option>
                       <option>Male</option>
@@ -3561,27 +2829,21 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Timezone Alignment</label>
-                  {/* Searchable timezone dropdown */}
+                  <label className="form-label">Timezone Alignment<Required /></label>
+                  {/* Searchable timezone dropdown.
+                      The list used to be a local array of strings with the
+                      offset inside the value, so what got stored was
+                      "Africa/Lagos (GMT+1)" rather than "Africa/Lagos". That
+                      is not a zone Intl or Postgres recognises, which is why
+                      interview times could not be converted into a
+                      candidate's local time. It now reads the shared list and
+                      stores the IANA name, showing the readable label. */}
                   {(() => {
-                    const TZ_OPTIONS = [
-                      'Africa/Lagos (GMT+1)', 'Africa/Johannesburg (GMT+2)', 'Africa/Nairobi (GMT+3)',
-                      'Africa/Cairo (GMT+2)', 'Africa/Accra (GMT)', 'Africa/Abidjan (GMT)',
-                      'Europe/London (GMT)', 'Europe/Paris (GMT+1)', 'Europe/Berlin (GMT+1)',
-                      'Europe/Madrid (GMT+1)', 'Europe/Rome (GMT+1)', 'Europe/Amsterdam (GMT+1)',
-                      'Europe/Moscow (GMT+3)', 'Europe/Istanbul (GMT+3)',
-                      'America/New_York (EST/EDT)', 'America/Chicago (CST/CDT)',
-                      'America/Los_Angeles (PST/PDT)', 'America/Denver (MST/MDT)',
-                      'America/Toronto (EST/EDT)', 'America/Sao_Paulo (BRT)',
-                      'America/Mexico_City (CST/CDT)', 'America/Vancouver (PST/PDT)',
-                      'Asia/Kolkata (IST)', 'Asia/Singapore (SGT)', 'Asia/Tokyo (JST)',
-                      'Asia/Dubai (GST)', 'Asia/Shanghai (CST)', 'Asia/Hong_Kong (HKT)',
-                      'Asia/Seoul (KST)', 'Asia/Bangkok (ICT)', 'Asia/Karachi (PKT)',
-                      'Asia/Dhaka (BST)', 'Asia/Jakarta (WIB)',
-                      'Australia/Sydney (AEST/AEDT)', 'Australia/Perth (AWST)',
-                      'Australia/Brisbane (AEST)', 'Pacific/Auckland (NZST/NZDT)',
-                    ];
-                    const filtered = TZ_OPTIONS.filter(tz => tz.toLowerCase().includes(timezoneSearch.toLowerCase()));
+                    const query = timezoneSearch.trim().toLowerCase();
+                    const filtered = TIMEZONE_OPTIONS.filter(tz =>
+                      !query || tz.label.toLowerCase().includes(query) || tz.value.toLowerCase().includes(query)
+                    );
+                    const selected = TIMEZONE_OPTIONS.find(tz => tz.value === talentOnboardingData.timezone);
                     return (
                       <div style={{ position: 'relative' }}>
                         <div
@@ -3590,7 +2852,7 @@ export default function KongilaWeb() {
                           onClick={() => { setShowTimezoneDropdown(v => !v); setTimezoneSearch(''); }}
                         >
                           <span style={{ color: talentOnboardingData.timezone ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                            {talentOnboardingData.timezone || 'Select your timezone'}
+                            {selected?.label || talentOnboardingData.timezone || 'Select your timezone'}
                           </span>
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                         </div>
@@ -3610,13 +2872,14 @@ export default function KongilaWeb() {
                             <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
                               {filtered.map(tz => (
                                 <div
-                                  key={tz}
-                                  onMouseDown={() => { setTalentOnboardingData({ ...talentOnboardingData, timezone: tz }); setShowTimezoneDropdown(false); }}
+                                  key={tz.value}
+                                  onMouseDown={() => { setTalentOnboardingData({ ...talentOnboardingData, timezone: tz.value }); setShowTimezoneDropdown(false); }}
                                   style={{ padding: '10px 14px', cursor: 'pointer', fontSize: '13px', borderBottom: '1px solid var(--border-glass)' }}
                                   onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary)'}
                                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                                 >
-                                  {tz}
+                                  <div style={{ fontWeight: 600 }}>{tz.label}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{tz.value}</div>
                                 </div>
                               ))}
                               {filtered.length === 0 && (
@@ -3652,7 +2915,7 @@ export default function KongilaWeb() {
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Tell us about your current role, specialization, and seniority.</p>
 
                 <div className="form-group">
-                  <label className="form-label">Primary Professional Title</label>
+                  <label className="form-label">Primary Professional Title<Required /></label>
                   <input 
                     type="text" 
                     className="form-input" 
@@ -3664,7 +2927,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
-                    <label className="form-label">Primary Role Category</label>
+                    <label className="form-label">Primary Role Category<Required /></label>
                     <select
                       className="form-input"
                       value={talentOnboardingData.primaryRoleCategory}
@@ -3684,7 +2947,7 @@ export default function KongilaWeb() {
                     </select>
                   </div>
                   <div>
-                    <label className="form-label">Seniority Level</label>
+                    <label className="form-label">Seniority Level<Required /></label>
                     <select
                       className="form-input"
                       value={talentOnboardingData.seniorityLevel}
@@ -3701,7 +2964,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Years of Relevant Experience</label>
+                  <label className="form-label">Years of Relevant Experience<Required /></label>
                   {(() => {
                     const yrs = Number(talentOnboardingData.yearsExperience);
                     const range = getSeniorityRange(talentOnboardingData.seniorityLevel);
@@ -3730,7 +2993,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Short Bio</label>
+                  <label className="form-label">Short Bio<Required /></label>
                   <textarea
                     className="form-input"
                     rows={4}
@@ -3745,7 +3008,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Primary Skills</label>
+                  <label className="form-label">Primary Skills<Required /></label>
                   <div style={{ position: 'relative' }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px', border: '1px solid var(--border-glass)', borderRadius: '8px', background: 'var(--bg-tertiary)', minHeight: '42px', alignItems: 'center' }}>
                       {talentOnboardingData.skills.map(s => (
@@ -3944,7 +3207,7 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Employment Pref</label>
+                  <label className="form-label">Employment Pref<Required /></label>
                   <select 
                     className="form-select"
                     value={talentOnboardingData.employmentPreference}
@@ -3975,25 +3238,15 @@ export default function KongilaWeb() {
             {/* Step 3: Compensation */}
             {talentWizardStep === 3 && (
               <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>3. Preferences</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Help us match you to the right engagement and availability window.</p>
+                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>3. Pay &amp; Availability</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>What you expect to be paid and how soon you can start. Every field here is required.</p>
+
+                {/* Preferred Engagement Type was here. It duplicated the
+                    Employment Preference question in step 2, and the matching
+                    engine already reads employmentPreference. */}
 
                 <div className="form-group">
-                  <label className="form-label">Preferred Engagement Type</label>
-                  <select
-                    className="form-select"
-                    value={talentOnboardingData.preferredEngagementType}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, preferredEngagementType: e.target.value })}
-                  >
-                    <option value="">Select engagement type</option>
-                    <option>Full-time</option>
-                    <option>Part-time</option>
-                    <option>Either</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Notice Period</label>
+                  <label className="form-label">Notice Period<Required /></label>
                   <select
                     className="form-select"
                     value={talentOnboardingData.noticePeriod}
@@ -4006,19 +3259,12 @@ export default function KongilaWeb() {
                   </select>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Preferred Project Type</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={talentOnboardingData.preferredProjectType}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, preferredProjectType: e.target.value })}
-                    placeholder="e.g. Product operations, client delivery, or platform support"
-                  />
-                </div>
+                {/* Preferred Project Type was here. It was free text nothing
+                    read: no screen displayed it to operations and no part of
+                    matching scored on it. */}
 
                 <div className="form-group">
-                  <label className="form-label">Expected Salary Format</label>
+                  <label className="form-label">Expected Salary Format<Required /></label>
                   <select
                     className="form-select"
                     value={talentOnboardingData.hourlyMonthly}
@@ -4031,7 +3277,7 @@ export default function KongilaWeb() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }} className="form-group">
                   <div>
-                    <label className="form-label">Salary Range Min</label>
+                    <label className="form-label">Salary Range Min<Required /></label>
                     <input
                       type="number"
                       className="form-input"
@@ -4041,7 +3287,7 @@ export default function KongilaWeb() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Salary Range Max</label>
+                    <label className="form-label">Salary Range Max<Required /></label>
                     <input
                       type="number"
                       className="form-input"
@@ -4051,14 +3297,19 @@ export default function KongilaWeb() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Currency</label>
+                    <label className="form-label">Currency<Required /></label>
                     <select 
                       className="form-select"
                       value={talentOnboardingData.currency}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, currency: e.target.value })}
+                      onChange={e => setTalentOnboardingData({ ...talentOnboardingData, currency: e.target.value, currencyTouched: true })}
                     >
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                      {talentOnboardingData.currencyTouched
+                        ? 'You chose this currency.'
+                        : `Defaulted from ${talentOnboardingData.country || 'your country'}. Change it if you are paid in another currency.`}
+                    </div>
                   </div>
                 </div>
 
@@ -4083,9 +3334,18 @@ export default function KongilaWeb() {
                 <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>4. Documents & Links</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Upload the mandatory CV and add any supporting certification or portfolio links.</p>
 
+                {/* The heading here was #fff on --bg-tertiary, which reads as
+                    white on near-white: the card showed an icon and an upload
+                    button and never said what to upload. Both lines now use
+                    the theme's own text colours. */}
                 <div className="form-group" style={{ background: 'var(--bg-tertiary)', padding: '24px', borderRadius: '10px', textAlign: 'center', border: '1.5px dashed var(--border-glass)' }}>
                   <span style={{ fontSize: '32px', display: 'block', marginBottom: '12px' }}>📁</span>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>Curriculum Vitae (PDF)</div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    Curriculum Vitae (CV / Résumé)<Required />
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                    Upload your CV as a PDF. This is what Kongila reviews first and what a client sees once you are shortlisted.
+                  </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: '16px' }}>PDF only. Max 5MB.</div>
 
                   {uploadProgress > 0 && (
@@ -4135,14 +3395,17 @@ export default function KongilaWeb() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">LinkedIn URL</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
+                  <label className="form-label">LinkedIn URL<Required /></label>
+                  <input
+                    type="url"
+                    className="form-input"
                     value={talentOnboardingData.linkedInUrl}
                     placeholder="https://linkedin.com/in/your-profile"
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, linkedInUrl: e.target.value })}
                   />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    Paste the full address of your profile, starting with https://
+                  </div>
                 </div>
 
                 <div className="form-group">
@@ -4207,66 +3470,19 @@ export default function KongilaWeb() {
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(3); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
-                  <NeonButton onClick={() => advanceStep(5)}>Continue</NeonButton>
+                  <NeonButton onClick={() => advanceStep(5)}>Continue to Finalization</NeonButton>
                 </div>
               </div>
             )}
 
-            {/* Step 5: Remote Readiness */}
+            {/* The Remote Readiness step was step 5. It asked four free-text
+                questions about internet, power, devices and collaboration
+                tools. No screen showed the answers to operations, no vetting
+                stage checked them and matching never read them, so it was four
+                boxes between a candidate and a finished profile. */}
+
+            {/* Step 5: Finalization */}
             {talentWizardStep === 5 && (
-              <div>
-                <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>5. Remote Readiness Check</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Verify hardware capability, fiber redundancy, and communication tool experience.</p>
-
-                <div className="form-group">
-                  <label className="form-label">Internet Infrastructure & Backup Plan</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.internetQuality}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, internetQuality: e.target.value })}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Home Office Setup (Inverter / UPS)</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.workSetup}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, workSetup: e.target.value })}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Hardware Workstation Devices</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.devices}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, devices: e.target.value })}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Familiar Slack / Collaboration systems</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={talentOnboardingData.communicationTools}
-                    onChange={e => setTalentOnboardingData({ ...talentOnboardingData, communicationTools: e.target.value })}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(4); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Back</NeonButton>
-                  <NeonButton onClick={() => { saveDraftOnboarding(6, talentOnboardingData); setWizardStepErrors([]); setTalentWizardStep(6); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Continue to Finalization</NeonButton>
-                </div>
-              </div>
-            )}
-
-            {/* Step 6: Finalization */}
-            {talentWizardStep === 6 && (
               <div style={{ textAlign: 'center', padding: '32px 16px' }}>
                 <div style={{ fontSize: '72px', marginBottom: '24px', color: 'var(--accent-green)', textShadow: '0 0 20px rgba(51, 255, 87, 0.4)' }}>✓</div>
                 <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '16px' }}>You're All Set!</h3>
@@ -4275,7 +3491,7 @@ export default function KongilaWeb() {
                 </p>
 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
-                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(5); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Review Setup</NeonButton>
+                  <NeonButton variant="secondary" onClick={() => { setWizardStepErrors([]); setTalentWizardStep(4); window.scrollTo({ top: 0, behavior: 'instant' }); }}>Review Setup</NeonButton>
                   <button 
                     type="button" 
                     onClick={handleTalentWizardSubmit}
@@ -4355,67 +3571,6 @@ export default function KongilaWeb() {
 
 
         {/* ====================================================================== */}
-        {/* CODING ASSESSMENT SANDBOX MODAL (For Pending Talent) */}
-        {/* ====================================================================== */}
-        {showAssessment && (
-          <div className="modal-overlay">
-            <div className="modal-content" style={{ maxWidth: '650px', padding: '32px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: '20px', fontWeight: 800 }}>Workload Optimization Strategy Sandbox</h3>
-                <span style={{ fontSize: '12px', background: 'rgba(0, 255, 204, 0.1)', color: 'var(--accent-cyan)', padding: '2px 8px', borderRadius: '4px' }}>Time Allowed: 3 Hours</span>
-              </div>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.6, marginBottom: '24px' }}>
-                Our operational sandbox encounters workflow bottlenecks. Write a clean operational scaling strategy or workflow optimization plan that reduces delivery latency.
-              </p>
-
-              <div className="agent-terminal" style={{ marginBottom: '20px' }}>
-                <div className="terminal-header">
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>STRATEGY EDITOR</span>
-                </div>
-                <textarea 
-                  className="terminal-body" 
-                  value={codeAnswer}
-                  onChange={e => setCodeAnswer(e.target.value)}
-                  style={{
-                    width: '100%', 
-                    height: '200px', 
-                    background: '#01050a', 
-                    color: '#00ffcc', 
-                    fontFamily: 'monospace', 
-                    fontSize: '12px',
-                    border: 'none',
-                    outline: 'none',
-                    resize: 'none',
-                    padding: '16px'
-                  }}
-                  placeholder="// Write your operational strategy or workload optimization plan here..."
-                />
-              </div>
-
-              {assessmentFeedback && (
-                <div style={{
-                  padding: '12px', 
-                  borderRadius: '6px', 
-                  background: assessmentFeedback.includes('Error') ? 'rgba(255, 0, 127, 0.1)' : 'rgba(51, 255, 87, 0.1)', 
-                  border: `1px solid ${assessmentFeedback.includes('Error') ? 'var(--accent-magenta)' : 'var(--accent-green)'}`,
-                  color: assessmentFeedback.includes('Error') ? 'var(--accent-magenta)' : 'var(--accent-green)',
-                  fontSize: '12px',
-                  marginBottom: '20px',
-                  lineHeight: 1.5
-                }}>
-                  {assessmentFeedback}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <NeonButton variant="ghost" onClick={() => setShowAssessment(false)}>Exit Challenge</NeonButton>
-                <NeonButton onClick={handleAssessmentSubmit}>Submit & Grade Answer</NeonButton>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ====================================================================== */}
         {/* FULL PORTALS: ACTIVE OVERVIEW HUB (Shown if logged in & vetted/complete) */}
         {/* ====================================================================== */}
         {currentUser && !authView && !clientIntakeActive && activeTab === 'home' && (
@@ -4487,7 +3642,11 @@ export default function KongilaWeb() {
         {/* ====================================================================== */}
         {/* FULL PORTALS: ACTIVE TALENT WORKSPACE                                  */}
         {/* ====================================================================== */}
-        {currentUser && currentUser.role === 'talent' && !authView && !clientIntakeActive && activeTab === 'talent' && (
+        {currentUser && currentUser.role === 'talent' && !authView && !clientIntakeActive && activeTab === 'talent' && !dataReady && (
+          <MascotLoader message="Loading your workspace" />
+        )}
+
+        {currentUser && currentUser.role === 'talent' && !authView && !clientIntakeActive && activeTab === 'talent' && dataReady && (
           <TalentDashboard
             currentUser={currentUser}
             talentProfile={getCurrentTalentProfile()}
@@ -4549,62 +3708,7 @@ export default function KongilaWeb() {
             }}
             onSubmitAssessment={async (result: any) => {
               const profile = getCurrentTalentProfile();
-              let exists = false;
-              const updatedTSAs = talentSkillAssessments.map((tsa: any) => {
-                if (tsa.id === result.talentSkillAssessmentId) {
-                  exists = true;
-                  return { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt };
-                }
-                return tsa;
-              });
-              
-              if (!exists) {
-                updatedTSAs.push({
-                  id: result.talentSkillAssessmentId,
-                  talentId: profile?.id || result.talentId,
-                  talent_id: profile?.id || result.talentId,
-                  assessmentId: result.assessmentId,
-                  assessment_id: result.assessmentId,
-                  status: 'submitted',
-                  score: result.autoScore,
-                  submittedAt: result.submittedAt
-                });
-              }
-              
-              setTalentSkillAssessments(updatedTSAs);
-
-              // Update skillAssessmentResults to instantly trigger locks relying on results
-              const updatedResults = [...skillAssessmentResults];
-              updatedResults.push({
-                id: `sar_${Date.now()}`,
-                talentId: profile?.id || result.talentId,
-                talent_id: profile?.id || result.talentId,
-                talentSkillAssessmentId: result.talentSkillAssessmentId,
-                assessmentId: result.assessmentId,
-                assessment_id: result.assessmentId,
-                score: result.autoScore,
-                answers: result.answers || {},
-                created_at: new Date().toISOString()
-              });
-              setSkillAssessmentResults(updatedResults);
-
-              if (profile) {
-                const pipeline = [...(profile.vettingPipeline || [])];
-                const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
-                if (stageIdx >= 0) {
-                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore, status: 'submitted' };
-                }
-                const updatedProfile = { ...profile, vettingPipeline: pipeline };
-                await handleUpdateProfile(updatedProfile);
-              }
-
               try {
-                // Through the server. The browser marked its own paper and
-                // wrote the score into talent_skill_assessments, which has
-                // RLS off in the live database, so any score posted landed
-                // and the assessment could be retaken until it passed. Only
-                // the answers go up; the route scores them against the key
-                // and refuses a second submission.
                 const response = await apiFetch('/api/assessments/submit', {
                   method: 'POST',
                   body: JSON.stringify({
@@ -4619,19 +3723,65 @@ export default function KongilaWeb() {
                   throw new Error(detail?.error || 'Your assessment was not submitted.');
                 }
 
-                // The stored score is the server's, not the one computed in
-                // the browser, so take it back from the response.
-                const saved = await response.json().catch(() => null);
-                if (saved && saved.autoScore !== undefined) {
-                  setTalentSkillAssessments((prev: any[]) => prev.map((tsa: any) =>
-                    tsa.id === result.talentSkillAssessmentId
-                      ? { ...tsa, status: 'submitted', score: saved.autoScore, submittedAt: saved.submittedAt }
-                      : tsa
-                  ));
+                const saved = await response.json();
+                if (saved.talentSkillAssessmentId !== result.talentSkillAssessmentId) {
+                  throw new Error('The server response did not match this assessment. Please try again.');
                 }
+
+                const talentId = profile?.id || result.talentId;
+                setTalentSkillAssessments((prev: any[]) => {
+                  const submitted = prev.map((tsa: any) =>
+                    tsa.id === result.talentSkillAssessmentId
+                      ? { ...tsa, status: 'submitted', score: saved.score, submittedAt: saved.submittedAt }
+                      : tsa
+                  );
+                  return submitted.some((tsa: any) => tsa.id === result.talentSkillAssessmentId)
+                    ? submitted
+                    : [...submitted, {
+                        id: result.talentSkillAssessmentId,
+                        talentId,
+                        assessmentId: result.assessmentId,
+                        status: 'submitted',
+                        score: saved.score,
+                        submittedAt: saved.submittedAt
+                      }];
+                });
+                setSkillAssessmentResults((prev: any[]) => [
+                  ...prev.filter((item: any) => item.id !== `sar_${result.talentSkillAssessmentId}`),
+                  {
+                    id: `sar_${result.talentSkillAssessmentId}`,
+                    talentId,
+                    talentSkillAssessmentId: result.talentSkillAssessmentId,
+                    assessmentId: result.assessmentId,
+                    score: saved.score,
+                    autoScore: saved.autoScore,
+                    passed: saved.passed,
+                    answers: result.answers || {},
+                    needsReview: saved.awaitingReview,
+                    submittedAt: saved.submittedAt
+                  }
+                ]);
+
+                if (profile) {
+                  const pipeline = [...(profile.vettingPipeline || [])];
+                  const stageIdx = pipeline.findIndex((stage: any) =>
+                    stage.assessmentId && stage.status === 'in_progress'
+                  );
+                  if (stageIdx >= 0) {
+                    pipeline[stageIdx] = {
+                      ...pipeline[stageIdx],
+                      assessmentScore: saved.score,
+                      status: 'submitted'
+                    };
+                    await handleUpdateProfile({ ...profile, vettingPipeline: pipeline });
+                  }
+                }
+                return saved;
               } catch (e: any) {
                 console.error("Failed to submit assessment", e);
-                triggerBanner(e?.message || 'Your assessment was not submitted.', 'error');
+                const message = e?.message || 'Your assessment was not submitted.';
+                triggerBanner(message, 'error');
+                throw new Error(message);
               }
             }}
           />
@@ -4640,7 +3790,11 @@ export default function KongilaWeb() {
         {/* ====================================================================== */}
         {/* FULL PORTALS: ACTIVE CLIENT DASHBOARD (Clients only) */}
         {/* ====================================================================== */}
-        {currentUser && currentUser.role === 'client' && !authView && !clientIntakeActive && activeTab === 'client' && (
+        {currentUser && currentUser.role === 'client' && !authView && !clientIntakeActive && activeTab === 'client' && !dataReady && (
+          <MascotLoader message="Loading your workspace" />
+        )}
+
+        {currentUser && currentUser.role === 'client' && !authView && !clientIntakeActive && activeTab === 'client' && dataReady && (
           <ClientDashboard
             currentUser={currentUser}
             organizations={organizations}
@@ -4693,6 +3847,12 @@ export default function KongilaWeb() {
               setRequests(prev => [newReq, ...prev.filter(r => r.id !== newReq.id)]);
               setSelectedRequest(newReq);
               triggerBanner('New Service Request created! Matchmaker engine initialized.', 'success');
+            }}
+            onRequestUpdated={(updated) => {
+              // Replace in place and keep the order. An edited request that
+              // jumped to the top of the list looked like a new one.
+              setRequests(prev => prev.map(r => (r.id === updated.id ? { ...r, ...updated } : r)));
+              setSelectedRequest(prev => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
             }}
             />
         )}

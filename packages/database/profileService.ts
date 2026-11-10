@@ -12,15 +12,17 @@
  * touch is decided by `profileFields`, which is tested on its own.
  */
 
-import { getSupabaseClient, signDbFileUrls } from './index';
+import { getSupabaseClient, signDbFileUrls, readTalentVetting, writeTalentVetting } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
+import { notifyTalentManagers, adminPortalUrl } from './notify';
 import {
   filterProfilePatch,
   validateProfilePatch,
   normaliseSkills,
   type FieldProblem
 } from '@kongila/workflows';
+import { buildDefaultVettingPipeline } from '@kongila/matching-engine';
 
 export interface ProfileResult<T = any> {
   ok: boolean;
@@ -125,6 +127,83 @@ export async function getTalentProfile(
  * A refused field is reported rather than dropped. Silently ignoring a
  * write is how a bug survives: the caller believes it worked.
  */
+/**
+ * Gives a candidate their seven vetting stages, once.
+ *
+ * Until now nothing created a pipeline. `buildDefaultVettingPipeline` was
+ * called in exactly one place, the admin panel, so a candidate's row held an
+ * empty pipeline until an operator saved a decision against them. Four
+ * different surfaces papered over that in four different ways: the admin
+ * page merged defaults over the empty array at render time, the candidate's
+ * dashboard built its own seven stages inline in three places, and
+ * /api/vetting/advance wrote a fourth set when it found none. None of them
+ * was authoritative and they could disagree with each other.
+ *
+ * The pipeline is created here, server side, the first time a candidate
+ * writes a real profile, which is when they finish onboarding. Stage 0 opens
+ * as in_progress; the rest wait. Idempotent: a row that already has stages
+ * is left exactly as it is, so this cannot overwrite an assessment in
+ * progress.
+ */
+/**
+ * The columns a classification rests on.
+ *
+ * Mirrors PROFILE_CORE_FIELDS in @kongila/shared-types, in the snake_case
+ * the table uses. A vetted candidate changing any of these needs the Talent
+ * Manager to look again before it reaches clients.
+ */
+const CORE_COLUMNS = [
+  'full_name', 'country', 'phone', 'level', 'seniority_level',
+  'experience_years', 'timezone', 'salary_expectation'
+];
+
+export async function ensureVettingPipeline(talentId: string): Promise<boolean> {
+  // Through readTalentVetting and writeTalentVetting rather than naming
+  // vetting_pipeline directly.
+  //
+  // This used to select and update that column itself. On a database without
+  // the 2026-11-09c migration the column does not exist, so both statements
+  // were rejected, the warning went to a server log nobody reads, and the
+  // function returned false as though the pipeline were already there. The
+  // candidate finished onboarding with no pipeline at all: their dashboard
+  // had no stage to show, Vetting Progress sat at 0 of 7, and in the admin
+  // portal the assessment controls stayed inert because there was no stage
+  // record to act on. Those two functions fall back to the bio envelope, so
+  // routing through them works with the migration or without it.
+  let snapshot;
+  try {
+    snapshot = await readTalentVetting(talentId);
+  } catch (error: any) {
+    console.error('[profile] could not read the vetting pipeline:', error?.message || error);
+    return false;
+  }
+
+  if (!snapshot) return false;
+  if (Array.isArray(snapshot.pipeline) && snapshot.pipeline.length > 0) return false;
+
+  const result = await writeTalentVetting({
+    ...snapshot,
+    pipeline: buildDefaultVettingPipeline()
+  });
+
+  if (!result.ok) {
+    console.error('[profile] vetting pipeline not created:', result.error);
+    return false;
+  }
+
+  // Its own column, and nice to have rather than load bearing, so a database
+  // that does not have it yet must not fail the pipeline that just saved.
+  const { error: startedError } = await getSupabaseClient()
+    .from('talent_profiles')
+    .update({ vetting_started_at: new Date().toISOString() })
+    .eq('id', talentId);
+  if (startedError) {
+    console.warn('[profile] vetting_started_at not set:', startedError.message);
+  }
+
+  return true;
+}
+
 export async function updateTalentProfile(
   actor: Actor,
   input: { talentId?: string; patch: Record<string, unknown>; skills?: unknown }
@@ -188,7 +267,49 @@ export async function updateTalentProfile(
     if (error) return fail(500, `Your profile was not saved: ${error.message}`);
   }
 
+  // A candidate who has written a real profile has finished onboarding, so
+  // their vetting pipeline starts here rather than waiting for an operator
+  // to open their record.
+  if (!isOperations) {
+    await ensureVettingPipeline(id);
+  }
+
   const warnings: string[] = [];
+
+  // A vetted candidate changing something their classification rests on.
+  //
+  // The talent FRD requires the Talent Manager to be told, and nobody was:
+  // the flag was computed in the browser, inside handleUpdateProfile, and
+  // went into the profile payload with no notification attached. Being set
+  // in the browser also made it bypassable — the one place it matters is
+  // exactly the place a candidate could skip it.
+  //
+  // Detecting it here means it holds however the profile was written.
+  if (existing && !isOperations) {
+    const wasClassified = ['Vetted', 'Matched', 'Deployed'].includes(String(existing.vetting_status || ''));
+    const changedCoreFields = CORE_COLUMNS.filter(column =>
+      Object.prototype.hasOwnProperty.call(allowed, column)
+      && String((allowed as any)[column] ?? '') !== String((existing as any)[column] ?? '')
+    );
+
+    if (wasClassified && changedCoreFields.length > 0) {
+      const { error: flagError } = await supabase
+        .from('talent_profiles').update({ requires_re_review: true }).eq('id', id);
+      if (flagError) {
+        // The column arrives with a migration that may not have run. The
+        // edit itself is saved either way; losing the flag is worth a
+        // warning, not a failed save.
+        warnings.push('This change needs re-review and the flag could not be set. Tell your Kongila contact.');
+      }
+
+      const told = await notifyTalentManagers('profile_rereview_required', {
+        talentName: existing.full_name || id,
+        reason: `Changed ${changedCoreFields.join(', ')}.`,
+        actionUrl: adminPortalUrl(`/talents/${id}`)
+      });
+      warnings.push(...told.warnings);
+    }
+  }
   if (input.skills !== undefined) {
     const result = await replaceSkills(id, skills);
     warnings.push(...result.warnings);

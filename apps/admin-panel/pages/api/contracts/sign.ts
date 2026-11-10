@@ -1,9 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
-import { canTransitionRequest, coerceRequestStatus, explainTransition } from '@kongila/workflows';
+import {
+  canTransitionRequest,
+  coerceRequestStatus,
+  countSignedHires,
+  explainTransition,
+  hasReachedHireTarget,
+  requestedHeadcount
+} from '@kongila/workflows';
 
 /**
- * Records a contract as signed, and moves the request it belongs to into
+ * Records a contract as signed, and moves a fully staffed role request into
  * Onboarding.
  *
  * Hired means a signed contract. Nothing moved a request to Onboarding, so
@@ -74,6 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ── Advance the request ───────────────────────────────────────────────────
     let requestMoved: { from: string; to: string } | null = null;
+    let hireProgress: { filled: number; needed: number } | null = null;
 
     if (contract.offer_id) {
       const { data: offer } = await supabase
@@ -93,24 +101,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (row) {
           const payload = row.payload || {};
           const from = coerceRequestStatus(payload.status);
-
-          if (canTransitionRequest(from, 'Onboarding')) {
-            const { error: reqError } = await supabase
-              .from('talent_requests')
-              .update({ payload: { ...payload, status: 'Onboarding' } })
-              .eq('id', row.id);
-
-            if (reqError) {
-              warnings.push(`The contract is signed, but the request did not advance: ${reqError.message}`);
-            } else {
-              requestMoved = { from, to: 'Onboarding' };
-            }
+          const needed = requestedHeadcount(payload.numberOfHires);
+          const requestIds = Array.from(new Set([
+            String(row.id),
+            String(payload.id || ''),
+            String(offer.request_id)
+          ].filter(Boolean)));
+          const { data: siblingOffers, error: offersError } = await supabase
+            .from('offers')
+            .select('id')
+            .in('request_id', requestIds);
+          if (offersError) {
+            warnings.push(`The contract is signed, but hiring progress could not be checked: ${offersError.message}`);
           } else {
-            // Not fatal: the contract is signed either way, and an operator
-            // can correct the pipeline. But say so rather than hide it.
-            warnings.push(
-              `The contract is signed, but the request was not advanced. ${explainTransition(from, 'Onboarding')}`
-            );
+            const offerIds = (siblingOffers || []).map((sibling: any) => String(sibling.id));
+            const { data: siblingContracts, error: contractsError } = offerIds.length
+              ? await supabase.from('contracts').select('offer_id, status').in('offer_id', offerIds)
+              : { data: [] as any[], error: null };
+            if (contractsError) {
+              warnings.push(`The contract is signed, but hiring progress could not be checked: ${contractsError.message}`);
+            } else {
+              const filled = countSignedHires(siblingContracts || []);
+              hireProgress = { filled, needed };
+
+              if (hasReachedHireTarget(payload.numberOfHires, siblingContracts || [])) {
+                if (canTransitionRequest(from, 'Onboarding')) {
+                  const { error: reqError } = await supabase
+                    .from('talent_requests')
+                    .update({ payload: { ...payload, status: 'Onboarding' } })
+                    .eq('id', row.id);
+
+                  if (reqError) {
+                    warnings.push(`The contract is signed, but the request did not advance: ${reqError.message}`);
+                  } else {
+                    requestMoved = { from, to: 'Onboarding' };
+                  }
+                } else {
+                  warnings.push(
+                    `The contract is signed, but the request was not advanced. ${explainTransition(from, 'Onboarding')}`
+                  );
+                }
+              }
+            }
           }
         } else {
           warnings.push('The contract is signed, but its request could not be found to advance.');
@@ -134,7 +166,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
     if (auditError) console.warn('[contracts/sign] audit entry not written:', auditError.message);
 
-    return res.status(200).json({ ok: true, status: nextStatus, requestMoved, warnings });
+    return res.status(200).json({ ok: true, status: nextStatus, requestMoved, hireProgress, warnings });
   } catch (error: any) {
     console.error('[contracts/sign] unexpected failure:', error);
     return res.status(500).json({ error: error.message || 'Could not sign the contract' });

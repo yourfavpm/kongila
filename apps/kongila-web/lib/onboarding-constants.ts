@@ -82,5 +82,90 @@ export const SUGGESTED_SKILLS = [
 ].sort();
 
 export const CURRENCIES = [
-  'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'CNY', 'INR', 'BRL', 'ZAR', 'NGN', 'KES', 'GHS', 'EGP', 'SGD', 'HKD', 'NZD', 'SEK', 'NOK', 'DKK', 'MXN', 'RUB', 'AED', 'SAR', 'TRY', 'THB', 'IDR', 'MYR', 'PHP', 'VND', 'ARS', 'CLP', 'COP', 'PEN', 'UAH', 'PLN', 'CZK', 'HUF', 'RON', 'BGN', 'HRK', 'RSD', 'ALL', 'BAM', 'MKD', 'AFN', 'ALL', 'DZD', 'AOA', 'XCD', 'AMD', 'AWG', 'AZN', 'BSD', 'BHD', 'BDT', 'BBD', 'BYN', 'BZD', 'XOF', 'BMD', 'BTN', 'BOB', 'BWP', 'BND', 'BIF', 'KHR', 'XAF', 'CVE', 'KYD', 'KMF', 'CDF', 'CRC', 'CUP', 'DJF', 'DOP', 'XPF', 'ERN', 'SZL', 'ETB', 'FJD', 'GMD', 'GEL', 'GTQ', 'GNF', 'GYD', 'HTG', 'HNL', 'ISK', 'IQD', 'JMD', 'JOD', 'KZT', 'KPW', 'KRW', 'KWD', 'KGS', 'LAK', 'LBP', 'LSL', 'LRD', 'LYD', 'MOP', 'MGA', 'MWK', 'MVR', 'MRU', 'MUR', 'MDL', 'MNT', 'MAD', 'MZN', 'MMK', 'NAD', 'NPR', 'NIO', 'OMR', 'PKR', 'PAB', 'PGK', 'PYG', 'QAR', 'RWF', 'WST', 'STN', 'SCR', 'SLL', 'SBD', 'SOS', 'LKR', 'SDG', 'SRD', 'SYP', 'TWD', 'TJS', 'TZS', 'TOP', 'TTD', 'TND', 'TMT', 'UGX', 'UYU', 'UZS', 'VUV', 'VES', 'YER', 'ZMW', 'ZWL'
+  'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'CNY', 'INR', 'BRL', 'ZAR', 'NGN', 'KES', 'GHS', 'EGP', 'SGD', 'HKD', 'NZD', 'SEK', 'NOK', 'DKK', 'MXN', 'RUB', 'AED', 'SAR', 'TRY', 'THB', 'IDR', 'MYR', 'PHP', 'VND', 'ARS', 'CLP', 'COP', 'PEN', 'UAH', 'PLN', 'CZK', 'HUF', 'RON', 'BGN', 'HRK', 'RSD', 'ALL', 'BAM', 'MKD', 'AFN', 'ALL', 'DZD', 'AOA', 'XCD', 'AMD', 'AWG', 'AZN', 'BSD', 'BHD', 'BDT', 'BBD', 'BYN', 'BZD', 'XOF', 'BMD', 'BTN', 'BOB', 'BWP', 'BND', 'BIF', 'KHR', 'XAF', 'CVE', 'KYD', 'KMF', 'CDF', 'CRC', 'CUP', 'DJF', 'DOP', 'XPF', 'ERN', 'SZL', 'ETB', 'FJD', 'GMD', 'GEL', 'GTQ', 'GNF', 'GYD', 'HTG', 'HNL', 'ILS', 'ISK', 'IQD', 'JMD', 'JOD', 'KZT', 'KPW', 'KRW', 'KWD', 'KGS', 'LAK', 'LBP', 'LSL', 'LRD', 'LYD', 'MOP', 'MGA', 'MWK', 'MVR', 'MRU', 'MUR', 'MDL', 'MNT', 'MAD', 'MZN', 'MMK', 'NAD', 'NPR', 'NIO', 'OMR', 'PKR', 'PAB', 'PGK', 'PYG', 'QAR', 'RWF', 'WST', 'STN', 'SCR', 'SLL', 'SBD', 'SOS', 'LKR', 'SDG', 'SRD', 'SYP', 'TWD', 'TJS', 'TZS', 'TOP', 'TTD', 'TND', 'TMT', 'UGX', 'UYU', 'UZS', 'VUV', 'VES', 'YER', 'ZMW', 'ZWL'
 ].sort();
+
+/**
+ * The currency a country pays in.
+ *
+ * Covers every country in COUNTRIES_AND_CODES, so the salary step can open on
+ * the right currency instead of USD. A candidate in Lagos quoting a monthly
+ * figure in naira had to notice the dropdown said USD and change it; when they
+ * did not, the figure was converted as though it were dollars and the salary
+ * stored against them was out by roughly the exchange rate.
+ *
+ * It is a default, not a restriction. The full CURRENCIES list stays
+ * selectable, because plenty of people here are paid in a currency other than
+ * the one their country uses.
+ */
+export const COUNTRY_CURRENCY: Record<string, string> = {
+  'Angola': 'AOA',
+  'Argentina': 'ARS',
+  'Australia': 'AUD',
+  'Austria': 'EUR',
+  'Belgium': 'EUR',
+  'Brazil': 'BRL',
+  'Cameroon': 'XAF',
+  'Canada': 'CAD',
+  'Chile': 'CLP',
+  'China': 'CNY',
+  'Colombia': 'COP',
+  'Denmark': 'DKK',
+  'Egypt': 'EGP',
+  'Finland': 'EUR',
+  'France': 'EUR',
+  'Germany': 'EUR',
+  'Ghana': 'GHS',
+  'Greece': 'EUR',
+  'Hong Kong': 'HKD',
+  'India': 'INR',
+  'Indonesia': 'IDR',
+  'Ireland': 'EUR',
+  'Israel': 'ILS',
+  'Italy': 'EUR',
+  'Ivory Coast': 'XOF',
+  'Japan': 'JPY',
+  'Kenya': 'KES',
+  'Malaysia': 'MYR',
+  'Mexico': 'MXN',
+  'Morocco': 'MAD',
+  'Netherlands': 'EUR',
+  'New Zealand': 'NZD',
+  'Nigeria': 'NGN',
+  'Norway': 'NOK',
+  'Philippines': 'PHP',
+  'Poland': 'PLN',
+  'Portugal': 'EUR',
+  'Russia': 'RUB',
+  'Rwanda': 'RWF',
+  'Saudi Arabia': 'SAR',
+  'Senegal': 'XOF',
+  'Singapore': 'SGD',
+  'South Africa': 'ZAR',
+  'South Korea': 'KRW',
+  'Spain': 'EUR',
+  'Sweden': 'SEK',
+  'Switzerland': 'CHF',
+  'Tanzania': 'TZS',
+  'Thailand': 'THB',
+  'Turkey': 'TRY',
+  'Uganda': 'UGX',
+  'United Arab Emirates': 'AED',
+  'United Kingdom': 'GBP',
+  'United States': 'USD',
+  'Vietnam': 'VND',
+  'Zambia': 'ZMW',
+  'Zimbabwe': 'ZWL'
+};
+
+/**
+ * The currency to open the salary field on for a country.
+ *
+ * Falls back to USD for a country that is not listed, which is also the
+ * platform's settlement currency, so the figure is never silently attached to
+ * a currency nobody chose.
+ */
+export function currencyForCountry(country?: string | null): string {
+  if (!country) return 'USD';
+  return COUNTRY_CURRENCY[country.trim()] || 'USD';
+}

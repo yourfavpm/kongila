@@ -28,43 +28,72 @@ export default function ClientSupportPanel({
     description: '',
     linkedContractId: ''
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const myTickets = supportTickets.filter(t => t.clientId === currentUser?.id);
-  const openTickets = myTickets.filter(t => ['open', 'in_progress', 'awaiting_client_response'].includes(t.status.toLowerCase()));
-  const resolvedTickets = myTickets.filter(t => ['resolved', 'closed'].includes(t.status.toLowerCase()));
+  // A ticket with no status used to take the whole panel down here.
+  const statusOf = (t: any) => String(t?.status || '').toLowerCase();
+  const openTickets = myTickets.filter(t => ['open', 'in_progress', 'awaiting_client_response'].includes(statusOf(t)));
+  const resolvedTickets = myTickets.filter(t => ['resolved', 'closed'].includes(statusOf(t)));
 
+  /**
+   * Raises a ticket.
+   *
+   * This had no try/catch and no in-flight state. When the request threw
+   * rather than returning a response, which is what a dropped connection or a
+   * route that failed to compile looks like from here, the promise rejected
+   * into nothing: the button did not change, the modal stayed open and no
+   * message appeared. Pressing Submit did nothing visible at all. A failure
+   * now shows in the modal, the button says what it is doing, and the reason
+   * is logged for whoever is reading the console.
+   */
   const handleSubmitTicket = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
 
-    // Auto-route and priority logic based on REQ-KC-1301 and REQ-KC-1303
-    // Through the server. A browser insert set its own client_id, worked out
-    // its own priority, and assigned the ticket to a hardcoded placeholder
-    // id ('account-manager-uuid-001') that is not a user. Nothing told
-    // operations a ticket had arrived.
-    const response = await apiFetch('/api/support', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subject: newTicket.subject,
-        category: newTicket.category,
-        description: newTicket.description,
-        linkedContractId: newTicket.linkedContractId || null
-      })
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert('Error creating ticket: ' + (payload?.error || response.status));
+    setSubmitError('');
+    if (!newTicket.subject.trim() || !newTicket.description.trim()) {
+      setSubmitError('A subject and a description are both needed.');
       return;
     }
 
-    // The route returns the ticket already mapped, so no snake_case here.
-    if (payload.ticket) {
-      setSupportTickets((prev: any[]) => [payload.ticket as SupportTicket, ...prev]);
-    }
+    setSubmitting(true);
+    try {
+      // Through the server. A browser insert set its own client_id, worked out
+      // its own priority, and assigned the ticket to a hardcoded placeholder
+      // id ('account-manager-uuid-001') that is not a user. Nothing told
+      // operations a ticket had arrived.
+      const response = await apiFetch('/api/support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: newTicket.subject,
+          category: newTicket.category,
+          description: newTicket.description,
+          linkedContractId: newTicket.linkedContractId || null
+        })
+      });
 
-    setShowNewTicketModal(false);
-    setNewTicket({ subject: '', category: 'Contract Question', description: '', linkedContractId: '' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSubmitError(payload?.error || `The ticket could not be created (${response.status}).`);
+        return;
+      }
+
+      // The route returns the ticket already mapped, so no snake_case here.
+      if (payload.ticket) {
+        setSupportTickets((prev: any[]) => [payload.ticket as SupportTicket, ...prev]);
+      }
+
+      setShowNewTicketModal(false);
+      setNewTicket({ subject: '', category: 'Contract Question', description: '', linkedContractId: '' });
+    } catch (err: any) {
+      console.error('[support] ticket submit failed', err);
+      setSubmitError(err?.message || 'We could not reach the server. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -75,7 +104,7 @@ export default function ClientSupportPanel({
           <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0F172A', margin: '0 0 4px 0' }}>Support & Help Center</h2>
           <p style={{ fontSize: '14px', color: '#64748B', margin: 0 }}>Raise issues, ask questions, or view our knowledge base.</p>
         </div>
-        <Button onClick={() => setShowNewTicketModal(true)} style={{ background: '#0F172A', color: 'white', border: 'none', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
+        <Button onClick={() => { setSubmitError(''); setShowNewTicketModal(true); }} style={{ background: '#0F172A', color: 'white', border: 'none', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
           + New Support Ticket
         </Button>
       </div>
@@ -235,9 +264,17 @@ export default function ClientSupportPanel({
                 />
               </div>
 
+              {submitError && (
+                <div style={{ padding: '10px 12px', borderRadius: '6px', background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', fontSize: '13px' }}>
+                  {submitError}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
-                <button type="button" onClick={() => setShowNewTicketModal(false)} style={{ padding: '10px 16px', background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-                <button type="submit" style={{ padding: '10px 24px', background: '#2563EB', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Submit Ticket</button>
+                <button type="button" disabled={submitting} onClick={() => setShowNewTicketModal(false)} style={{ padding: '10px 16px', background: 'none', border: 'none', color: '#64748B', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={submitting} style={{ padding: '10px 24px', background: submitting ? '#94A3B8' : '#2563EB', color: 'white', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+                  {submitting ? 'Submitting…' : 'Submit Ticket'}
+                </button>
               </div>
             </form>
           </div>

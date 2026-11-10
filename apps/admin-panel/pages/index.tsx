@@ -11,11 +11,12 @@ import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
 import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, interviewInstant, formatInstantInZone } from '@kongila/utils';
 import { coerceRequestStatus } from '@kongila/workflows';
-import { calculateCompositeVettingGrade, calculateMatchScore, reconcileMatchesForRequest, VETTING_STAGES, advanceTalentStage, validateStageDecision, buildDefaultVettingPipeline } from '@kongila/matching-engine';
+import { calculateCompositeVettingGrade, vettingScoreState, calculateMatchScore, reconcileMatchesForRequest, VETTING_STAGES, advanceTalentStage, validateStageDecision, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
 import {
   TalentProfile, ServiceRequest, Match, AuditLog, AgentLog, Interview, RehireRequest,
-  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment
+  VettingStageRecord, VettingDecision, Assessment, AssessmentCategory, AssessmentQuestion, AssessmentAssignment,
+  requestTitle, requestRoles, requestHeadcount, isMultiRoleRequest
 } from '@kongila/shared-types';
 import AssessmentWizard from '../components/AssessmentWizard';
 import {
@@ -117,6 +118,20 @@ interface ComplianceDoc {
 
 // Removing local Assessment type, importing from shared-types instead
 
+// ─── Marks on a submitted assessment ────────────────────────────────────────
+//
+// A mark is { score, notes }. The old score box stored a bare number, and
+// rows written then still hold one, so both shapes are read and only the
+// object shape is written.
+
+/** Normalises either shape to an object, or undefined when there is no mark. */
+const toMark = (raw: any): { score?: number; notes?: string } | undefined => {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? { score: raw } : undefined;
+  if (typeof raw === 'object') return raw;
+  return undefined;
+};
+
 const normalizeVettingPipeline = (pipeline?: VettingStageRecord[] | null) => {
   const incoming = Array.isArray(pipeline) ? pipeline : [];
   const defaults = buildDefaultVettingPipeline();
@@ -180,7 +195,13 @@ interface AssessmentResult {
   talentSkillAssessmentId?: string;
   score?: number;
   autoScore?: number | null;
+  manualScore?: number | null;
+  maxScore?: number;
   passed?: boolean;
+  needsReview?: boolean;
+  reviewerNotes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
   completedAt?: string;
   submittedAt?: string;
   answers?: Record<string, any>;
@@ -219,6 +240,11 @@ const REMOTAN_NAV = [
   { key: 'remotan-talent', label: 'Remotan Talent' },
   { key: 'remotan-payroll', label: 'Payroll & EOR' },
 ] as const;
+
+const ADMIN_ACTIVE_TAB_KEY = 'kongila_admin_active_tab';
+const isAdminTab = (tab: unknown): tab is AdminTab =>
+  typeof tab === 'string' &&
+  [...KONGILA_NAV, ...REMOTAN_NAV].some(({ key }) => key === tab);
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
@@ -300,9 +326,18 @@ export default function AdminPanel() {
   const [workSimulationTasks, setWorkSimulationTasks] = useState<any[]>([]);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  // True once the first load has come back, successfully or not. The portal
+  // rendered as soon as authentication finished, with every list still an
+  // empty array, so the first thing an operator saw was a workspace that
+  // looked like it held no data — and then it filled in a second or two
+  // later. Set in the finally below so a failed load shows the portal rather
+  // than hanging on the loader for ever.
+  const [dataReady, setDataReady] = useState(false);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
 
   // ── Navigation
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [activeTabRestored, setActiveTabRestored] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // ── Selection
@@ -339,7 +374,10 @@ export default function AdminPanel() {
   const [stageInterviewLink, setStageInterviewLink] = useState<string>('');
   const [stagePersonalityLink, setStagePersonalityLink] = useState<string>('');
   const [stageTaskTitle, setStageTaskTitle] = useState<string>('');
-  const [stageSubmissionType, setStageSubmissionType] = useState<'file' | 'essay' | 'link'>('link');
+  // 'text', not 'essay': the server accepts file | link | text and rejects
+  // anything else with a 422, so the picker wrote a value that could not be
+  // stored.
+  const [stageSubmissionType, setStageSubmissionType] = useState<'file' | 'text' | 'link'>('link');
   const [stageTaskDescription, setStageTaskDescription] = useState<string>('');
   const [editScoresMode, setEditScoresMode] = useState(false);
   const [pendingRejection, setPendingRejection] = useState<{ stageIdx: number; score?: number } | null>(null);
@@ -362,7 +400,19 @@ export default function AdminPanel() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [showGradingModal, setShowGradingModal] = useState(false);
   const [selectedAssessmentResultForReview, setSelectedAssessmentResultForReview] = useState<any>(null);
-  const [gradingScores, setGradingScores] = useState<Record<string, number>>({});
+  // Marks keyed by question id. A mark is { score, notes } so the reviewer's
+  // reasoning travels with the number; a bare number is accepted too, which
+  // is what the old score box produced.
+  const [gradingScores, setGradingScores] = useState<Record<string, any>>({});
+  const [gradingNotes, setGradingNotes] = useState('');
+
+  /** The mark on one question, or undefined when it has not been marked. */
+  const markValue = (questionId: string): number | undefined => {
+    const mark = toMark(gradingScores[questionId]);
+    const score = Number(mark?.score);
+    return Number.isFinite(score) ? score : undefined;
+  };
+  const markNote = (questionId: string): string => toMark(gradingScores[questionId])?.notes || '';
   const [assessmentToEdit, setAssessmentToEdit] = useState<any>(null);
 
   // ── Form states
@@ -388,18 +438,27 @@ export default function AdminPanel() {
         'contracts', 'contractTemplates', 'auditLogs', 'agentLogs', 'invoices',
         'payments', 'talentPayouts'
       ];
-      const resourceResults = await Promise.all(resourceNames.map(async name => {
-        const response = await apiFetch(`/api/resources/${name}`);
-        if (!response.ok) {
-          throw new Error(`Could not load ${name}: ${response.status}`);
-        }
-        const body = await response.json();
-        if (!Array.isArray(body.data)) {
-          throw new Error(`The ${name} API returned an invalid response.`);
-        }
-        return [name, body.data || []] as const;
-      }));
-      const db = Object.fromEntries(resourceResults);
+      // One request, not twenty-seven.
+      //
+      // This asked for each resource separately, and every one of those
+      // requests ran readDbAsync server side: a read of every table, the whole
+      // snapshot scoped, every stored file URL signed, and then one array
+      // returned and the rest discarded. Twenty-seven resources meant doing
+      // all of that twenty-seven times, which is the wait after signing in.
+      // The batch route does it once.
+      const resourceRes = await apiFetch(`/api/resources?names=${resourceNames.join(',')}`);
+      if (!resourceRes.ok) {
+        const detail = await resourceRes.json().catch(() => ({}));
+        throw new Error(detail?.error || `Could not load the console data: ${resourceRes.status}`);
+      }
+      const resourceBody = await resourceRes.json();
+      if (!resourceBody?.data || typeof resourceBody.data !== 'object') {
+        throw new Error('The resources API returned an invalid response.');
+      }
+      setDataLoadError(null);
+      const db: Record<string, any[]> = Object.fromEntries(
+        resourceNames.map(name => [name, Array.isArray(resourceBody.data[name]) ? resourceBody.data[name] : []])
+      );
       const requestRes = await apiFetch('/api/requests').catch(() => ({ ok: false } as Response));
       const supportRes = await apiFetch('/api/support').catch(() => ({ ok: false } as Response));
       const ivRes = await apiFetch('/api/interviews').catch(() => ({ ok: false } as Response));
@@ -502,8 +561,10 @@ export default function AdminPanel() {
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
+      setDataLoadError(e instanceof Error ? e.message : 'The workspace data could not be loaded.');
     } finally {
       setLoading(false);
+      setDataReady(true);
       if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_loaded', 'true');
     }
   };
@@ -589,7 +650,35 @@ export default function AdminPanel() {
     if (!isAuthenticated) return;
 
     syncFromDb();
-    const interval = setInterval(() => syncFromDb(), 4000);
+
+    // Polling, and why it is no longer every four seconds.
+    //
+    // Each poll asks /api/resources for the whole database: fifty-seven
+    // tables read, scoped per actor and file URLs signed, then sent. Doing
+    // that every four seconds, in every open tab, for every signed-in
+    // operator, kept the database permanently busy answering questions
+    // nobody asked — and the first load after signing in had to queue behind
+    // all of it. That is the wait.
+    //
+    // The realtime subscriptions below already push the tables that change
+    // often, so the poll is a safety net for the rest. A safety net runs
+    // rarely, and not at all behind a tab nobody is looking at.
+    const POLL_MS = 30000;
+    let interval: any = null;
+    const startPolling = () => {
+      if (interval === null) interval = setInterval(() => syncFromDb(), POLL_MS);
+    };
+    const stopPolling = () => {
+      if (interval !== null) { clearInterval(interval); interval = null; }
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) { stopPolling(); return; }
+      // Back on the tab: show them current data at once, then resume.
+      syncFromDb();
+      startPolling();
+    };
+    if (!document.hidden) startPolling();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     const reqChannel = supabase.channel('admin_talent_requests')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'talent_requests' }, () => syncFromDb())
       .subscribe();
@@ -598,7 +687,8 @@ export default function AdminPanel() {
       .subscribe();
 
     return () => {
-      clearInterval(interval);
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       supabase.removeChannel(reqChannel);
       supabase.removeChannel(orgChannel);
     };
@@ -619,10 +709,22 @@ export default function AdminPanel() {
   }, [selectedTalent]);
 
   useEffect(() => {
-    if (router.query.tab) {
-      setActiveTab(router.query.tab as AdminTab);
+    if (!router.isReady) return;
+
+    if (isAdminTab(router.query.tab)) {
+      setActiveTab(router.query.tab);
+    } else if (typeof window !== 'undefined') {
+      const savedTab = window.sessionStorage.getItem(ADMIN_ACTIVE_TAB_KEY);
+      if (isAdminTab(savedTab)) setActiveTab(savedTab);
     }
-  }, [router.query.tab]);
+    setActiveTabRestored(true);
+  }, [router.isReady, router.query.tab]);
+
+  useEffect(() => {
+    if (activeTabRestored && typeof window !== 'undefined') {
+      window.sessionStorage.setItem(ADMIN_ACTIVE_TAB_KEY, activeTab);
+    }
+  }, [activeTab, activeTabRestored]);
 
   // ── Messaging ───────────────────────────────────────────────────────────
   // The admin portal had none, so a candidate or client writing to support
@@ -1038,24 +1140,64 @@ export default function AdminPanel() {
       updatedPipeline[stageIdx].deadline = stageDeadlineInput;
     }
 
-    let payload: any = {};
+    // `let payload: any = {}` used to live here. Three of this function's
+    // side-effects wrote their new rows into it — the skill assessment
+    // assignment, the vetting interview and the work simulation task — and
+    // nothing ever sent it: the request at the end of this function carries
+    // the pipeline, the stage, the status and the scores, and no part of
+    // that object. Each one looked saved, pointed the stage at an id that
+    // did not exist, and was gone on the next reload. They now go to their
+    // own routes as they happen, and the variable is removed so nothing can
+    // quietly accumulate into it again.
     const timestamp = new Date().toISOString();
 
     // Side-effects based on stage and decision
     if (decision === 'Assign' || (decision === 'Proceed' && !currentPipeline[stageIdx]?.assessmentId && !currentPipeline[stageIdx]?.taskId && !currentPipeline[stageIdx]?.interviewId && !currentPipeline[stageIdx]?.personalityLink)) {
       if (stageIdx === 1 && stageAssessmentId) {
-        // Assign Assessment
-        const tsa = {
-          id: `tsa_${Date.now()}`,
-          talentId: selectedTalent.id,
-          assessmentId: stageAssessmentId,
-          assignedAt: timestamp,
-          status: 'assigned'
-        };
-        updatedPipeline[stageIdx].assessmentId = tsa.id;
-        updatedPipeline[stageIdx].deadline = stageDeadlineInput || undefined;
-        payload.talentSkillAssessments = [...talentSkillAssessments, tsa];
-        setTalentSkillAssessments(payload.talentSkillAssessments);
+        // Assign the assessment on the server.
+        //
+        // This used to build the row here, put it in local state and attach
+        // it to `payload`, which is never sent — the request below carries
+        // the pipeline and nothing else. So the stage pointed at a
+        // talent_skill_assessments row that was never written, the candidate
+        // had nothing to open, and the assignment vanished on reload. The
+        // deadline went onto the stage record, which the candidate's portal
+        // does not read, so it was shown to nobody and enforced by nothing.
+        try {
+          const assignRes = await apiFetch('/api/assessments/assign', {
+            method: 'POST',
+            body: JSON.stringify({
+              talentId: selectedTalent.id,
+              assessmentId: stageAssessmentId,
+              deadline: stageDeadlineInput || null
+            })
+          });
+          const assigned = await assignRes.json().catch(() => ({}));
+          if (!assignRes.ok) {
+            setSaving(false);
+            alert(assigned?.error || 'That assessment was not assigned.');
+            return;
+          }
+          // The id the server gave the row, so the stage points at something
+          // that exists.
+          updatedPipeline[stageIdx].assessmentId = assigned.id;
+          updatedPipeline[stageIdx].deadline = stageDeadlineInput || undefined;
+          setTalentSkillAssessments([
+            ...talentSkillAssessments.filter((t: any) => t.id !== assigned.id),
+            {
+              id: assigned.id,
+              talentId: selectedTalent.id,
+              assessmentId: stageAssessmentId,
+              assignedAt: timestamp,
+              deadline: assigned.deadline || null,
+              status: 'assigned'
+            }
+          ]);
+        } catch (e: any) {
+          setSaving(false);
+          alert(e?.message || 'That assessment was not assigned.');
+          return;
+        }
       }
       if (stageIdx === 2 && stageInterviewDate && stageInterviewTime) {
         // The operator enters a wall-clock time in their own zone. Record the
@@ -1065,7 +1207,7 @@ export default function AdminPanel() {
         const newInstant = wallClockToUtc(stageInterviewDate, stageInterviewTime, adminZone);
         const existingId = currentPipeline[stageIdx]?.interviewId;
         const existing = existingId
-          ? (payload.interviews || interviews).find((i: any) => i.id === existingId)
+          ? interviews.find((i: any) => i.id === existingId)
           : null;
 
         if (existing) {
@@ -1093,10 +1235,34 @@ export default function AdminPanel() {
             proposedTime: null,
             proposedTimezone: null
           };
-          payload.interviews = (payload.interviews || interviews).map((i: any) =>
-            i.id === existingId ? moved : i
-          );
-          setInterviews(payload.interviews);
+          // On the server. This rewrote the interview in local state only, so
+          // a rescheduled vetting interview kept its old time in the database
+          // and the candidate was never moved.
+          try {
+            const moveRes = await apiFetch('/api/interviews/schedule', {
+              method: 'POST',
+              body: JSON.stringify({
+                action: 'move',
+                interviewId: existingId,
+                date: stageInterviewDate,
+                time: stageInterviewTime,
+                timezone: adminZone,
+                meetingLink: stageInterviewLink || null
+              })
+            });
+            const moveBody = await moveRes.json().catch(() => ({}));
+            if (!moveRes.ok) {
+              setSaving(false);
+              alert(moveBody?.error || 'That interview was not moved.');
+              return;
+            }
+          } catch (e: any) {
+            setSaving(false);
+            alert(e?.message || 'That interview was not moved.');
+            return;
+          }
+
+          setInterviews(interviews.map((i: any) => (i.id === existingId ? moved : i)));
           updatedPipeline[stageIdx].interviewDate = stageInterviewDate;
           updatedPipeline[stageIdx].interviewTime = stageInterviewTime;
           updatedPipeline[stageIdx].interviewScheduledTime = newInstant || undefined;
@@ -1107,34 +1273,69 @@ export default function AdminPanel() {
           notifyBothPartiesOfInterview(moved, 'rescheduled');
         } else {
 
-        // Scheduling for the first time.
-        const interview = {
-          id: `int_${Date.now()}`,
-          talentId: selectedTalent.id,
-          talentName: selectedTalent.name,
-          clientName: 'Kongila Vetting Panel',
-          title: `Behavioural Interview: ${selectedTalent.name}`,
-          date: stageInterviewDate,
-          time: stageInterviewTime,
-          scheduledTime: newInstant,
-          scheduledTimezone: adminZone,
-          talentTimezone: (selectedTalent as any).timezone || null,
-          status: 'Scheduled',
-          meetingLink: stageInterviewLink,
-          createdAt: timestamp
-        };
-        updatedPipeline[stageIdx].interviewScheduledTime = newInstant || undefined;
-        updatedPipeline[stageIdx].interviewTimezone = adminZone;
-        updatedPipeline[stageIdx].interviewId = interview.id;
-        // Store these on the stage record so the waiting UI can display them
-        updatedPipeline[stageIdx].interviewDate = stageInterviewDate;
-        updatedPipeline[stageIdx].interviewTime = stageInterviewTime;
-        updatedPipeline[stageIdx].meetingLink = stageInterviewLink;
-        updatedPipeline[stageIdx].rescheduleRequested = false;
-        updatedPipeline[stageIdx].rescheduleReason = undefined;
-        payload.interviews = [...interviews, interview];
-        setInterviews(payload.interviews);
-        notifyBothPartiesOfInterview(interview, 'scheduled');
+        // Scheduling for the first time, on the server.
+        //
+        // This used to build the row here, put it in local state and attach
+        // it to `payload`, which is never sent. The stage recorded an
+        // interviewId pointing at a row that was never written, the
+        // candidate was never told, and the interview vanished on reload.
+        // The route also checks the slot is not in the past and does not
+        // clash with anything already in either diary, which the browser
+        // version did not.
+        try {
+          const ivRes = await apiFetch('/api/interviews/schedule', {
+            method: 'POST',
+            body: JSON.stringify({
+              talentId: selectedTalent.id,
+              talentName: selectedTalent.name,
+              talentTimezone: (selectedTalent as any).timezone || null,
+              date: stageInterviewDate,
+              time: stageInterviewTime,
+              timezone: adminZone,
+              meetingLink: stageInterviewLink || null
+            })
+          });
+          const ivBody = await ivRes.json().catch(() => ({}));
+          if (!ivRes.ok) {
+            setSaving(false);
+            alert(ivBody?.error || 'That interview was not scheduled.');
+            return;
+          }
+
+          const interview = ivBody.interview || {};
+          updatedPipeline[stageIdx].interviewScheduledTime = newInstant || undefined;
+          updatedPipeline[stageIdx].interviewTimezone = adminZone;
+          updatedPipeline[stageIdx].interviewId = interview.id;
+          // Store these on the stage record so the waiting UI can display them
+          updatedPipeline[stageIdx].interviewDate = stageInterviewDate;
+          updatedPipeline[stageIdx].interviewTime = stageInterviewTime;
+          updatedPipeline[stageIdx].meetingLink = stageInterviewLink;
+          updatedPipeline[stageIdx].rescheduleRequested = false;
+          updatedPipeline[stageIdx].rescheduleReason = undefined;
+
+          setInterviews([...interviews.filter((i: any) => i.id !== interview.id), {
+            id: interview.id,
+            talentId: selectedTalent.id,
+            talentName: selectedTalent.name,
+            clientName: 'Kongila Vetting Panel',
+            title: interview.title || `Behavioural Interview: ${selectedTalent.name}`,
+            date: stageInterviewDate,
+            time: stageInterviewTime,
+            scheduledTime: interview.scheduled_time || newInstant,
+            scheduledTimezone: adminZone,
+            talentTimezone: (selectedTalent as any).timezone || null,
+            // The route writes Proposed, not Scheduled: a candidate is asked,
+            // not told. Reflecting what was stored rather than what this
+            // screen used to assume.
+            status: 'Proposed',
+            meetingLink: stageInterviewLink,
+            createdAt: timestamp
+          }]);
+        } catch (e: any) {
+          setSaving(false);
+          alert(e?.message || 'That interview was not scheduled.');
+          return;
+        }
         }
       }
       if (stageIdx === 3 && stagePersonalityLink) {
@@ -1142,21 +1343,54 @@ export default function AdminPanel() {
         updatedPipeline[stageIdx].personalityLink = stagePersonalityLink;
       }
       if (stageIdx === 5 && stageTaskTitle) {
-        // Assign Work Simulation Task
-        const task = {
-          id: `wst_${Date.now()}`,
-          talentId: selectedTalent.id,
-          title: stageTaskTitle,
-          description: stageTaskDescription,
-          submissionType: stageSubmissionType,
-          assignedAt: timestamp,
-          deadline: stageDeadlineInput || timestamp,
-          status: 'assigned'
-        };
-        updatedPipeline[stageIdx].taskId = task.id;
-        updatedPipeline[stageIdx].deadline = stageDeadlineInput || undefined;
-        payload.workSimulationTasks = [...workSimulationTasks, task];
-        setWorkSimulationTasks(payload.workSimulationTasks);
+        // Assign the work simulation on the server.
+        //
+        // There was no table, no service and no route for this. The task was
+        // built here, put into local state and attached to `payload`, which
+        // is never sent — so stage 6, a fifth of the composite grade,
+        // recorded a taskId pointing at nothing, the candidate was never
+        // shown a task, and it was gone on the next reload. The table
+        // arrives with 2026-11-10b_work_simulation_tasks.sql.
+        try {
+          const taskRes = await apiFetch('/api/work-simulation', {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'assign',
+              talentId: selectedTalent.id,
+              title: stageTaskTitle,
+              description: stageTaskDescription || null,
+              submissionType: stageSubmissionType || 'file',
+              deadline: stageDeadlineInput || null
+            })
+          });
+          const taskBody = await taskRes.json().catch(() => ({}));
+          if (!taskRes.ok) {
+            setSaving(false);
+            alert(taskBody?.error || 'That task was not assigned.');
+            return;
+          }
+
+          updatedPipeline[stageIdx].taskId = taskBody.id;
+          updatedPipeline[stageIdx].deadline = stageDeadlineInput || undefined;
+          setWorkSimulationTasks([
+            ...workSimulationTasks.filter((t: any) => t.id !== taskBody.id),
+            {
+              id: taskBody.id,
+              talentId: selectedTalent.id,
+              title: stageTaskTitle,
+              description: stageTaskDescription,
+              submissionType: stageSubmissionType,
+              assignedAt: timestamp,
+              deadline: taskBody.deadline || null,
+              maxScore: taskBody.maxScore ?? 100,
+              status: 'assigned'
+            }
+          ]);
+        } catch (e: any) {
+          setSaving(false);
+          alert(e?.message || 'That task was not assigned.');
+          return;
+        }
       }
     }
 
@@ -1167,16 +1401,64 @@ export default function AdminPanel() {
       updatedVettingScores = { ...updatedVettingScores, [stageConfig.scoreKey]: score };
     }
 
-    // Update interview status to Completed if the stage had an interview
-    let updatedInterviews = payload.interviews || interviews;
-    if ((decision === 'Proceed' || decision === 'Reject') && currentPipeline[stageIdx]?.interviewId) {
-      updatedInterviews = updatedInterviews.map((iv: any) => 
-        iv.id === currentPipeline[stageIdx].interviewId
-          ? { ...iv, status: 'Completed', outcome: decision }
-          : iv
-      );
-      payload.interviews = updatedInterviews;
-      setInterviews(updatedInterviews);
+    // Close the interview out once the stage is decided.
+    //
+    // This changed the status in local state only, so a finished vetting
+    // interview stayed Scheduled in the database and went on showing as live
+    // in every queue that reads the table. A failure here does not block the
+    // stage decision, which is the thing that matters — it is reported and
+    // the decision carries on.
+    // Scoring a work simulation has to reach the task row.
+    //
+    // The score went onto the stage and nowhere else, so the task stayed
+    // "submitted" for ever, markWorkSimulationTask was never called, and the
+    // candidate was never told their work had been marked. Same shape as the
+    // assessment marking fix: the stage decision is the pipeline's business,
+    // the score is the task's.
+    const markingTaskId = stageIdx === 5 ? currentPipeline[stageIdx]?.taskId : null;
+    if ((decision === 'Proceed' || decision === 'Reject') && markingTaskId && Number.isFinite(Number(score))) {
+      try {
+        const markRes = await apiFetch('/api/work-simulation', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'mark',
+            taskId: markingTaskId,
+            score: Number(score),
+            reviewerNotes: notes || null
+          })
+        });
+        if (!markRes.ok) {
+          const markBody = await markRes.json().catch(() => ({}));
+          // Reported, not fatal: the stage decision still stands.
+          console.error('[work simulation] mark failed:', markBody?.error);
+          alert(`The stage was updated, but the task score was not saved: ${markBody?.error || 'unknown error'}`);
+        }
+      } catch (e: any) {
+        console.error('[work simulation] mark failed:', e?.message);
+      }
+    }
+
+    const closingInterviewId = currentPipeline[stageIdx]?.interviewId;
+    if ((decision === 'Proceed' || decision === 'Reject') && closingInterviewId) {
+      try {
+        const closeRes = await apiFetch('/api/interviews/schedule', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'complete',
+            interviewId: closingInterviewId,
+            outcome: decision
+          })
+        });
+        if (!closeRes.ok) {
+          const closeBody = await closeRes.json().catch(() => ({}));
+          console.error('[admin] interview not closed out:', closeBody?.error);
+        }
+      } catch (e) {
+        console.error('[admin] interview not closed out', e);
+      }
+      setInterviews(interviews.map((iv: any) =>
+        iv.id === closingInterviewId ? { ...iv, status: 'Completed', outcome: decision } : iv
+      ));
     }
 
     // Determine new vettingStage name
@@ -1490,11 +1772,74 @@ export default function AdminPanel() {
     setSaving(false);
   };
 
+  /**
+   * Saving the marks for a submitted assessment.
+   *
+   * This was `alert("Grading submitted!")` and closing the modal. The scores
+   * an operator typed against each written answer went nowhere: not to the
+   * server, not to local state, nowhere. A candidate whose assessment had any
+   * question that was not multiple choice could not be given a result, and
+   * the vetting stage behind it had no score to advance on.
+   */
   const handleSubmitGrading = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedAssessmentResultForReview) return;
-    alert("Grading submitted!");
-    setShowGradingModal(false);
+    const result: any = selectedAssessmentResultForReview;
+    if (!result) return;
+
+    setSaving(true);
+    try {
+      const res = await apiFetch('/api/assessments/mark', {
+        method: 'POST',
+        body: JSON.stringify({
+          resultId: result.id,
+          marks: gradingScores,
+          reviewerNotes: gradingNotes || undefined
+        })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(body?.error || 'Those marks were not saved.');
+        return;
+      }
+
+      // Put the server's figures back into the list, so the screen behind the
+      // modal shows the result that was actually stored rather than waiting
+      // for a reload.
+      setAssessmentResults((prev: any[]) => prev.map((r: any) => (
+        r.id === result.id
+          ? {
+              ...r,
+              score: body.score,
+              autoScore: body.autoEarned,
+              manualScore: body.manualEarned,
+              maxScore: body.autoMax + body.manualMax,
+              passed: body.passed,
+              needsReview: !body.isFullyMarked,
+              subjectiveScores: gradingScores,
+              reviewerNotes: gradingNotes || r.reviewerNotes
+            }
+          : r
+      )));
+
+      if (body.isFullyMarked) {
+        alert(
+          `Marked. ${body.autoEarned + body.manualEarned} of ${body.autoMax + body.manualMax} marks `
+          + `— ${body.score}%${body.passed === null ? '' : body.passed ? ', a pass' : ', below the pass mark'}.`
+        );
+        setShowGradingModal(false);
+      } else {
+        // Partial marking is allowed; say what is left rather than implying
+        // the candidate has a final result.
+        alert(
+          `Saved. ${body.unmarked.length} answer${body.unmarked.length === 1 ? '' : 's'} still to mark, `
+          + `so this stays in the review queue. Running total ${body.score}%.`
+        );
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Those marks were not saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Matching
@@ -1776,6 +2121,9 @@ export default function AdminPanel() {
   const filteredRequests = requests.filter(r => 
     (requestFilter === 'All' || r.status === requestFilter) &&
     (r.serviceType?.toLowerCase().includes(requestSearchQuery.toLowerCase()) ||
+     // Search the title as well as the description. An operator looking for
+     // "Atlas Migration" was searching a field that request never filled in.
+     requestTitle(r as any).toLowerCase().includes(requestSearchQuery.toLowerCase()) ||
      r.roleDescription?.toLowerCase().includes(requestSearchQuery.toLowerCase()) ||
      r.clientName?.toLowerCase().includes(requestSearchQuery.toLowerCase()))
   );
@@ -2487,11 +2835,18 @@ export default function AdminPanel() {
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                                 <div style={{ fontSize: '13px', fontWeight: 700, lineHeight: 1.3, color: isASAP ? '#EF4444' : 'var(--text-primary)' }}>
-                                  {isASAP && '🚩 '}{req.roleDescription?.substring(0, 40) || req.serviceType}
+                                  {isASAP && '🚩 '}{requestTitle(req as any)}
                                 </div>
                               </div>
                               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px' }}>
                                 {req.clientName || 'Unknown Client'}
+                                {/* So a request for several roles is legible
+                                    as one on the board, rather than appearing
+                                    under its first role with nothing to say
+                                    the others exist. */}
+                                {isMultiRoleRequest(req as any) && (
+                                  <> · {requestRoles(req as any).length} roles · {requestHeadcount(req as any)} people</>
+                                )}
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2645,7 +3000,11 @@ export default function AdminPanel() {
                 </thead>
                 <tbody>
                   {talents.filter(t => talentFilter === 'All' || t.vettingStatus === talentFilter).map(t => {
-                    const calc = calculateCompositeVettingGrade(t.vettingScores);
+                    // vettingScoreState, not calculateCompositeVettingGrade:
+                    // an unscored candidate computes 0, which grades Reject,
+                    // which painted their row red before anyone had assessed
+                    // them.
+                    const calc = vettingScoreState(t.vettingScores);
                     const pipeline = t.vettingPipeline || [];
                     let currentStageIdx = pipeline.findIndex(s => s.status !== 'passed');
                     if (currentStageIdx === -1 && pipeline.length > 0) currentStageIdx = pipeline.length - 1;
@@ -2674,7 +3033,7 @@ export default function AdminPanel() {
                           </div>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                          <span style={{ fontWeight: 800, color: getGradeColor(t.grade || '') }}>{t.grade || '—'}</span> {calc.score > 0 && <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>({calc.score}%)</span>}
+                          <span style={{ fontWeight: 800, color: getGradeColor(t.grade || '') }}>{t.grade || '—'}</span> {calc.isScored && <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>({calc.score}%{calc.isFullyScored ? '' : ' so far'})</span>}
                         </td>
                         <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                           <button style={{ background: 'var(--kongila-blue)', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Review & Vet →</button>
@@ -2731,25 +3090,27 @@ export default function AdminPanel() {
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         {(() => {
-                          const calc = calculateCompositeVettingGrade(selectedTalent.vettingScores);
+                          const calc = vettingScoreState(selectedTalent.vettingScores);
                           return (
                             <>
                               <div style={{
                                 width: '70px', height: '70px', borderRadius: '50%',
-                                background: `conic-gradient(${getGradeColor(calc.grade)} ${calc.score * 3.6}deg, var(--border-glass) 0deg)`,
+                                background: `conic-gradient(${getGradeColor(calc.grade || '')} ${(calc.score ?? 0) * 3.6}deg, var(--border-glass) 0deg)`,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                               }}>
                                 <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '18px', fontWeight: 800, color: getGradeColor(calc.grade) }}>
-                                    {calc.score}
+                                  <span style={{ fontSize: calc.isScored ? '18px' : '11px', fontWeight: 800, color: getGradeColor(calc.grade || '') }}>
+                                    {calc.isScored ? calc.score : 'n/a'}
                                   </span>
                                 </div>
                               </div>
                               <div>
-                                <div style={{ fontSize: '18px', fontWeight: 900, color: getGradeColor(calc.grade), marginBottom: '2px' }}>
-                                  {selectedTalent.vettingStatus === 'Vetted' || selectedTalent.vettingStatus === 'Matched' || selectedTalent.vettingStatus === 'Deployed'
-                                    ? (calc.grade === 'A+' ? '⭐ A+' : calc.grade === 'A' ? '🏆 A' : calc.grade === 'B' ? '📈 B' : calc.grade)
-                                    : `Score: ${calc.score}`}
+                                <div style={{ fontSize: '18px', fontWeight: 900, color: getGradeColor(calc.grade || ''), marginBottom: '2px' }}>
+                                  {!calc.isScored
+                                    ? 'Not yet scored'
+                                    : selectedTalent.vettingStatus === 'Vetted' || selectedTalent.vettingStatus === 'Matched' || selectedTalent.vettingStatus === 'Deployed'
+                                      ? (calc.grade === 'A+' ? '⭐ A+' : calc.grade === 'A' ? '🏆 A' : calc.grade === 'B' ? '📈 B' : (calc.grade || 'Ungraded'))
+                                      : `Score so far: ${calc.score}`}
                                 </div>
                                 <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{selectedTalent.vettingStatus}</div>
                               </div>
@@ -2782,19 +3143,58 @@ export default function AdminPanel() {
                     const actType = stageMeta.activityType;
 
                     // Determine sub-state within stage
-                    const assessmentAssigned = actType === 'assign_assessment' && !!stageRecord.assessmentId;
-                    // Check both stageRecord.assessmentScore AND the skillAssessmentResults collection
+                    //
+                    // The stage holding an assessmentId is NOT proof that an
+                    // assignment exists. Before the fix of 2026-11-10 the
+                    // assign button only set React state: it minted an id,
+                    // wrote it onto the stage, and never inserted the row. A
+                    // stage left over from then points at nothing, and the
+                    // old test (`!!stageRecord.assessmentId`) read that as
+                    // "already assigned" — so the assign form was hidden, the
+                    // candidate had no paper to sit, and there was no way back
+                    // from either side. Assigned now means the row is there.
+                    const assignmentForStage = talentSkillAssessments.find(
+                      (t: any) => t.id === stageRecord.assessmentId
+                    );
+                    const danglingAssignment =
+                      actType === 'assign_assessment' &&
+                      !!stageRecord.assessmentId &&
+                      !assignmentForStage;
+                    const assessmentAssigned =
+                      actType === 'assign_assessment' && !!assignmentForStage;
+                    // The submitted paper for this stage.
+                    //
+                    // Three things were wrong here. It matched
+                    // `r.assessmentId === stageRecord.assessmentId`, but the
+                    // stage stores the *assignment* id, not the assessment
+                    // id, so the match never found anything. The candidate
+                    // check was `r.talentId === selectedTalent.id ||
+                    // r.talentSkillAssessmentId`, and the second arm is
+                    // truthy for every submitted result, so the whole
+                    // condition passed for other candidates' papers. And it
+                    // preferred `autoScore`, which is the multiple-choice
+                    // half, over the final score.
                     const submittedResult = assessmentAssigned
                       ? assessmentResults.find((r: any) =>
-                          r.assessmentId === stageRecord.assessmentId &&
-                          (r.talentId === selectedTalent.id || r.talentSkillAssessmentId)
+                          String(r.talentId) === String(selectedTalent.id) &&
+                          (
+                            r.id === `sar_${stageRecord.assessmentId}` ||
+                            r.talentSkillAssessmentId === stageRecord.assessmentId ||
+                            (assignmentForStage && String(r.assessmentId) === String(assignmentForStage.assessmentId))
+                          )
                         )
                       : null;
-                    // Merge submitted result score into stageRecord if available
-                    if (submittedResult && stageRecord.assessmentScore == null) {
-                      stageRecord.assessmentScore = submittedResult.autoScore ?? submittedResult.score ?? null;
+
+                    // Only once a person has finished marking it. A paper
+                    // with written answers still in the queue has a running
+                    // total, not a score, and a stage must not be passed on
+                    // a figure that is going to change.
+                    const awaitingMarking = Boolean(submittedResult?.needsReview);
+                    if (submittedResult && !awaitingMarking && stageRecord.assessmentScore == null) {
+                      stageRecord.assessmentScore = submittedResult.score ?? null;
                     }
-                    const assessmentResultReceived = assessmentAssigned && stageRecord.assessmentScore != null;
+                    const assessmentResultReceived =
+                      assessmentAssigned && !awaitingMarking && stageRecord.assessmentScore != null;
                     const interviewScheduled = actType === 'schedule_interview' && !!stageRecord.interviewId;
                     const personalitySent = actType === 'send_personality' && !!stageRecord.personalityLink;
                     const personalityResultReceived = personalitySent && stageRecord.personalityScore != null;
@@ -2888,6 +3288,18 @@ export default function AdminPanel() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                               {!assessmentAssigned ? (
                                 <>
+                                  {danglingAssignment && (
+                                    <div style={{ padding: '14px 16px', borderRadius: '10px', background: '#F59E0B12', border: '1px solid #F59E0B40' }}>
+                                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#B45309', marginBottom: '4px' }}>
+                                        The earlier assignment was never saved
+                                      </div>
+                                      <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                                        This stage refers to <code style={{ fontSize: '11.5px' }}>{String(stageRecord.assessmentId)}</code>, but no
+                                        assignment with that reference exists, so the candidate has never had a paper to sit.
+                                        Assigning again below will store it properly.
+                                      </div>
+                                    </div>
+                                  )}
                                   <div style={{ position: 'relative' }}>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Select Assessment to Assign</label>
                                     <div 
@@ -2944,6 +3356,41 @@ export default function AdminPanel() {
                                     <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', undefined, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800, opacity: saving ? 0.6 : 1 }}>❌ Reject</button>
                                   </div>
                                 </>
+                              ) : awaitingMarking ? (
+                                /* Submitted, and waiting on us rather than on
+                                   the candidate. Without this branch the panel
+                                   below said "Awaiting Candidate Submission"
+                                   to an operator whose candidate had already
+                                   submitted, and the only way on was to mark
+                                   the stage complete by hand. */
+                                <div style={{ padding: '24px', background: 'rgba(139, 92, 246, 0.08)', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+                                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#6D28D9', marginBottom: '6px' }}>
+                                    Submitted — waiting on your marking
+                                  </div>
+                                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.6 }}>
+                                    The candidate sent this
+                                    {submittedResult?.submittedAt ? ` on ${formatDate(submittedResult.submittedAt)}` : ''}.
+                                    The multiple choice is marked; the written answers need a person.
+                                    This stage cannot be scored until they have one, because the running
+                                    total is not the candidate's score yet.
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedAssessmentResultForReview(submittedResult);
+                                        setGradingScores((submittedResult as any)?.subjectiveScores || {});
+                                        setGradingNotes((submittedResult as any)?.reviewerNotes || '');
+                                        setShowGradingModal(true);
+                                      }}
+                                      style={{ padding: '12px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#6D28D9', color: '#fff', fontSize: '14px', fontWeight: 800 }}
+                                    >
+                                      Mark this submission
+                                    </button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(1, 'Reject', undefined, stageNotesInput)} style={{ padding: '12px 20px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: 'transparent', color: '#EF4444', fontSize: '14px', fontWeight: 700 }}>
+                                      ❌ Reject
+                                    </button>
+                                  </div>
+                                </div>
                               ) : !assessmentResultReceived ? (
                                 <div style={{ textAlign: 'center', padding: '32px 24px', background: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px dashed var(--border-glass)' }}>
                                   <div style={{ fontSize: '36px', marginBottom: '12px' }}>⏳</div>
@@ -2963,7 +3410,17 @@ export default function AdminPanel() {
                                     {stageRecord.assessmentScore != null ? (
                                       <>
                                         <div style={{ fontSize: '28px', fontWeight: 900, color: 'var(--text-primary)' }}>{stageRecord.assessmentScore}%</div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Auto-scored from MCQ answers.</div>
+                                        {/* Said "Auto-scored from MCQ answers"
+                                            whatever the paper was, including
+                                            one a person had just marked by
+                                            hand. */}
+                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                          {submittedResult?.manualScore != null && submittedResult.manualScore > 0
+                                            ? `${submittedResult.autoScore ?? 0} marks auto-scored, `
+                                              + `${submittedResult.manualScore} awarded on review`
+                                              + (submittedResult.maxScore ? `, out of ${submittedResult.maxScore}.` : '.')
+                                            : 'Auto-scored from the multiple choice.'}
+                                        </div>
                                       </>
                                     ) : (
                                       <div style={{ fontSize: '13px', color: '#F59E0B', fontWeight: 700 }}>📝 No MCQ — written answers require manual grading below.</div>
@@ -3309,7 +3766,7 @@ export default function AdminPanel() {
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Submission Type required</label>
                                     <select value={stageSubmissionType} onChange={e => setStageSubmissionType(e.target.value as any)} className="form-input" style={{ width: '100%', fontSize: '14px', padding: '12px', marginBottom: '16px' }}>
                                       <option value="link">Submission Link (e.g., GitHub, Figma, Google Drive)</option>
-                                      <option value="essay">Essay / Text Response</option>
+                                      <option value="text">Essay / Text Response</option>
                                       <option value="file">File Upload (PDF, Zip, Image, etc.)</option>
                                     </select>
                                   </div>
@@ -3333,7 +3790,27 @@ export default function AdminPanel() {
                                       and the screen said "Awaiting Submission" even when
                                       one had arrived. */}
                                   {(() => {
-                                    const submission = (stageRecord as any).submissionData;
+                                    // The task row is the record now.
+                                    //
+                                    // The candidate's portal used to post the work to
+                                    // /api/vetting/advance, which parked it on the stage
+                                    // as submissionData. It goes to the work simulation
+                                    // table instead, so read that first and keep
+                                    // submissionData as the fallback for stages
+                                    // submitted before the change.
+                                    const taskRow = workSimulationTasks.find(
+                                      (t: any) => String(t.id) === String(stageRecord.taskId)
+                                    );
+                                    const submission = (taskRow && taskRow.submittedAt)
+                                      ? {
+                                          text: taskRow.submissionText,
+                                          link: /^https?:/i.test(String(taskRow.submissionUrl || ''))
+                                            ? taskRow.submissionUrl : null,
+                                          fileUrl: /^https?:/i.test(String(taskRow.submissionUrl || ''))
+                                            ? null : taskRow.submissionUrl,
+                                          submittedAt: taskRow.submittedAt
+                                        }
+                                      : (stageRecord as any).submissionData;
                                     if (!submission) {
                                       return (
                                         <div style={{ background: '#F9731610', borderRadius: '10px', padding: '16px', border: '1px solid #F9731630' }}>
@@ -3435,7 +3912,26 @@ export default function AdminPanel() {
                               </div>
                               <div style={{ background: 'var(--bg-tertiary)', borderRadius: '10px', padding: '16px' }}>
                                 <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px' }}>Composite Vetting Score (Auto-calculated)</div>
-                                <div style={{ fontSize: '28px', fontWeight: 900, color: getGradeColor(selectedTalent.grade) }}>{calculateCompositeVettingGrade(selectedTalent.vettingScores).score}/100 — {selectedTalent.grade || 'Ungraded'}</div>
+                                {(() => {
+                                  // The panel where the grade is locked. It
+                                  // must say outright when a stage has not
+                                  // been scored, because the composite counts
+                                  // an unscored stage as zero and a grade
+                                  // issued on a partial set is not a grade.
+                                  const state = vettingScoreState(selectedTalent.vettingScores);
+                                  return (
+                                    <>
+                                      <div style={{ fontSize: '28px', fontWeight: 900, color: getGradeColor(selectedTalent.grade) }}>
+                                        {state.isScored ? `${state.score}/100` : 'Not scored'} — {selectedTalent.grade || 'Ungraded'}
+                                      </div>
+                                      {!state.isFullyScored && (
+                                        <div style={{ fontSize: '12px', color: '#B45309', marginTop: '8px', lineHeight: 1.6 }}>
+                                          Not every stage has a score yet. Still to be scored: {state.missingDimensions.join(', ')}. Each counts as zero until it is entered, so no grade is issued while any remain.
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
                               <div>
                                 <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Final Review Notes</label>
@@ -3699,7 +4195,7 @@ export default function AdminPanel() {
                     {requests.map(req => (
                       <div key={req.id} onClick={() => setSelectedRequest(selectedRequest?.id === req.id ? null : req as any)} style={{ padding: '12px', borderRadius: '10px', border: `1px solid ${selectedRequest?.id === req.id ? 'var(--kongila-blue)' : 'var(--border-glass)'}`, background: selectedRequest?.id === req.id ? 'var(--kongila-blue-glow)' : 'var(--bg-tertiary)', cursor: 'pointer' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}><strong>{req.serviceType}</strong><Chip label={req.status} /></div>
-                        <div style={{ fontSize: '13px', fontWeight: 600 }}>{req.roleDescription}</div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>{requestTitle(req as any)}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Client: {req.clientName}</div>
                       </div>
                     ))}
@@ -3965,6 +4461,7 @@ export default function AdminPanel() {
                               onClick={() => {
                                 setSelectedAssessmentResultForReview(r);
                                 setGradingScores((r as any).subjectiveScores || {});
+                                setGradingNotes((r as any).reviewerNotes || '');
                                 setShowGradingModal(true);
                               }}
                               style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', background: 'var(--kongila-blue-glow)', color: 'var(--kongila-blue)', border: '1px solid rgba(0, 71, 204, 0.2)', cursor: 'pointer', fontWeight: 600 }}
@@ -4070,25 +4567,34 @@ export default function AdminPanel() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                               {qs.map((q: any, j: number) => {
                                 const isMCQ = q.type === 'multiple_choice';
-                                const userAns = r.answers?.[q.id];
-                                let isCorrect = false;
-                                if (isMCQ && userAns) {
-                                  isCorrect = Array.isArray(userAns) ? 
-                                    userAns.sort().join(',') === (q.correct_options || []).sort().join(',') : 
-                                    userAns === q.correct_options?.[0];
-                                }
-                                
+                                // The answer may be under either key: objective
+                                // answers are stored apart from written ones.
+                                const userAns = r.answers?.[q.id] ?? r.subjectiveAnswers?.[q.id];
+                                // correct_answer and question_text are the real
+                                // column names. This read q.correct_options and
+                                // q.text, which do not exist, so every multiple
+                                // choice was drawn as wrong and every question
+                                // showed a blank prompt.
+                                const key = q.correct_answer ?? q.correct_options;
+                                const keyList = Array.isArray(key) ? key : (key == null ? [] : [key]);
+                                const given = Array.isArray(userAns) ? userAns : (userAns == null ? [] : [userAns]);
+                                const isCorrect = isMCQ
+                                  && keyList.length > 0
+                                  && keyList.length === given.length
+                                  && keyList.every((k: any) => given.map(String).includes(String(k)));
+                                const questionText = q.question_text || q.text || '(this question has no text)';
+
                                 return (
                                   <div key={q.id} style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
-                                    <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>Q{j + 1}: {q.text}</div>
+                                    <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>Q{j + 1}: {questionText}</div>
                                     
                                     {isMCQ ? (
                                       <div>
                                         <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Answers (Auto-scored):</div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                           {(q.options || []).map((opt: string) => {
-                                            const isSelected = Array.isArray(userAns) ? userAns.includes(opt) : userAns === opt;
-                                            const isActualCorrect = (q.correct_options || []).includes(opt);
+                                            const isSelected = given.map(String).includes(String(opt));
+                                            const isActualCorrect = keyList.map(String).includes(String(opt));
                                             let bg = 'transparent';
                                             let border = '1px solid var(--border-glass)';
                                             if (isSelected && isActualCorrect) { bg = 'rgba(16,185,129,0.1)'; border = '1px solid var(--accent-green)'; }
@@ -4103,7 +4609,10 @@ export default function AdminPanel() {
                                           })}
                                         </div>
                                         <div style={{ marginTop: '10px', fontSize: '12px', fontWeight: 600, color: isCorrect ? 'var(--accent-green)' : 'var(--accent-magenta)' }}>
-                                          {isCorrect ? '✅ Correct' : '❌ Incorrect'} ({q.max_score || 10} pts max)
+                                          {userAns === undefined
+                                            ? '— Not answered'
+                                            : isCorrect ? '✅ Correct' : '❌ Incorrect'}
+                                          {' '}(worth {q.scoring_weight || 1} mark{(q.scoring_weight || 1) === 1 ? '' : 's'})
                                         </div>
                                       </div>
                                     ) : (
@@ -4112,18 +4621,50 @@ export default function AdminPanel() {
                                         <div style={{ padding: '12px', background: 'var(--bg-primary)', borderRadius: '6px', fontSize: '13px', border: '1px solid var(--border-glass)', whiteSpace: 'pre-wrap', marginBottom: '12px' }}>
                                           {r.subjectiveAnswers?.[q.id] || r.answers?.[q.id] || <span style={{ color: 'var(--text-muted)' }}>No answer provided.</span>}
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                          <label style={{ fontSize: '12px', fontWeight: 600 }}>Assign Score (Max {q.max_score || 10}):</label>
-                                          <input 
-                                            type="number" 
-                                            min="0" 
-                                            max={q.max_score || 10} 
-                                            required
-                                            value={gradingScores[q.id] ?? ''}
-                                            onChange={e => setGradingScores({ ...gradingScores, [q.id]: Number(e.target.value) })}
-                                            style={{ width: '80px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                                        {/* A mark and the reasoning behind it.
+                                            The mark alone is not reviewable and
+                                            cannot be explained to a candidate
+                                            who asks why they scored what they
+                                            did, so the note travels with it. */}
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                                          <label style={{ fontSize: '12px', fontWeight: 600 }}>Marks out of {q.max_score || 10}:</label>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max={q.max_score || 10}
+                                            value={markValue(q.id) ?? ''}
+                                            onChange={e => {
+                                              // An emptied box means "not
+                                              // marked yet", which is a
+                                              // different thing from zero and
+                                              // has to stay different: zero is
+                                              // a mark, and the paper is only
+                                              // finished when every answer has
+                                              // one.
+                                              const raw = e.target.value;
+                                              setGradingScores((prev: any) => {
+                                                const next = { ...prev };
+                                                if (raw === '') delete next[q.id];
+                                                else next[q.id] = { ...(toMark(prev[q.id]) || {}), score: Number(raw) };
+                                                return next;
+                                              });
+                                            }}
+                                            style={{ width: '90px', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
                                           />
+                                          {markValue(q.id) === undefined && (
+                                            <span style={{ fontSize: '11px', color: 'var(--accent-gold)', fontWeight: 600 }}>Not marked</span>
+                                          )}
                                         </div>
+                                        <textarea
+                                          placeholder="Why this mark — the candidate sees this with their result."
+                                          rows={2}
+                                          value={markNote(q.id)}
+                                          onChange={e => setGradingScores((prev: any) => ({
+                                            ...prev,
+                                            [q.id]: { ...(toMark(prev[q.id]) || { score: undefined }), notes: e.target.value }
+                                          }))}
+                                          style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '12px', fontFamily: 'inherit', resize: 'vertical' }}
+                                        />
                                       </div>
                                     )}
                                   </div>
@@ -4135,8 +4676,93 @@ export default function AdminPanel() {
                       })}
                     </div>
                     
-                    <div style={{ display: 'flex', gap: '12px', marginTop: '32px', position: 'sticky', bottom: '-32px', background: 'var(--bg-secondary)', padding: '16px 0', borderTop: '1px solid var(--border-glass)' }}>
-                      <button type="submit" className="btn-primary" style={{ flex: 1, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving...' : 'Submit Final Grades'}</button>
+                    {/* Overall feedback, and the paper adding up as it is
+                        marked. The operator had no way to see what the marks
+                        came to until the screen closed, and no way to say
+                        anything to the candidate at all. */}
+                    <div style={{ marginTop: '24px' }}>
+                      <label style={{ fontSize: '13px', fontWeight: 700, display: 'block', marginBottom: '8px' }}>
+                        Feedback for the candidate
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={gradingNotes}
+                        onChange={e => setGradingNotes(e.target.value)}
+                        placeholder="How they did overall, and what would have made it stronger."
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border-glass)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical' }}
+                      />
+                    </div>
+
+                    {(() => {
+                      // The running total, from the same rule the server
+                      // applies. An unmarked written answer counts towards
+                      // the total and earns nothing, so this figure can only
+                      // rise as marking goes on.
+                      const inAssessment = new Set((asmnt?.categories || []).map((c: any) => String(c)));
+                      const paper = assessmentQuestions.filter((q: any) => inAssessment.has(String(q.category_id)));
+                      let earned = 0;
+                      let max = 0;
+                      const unmarked: string[] = [];
+
+                      for (const q of paper) {
+                        if (q.type === 'multiple_choice') {
+                          const weight = Number(q.scoring_weight) > 0 ? Number(q.scoring_weight) : 1;
+                          max += weight;
+                          const key = q.correct_answer ?? q.correct_options;
+                          const keyList = Array.isArray(key) ? key : (key == null ? [] : [key]);
+                          const ansRaw = r.answers?.[q.id] ?? r.subjectiveAnswers?.[q.id];
+                          const given = Array.isArray(ansRaw) ? ansRaw : (ansRaw == null ? [] : [ansRaw]);
+                          if (keyList.length > 0 && keyList.length === given.length
+                              && keyList.every((k: any) => given.map(String).includes(String(k)))) {
+                            earned += weight;
+                          }
+                          continue;
+                        }
+                        const qMax = Number(q.max_score) > 0 ? Number(q.max_score) : 10;
+                        max += qMax;
+                        const mark = markValue(q.id);
+                        if (mark === undefined) unmarked.push(q.id);
+                        else earned += Math.max(0, Math.min(qMax, mark));
+                      }
+
+                      const pct = max === 0 ? 0 : Math.round((earned / max) * 100);
+                      const passMark = asmnt?.passing_score;
+                      const done = unmarked.length === 0;
+
+                      return (
+                        <div style={{
+                          marginTop: '20px', padding: '16px 18px', borderRadius: '12px',
+                          background: 'var(--bg-tertiary)', border: '1px solid var(--border-glass)',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          gap: '16px', flexWrap: 'wrap'
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                              {done ? 'FINAL SCORE' : 'RUNNING TOTAL'}
+                            </div>
+                            <div style={{ fontSize: '24px', fontWeight: 800, marginTop: '2px' }}>
+                              {pct}%
+                              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-muted)' }}>
+                                {' '}· {earned} of {max} marks
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'right', maxWidth: '300px' }}>
+                            {done
+                              ? (passMark != null
+                                  ? (pct >= passMark
+                                      ? `At or above the ${passMark}% pass mark.`
+                                      : `Below the ${passMark}% pass mark.`)
+                                  : 'This assessment has no pass mark set.')
+                              : `${unmarked.length} written answer${unmarked.length === 1 ? '' : 's'} still to mark. `
+                                + 'Saving now keeps this in the review queue.'}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '20px', position: 'sticky', bottom: '-32px', background: 'var(--bg-secondary)', padding: '16px 0', borderTop: '1px solid var(--border-glass)' }}>
+                      <button type="submit" className="btn-primary" style={{ flex: 1, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save marks'}</button>
                       <button type="button" onClick={() => setShowGradingModal(false)} className="btn-secondary" style={{ flex: 1 }}>Cancel</button>
                     </div>
                   </form>
@@ -5164,6 +5790,14 @@ export default function AdminPanel() {
     );
   }
 
+  if (!dataReady) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
+        <KongilaLoader text="Loading your workspace..." />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <Head>
@@ -5195,6 +5829,24 @@ export default function AdminPanel() {
       <div className="sidebar">
         <SidebarContent />
       </div>
+
+      {dataLoadError && (
+        <div role="alert" style={{
+          position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 10000, maxWidth: 'min(720px, calc(100vw - 32px))', padding: '12px 16px',
+          border: '1px solid #FCA5A5', borderRadius: '10px', background: '#FEF2F2',
+          color: '#991B1B', boxShadow: '0 8px 24px rgba(0,0,0,.16)', fontSize: '13px'
+        }}>
+          Workspace data did not load: {dataLoadError}
+          <button
+            type="button"
+            onClick={() => void syncFromDb()}
+            style={{ marginLeft: '12px', border: 0, background: 'transparent', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {pendingRejection && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>

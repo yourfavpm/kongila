@@ -35,6 +35,44 @@ const ADMIN_ROLES = [
   'account_manager', 'talent_manager', 'ops_manager', 'skill_assessor'
 ];
 
+// ─── Where a notification sends someone ──────────────────────────────────────
+//
+// An email that says "your assessment is ready" and gives no way to open it
+// makes the recipient go and find it. Every template takes an `actionUrl` and
+// renders a button when it has one, and most callers were not passing one.
+//
+// These return undefined rather than a localhost guess when the environment
+// has not been configured, because a button pointing at localhost in a real
+// email is worse than no button. `renderBrandedEmail` drops the action when
+// the URL is absent.
+
+function portalBase(variable: string): string | undefined {
+  const raw = String(process.env[variable] || '').trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    return raw.replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+/** A link into the candidate and client portal, or undefined if unconfigured. */
+export function talentPortalUrl(path = '/'): string | undefined {
+  const base = portalBase('NEXT_PUBLIC_SITE_URL');
+  return base ? `${base}${path.startsWith('/') ? path : `/${path}`}` : undefined;
+}
+
+/** The client portal is the same deployment as the candidate portal. */
+export const clientPortalUrl = talentPortalUrl;
+
+/** A link into the operations portal, or undefined if unconfigured. */
+export function adminPortalUrl(path = '/'): string | undefined {
+  const base = portalBase('NEXT_PUBLIC_ADMIN_URL');
+  return base ? `${base}${path.startsWith('/') ? path : `/${path}`}` : undefined;
+}
+
 export interface NotifyResult {
   delivered: number;
   warnings: string[];
@@ -91,6 +129,8 @@ export interface NotifyOptions {
   emailOnly?: boolean;
   /** Links an in-app row back to the thing it is about. */
   sourceRecordId?: string;
+  /** Excludes a person when notifying the wider operations team. */
+  excludeUserIds?: string[];
 }
 
 /**
@@ -194,7 +234,86 @@ export async function notifyAdmins(
     return { delivered: 0, warnings: ['No operations users exist to notify.'] };
   }
 
-  return notifyUsers(data.map((u: any) => String(u.id)), event, context, options);
+  const excluded = new Set((options.excludeUserIds || []).map(String));
+  const recipients = data.map((u: any) => String(u.id)).filter((id: string) => !excluded.has(id));
+  if (recipients.length === 0) {
+    return { delivered: 0, warnings: ['No eligible operations users exist to notify.'] };
+  }
+
+  return notifyUsers(recipients, event, context, options);
+}
+
+/**
+ * Sends to the operations people holding particular roles.
+ *
+ * `notifyAdmins` goes to everybody in operations, which is right for "a new
+ * request arrived" and wrong for most of the rest. Both FRDs route internal
+ * notices by role — an SLA breach to the Talent Manager and Ops Manager, a
+ * client dropping to At Risk to the Ops Manager, a payout failure to Finance
+ * — and sending all of those to everyone is how people learn to ignore the
+ * ones meant for them.
+ *
+ * Falls back to all of operations when nobody holds the named roles, because
+ * the alternative is that the notice reaches nobody at all.
+ */
+export async function notifyRoles(
+  roles: string[],
+  event: NotificationEvent,
+  context: NotificationContext = {},
+  options: NotifyOptions = {}
+): Promise<NotifyResult> {
+  const wanted = roles.map(r => String(r).trim().toLowerCase()).filter(Boolean);
+  if (wanted.length === 0) return notifyAdmins(event, context, options);
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('users').select('id').in('role', wanted);
+
+  if (error) {
+    return { delivered: 0, warnings: [`Could not find the ${wanted.join(' or ')}: ${error.message}`] };
+  }
+
+  const excluded = new Set((options.excludeUserIds || []).map(String));
+  const recipients = (data || []).map((u: any) => String(u.id)).filter((id: string) => !excluded.has(id));
+
+  if (recipients.length === 0) {
+    const fallback = await notifyAdmins(event, context, options);
+    return {
+      delivered: fallback.delivered,
+      warnings: [
+        `Nobody holds the role ${wanted.join(' or ')}, so this went to all of operations.`,
+        ...fallback.warnings
+      ]
+    };
+  }
+
+  return notifyUsers(recipients, event, context, options);
+}
+
+/** The people who own a candidate's vetting. */
+export async function notifyTalentManagers(
+  event: NotificationEvent,
+  context: NotificationContext = {},
+  options: NotifyOptions = {}
+): Promise<NotifyResult> {
+  return notifyRoles(['talent_manager', 'ops_manager', 'super_admin'], event, context, options);
+}
+
+/** The people who own a client relationship. */
+export async function notifyAccountManagers(
+  event: NotificationEvent,
+  context: NotificationContext = {},
+  options: NotifyOptions = {}
+): Promise<NotifyResult> {
+  return notifyRoles(['account_manager', 'ops_manager', 'super_admin'], event, context, options);
+}
+
+/** The people who own money. */
+export async function notifyFinance(
+  event: NotificationEvent,
+  context: NotificationContext = {},
+  options: NotifyOptions = {}
+): Promise<NotifyResult> {
+  return notifyRoles(['finance', 'finance_admin', 'super_admin'], event, context, options);
 }
 
 /**

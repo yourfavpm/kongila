@@ -5,7 +5,10 @@
   "types": "index.ts",
   "private": true,
   "dependencies": {
+    "@kongila/matching-engine": "workspace:*",
     "@kongila/shared-types": "workspace:*",
+    "@kongila/utils": "workspace:*",
+    "@kongila/workflows": "workspace:*",
     "@supabase/supabase-js": "^2.105.4"
   }
 }

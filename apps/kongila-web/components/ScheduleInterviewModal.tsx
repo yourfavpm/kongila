@@ -13,6 +13,7 @@ interface ScheduleInterviewModalProps {
   currentUser: any;
   request: any;
   talent: TalentProfile;
+  matchId?: string;
   interviews: Interview[];
   setInterviews?: (interviews: Interview[]) => void;
   onClose: () => void;
@@ -22,6 +23,7 @@ export default function ScheduleInterviewModal({
   currentUser,
   request,
   talent,
+  matchId,
   interviews,
   setInterviews,
   onClose
@@ -69,7 +71,7 @@ export default function ScheduleInterviewModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: request.id,
-          matchId: `match_${request.id}_${talent.id}`,
+          matchId: matchId || `match_${request.id}_${talent.id}`,
           talentId: talent.id,
           talentName: talent.name,
           talentAvatar: (talent as any).avatar || (talent as any).profilePhotoUrl,

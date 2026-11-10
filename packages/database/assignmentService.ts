@@ -17,7 +17,7 @@
  *     none of them were ever written, and had they been, they would have
  *     named the wrong person.
  *
- * Only a super admin assigns. Everyone else gets a 403, which is also new:
+ * Only operations managers and super admins assign. Everyone else gets a 403:
  * nothing checked before.
  */
 
@@ -31,6 +31,7 @@ import {
   isAccountManagerAssignable,
   isTalentManagerAssignable
 } from '@kongila/auth';
+import { canAccessRequest } from './requestAccess';
 
 export interface AssignmentResult<T = any> {
   ok: boolean;
@@ -44,9 +45,10 @@ function fail(status: number, error: string): AssignmentResult {
   return { ok: false, status, error };
 }
 
-/** Only a super admin changes who is responsible for what. */
-function isSuperAdmin(actor: Actor): boolean {
-  return actor.kind === 'admin' && resolveRole(actor.role) === 'super_admin';
+/** Super admins and operations managers can assign client ownership. */
+function canAssignManagers(actor: Actor): boolean {
+  const role = resolveRole(actor.role);
+  return actor.kind === 'admin' && (role === 'super_admin' || role === 'ops_manager');
 }
 
 /**
@@ -115,7 +117,7 @@ export async function assignAccountManager(
   input: { organizationId: string; userId: string; reason?: string | null }
 ): Promise<AssignmentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
-  if (!isSuperAdmin(actor)) return fail(403, 'Only a super admin assigns an account manager.');
+  if (!canAssignManagers(actor)) return fail(403, 'Only operations managers and super admins can assign an account manager.');
 
   const organizationId = String(input.organizationId || '').trim();
   const userId = String(input.userId || '').trim();
@@ -160,11 +162,39 @@ export async function assignAccountManager(
     entityId: organizationId
   });
 
-  const notified = await notifyUsers(userId, 'stage_advanced', {
-    stageName: 'Account manager',
-    reason: `You are now the account manager for ${organization.name || organizationId}.`
-  });
-  warnings.push(...notified.warnings);
+  const adminUrl = `${(process.env.NEXT_PUBLIC_ADMIN_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+    || 'http://localhost:3002').replace(/\/$/, '')}/`;
+  if (String(previousId || '') !== userId) {
+    const notified = await notifyUsers(userId, 'account_manager_assignment', {
+      companyName: organization.name || organizationId,
+      actionUrl: adminUrl
+    });
+    warnings.push(...notified.warnings);
+    if (previousId) {
+      const previousNotice = await notifyUsers(String(previousId), 'account_manager_removed', {
+        companyName: organization.name || organizationId,
+        reason,
+        actionUrl: adminUrl
+      });
+      warnings.push(...previousNotice.warnings);
+    }
+  }
+
+  // And the company, which is the half that was missing. The manager was told
+  // and the client was not, so the name on their dashboard changed with no
+  // explanation, and they had no way to know they now had somebody to ask.
+  const { data: orgMembers } = await supabase
+    .from('client_profiles').select('user_id').eq('organization_id', organizationId);
+
+  const memberIds = (orgMembers || []).map((cp: any) => String(cp.user_id)).filter(Boolean);
+  if (memberIds.length > 0 && String(previousId || '') !== userId) {
+    const toldClient = await notifyUsers(memberIds, 'account_manager_assigned', {
+      companyName: organization.name || undefined,
+      inviterName: user.name || user.email || undefined
+    });
+    warnings.push(...toldClient.warnings);
+  }
 
   return {
     ok: true,
@@ -217,6 +247,16 @@ export async function assignRequestManagers(
   if (loadError) return fail(500, `That request could not be loaded: ${loadError.message}`);
   if (!rows || rows.length === 0) return fail(404, 'That request does not exist.');
   const row = rows[0];
+  try {
+    if (!await canAccessRequest(supabase, actor, row)) return fail(404, 'That request does not exist.');
+  } catch (accessError: any) {
+    return fail(500, `Request ownership could not be verified: ${accessError.message}`);
+  }
+
+  const changingManager = Boolean(input.accountManagerId || input.talentManagerId || input.alsoSetClientAccountManager);
+  if (changingManager && !canAssignManagers(actor)) {
+    return fail(403, 'Only operations managers and super admins can change request assignments.');
+  }
 
   const warnings: string[] = [];
   const payload = { ...(row.payload || {}) };
@@ -262,7 +302,27 @@ export async function assignRequestManagers(
         .from('organizations')
         .update({ account_manager_id: String(input.accountManagerId) })
         .eq('id', profile.organization_id);
-      if (orgError) warnings.push(`The client's account manager was not updated: ${orgError.message}`);
+      if (orgError) {
+        warnings.push(`The client's account manager was not updated: ${orgError.message}`);
+      } else {
+        // Tell the company too, the same as assignAccountManager does. Setting
+        // it from a request used to change it silently.
+        const { data: orgRow } = await supabase
+          .from('organizations').select('name').eq('id', profile.organization_id).maybeSingle();
+        const { data: manager } = await supabase
+          .from('users').select('name, email').eq('id', String(input.accountManagerId)).maybeSingle();
+        const { data: orgMembers } = await supabase
+          .from('client_profiles').select('user_id').eq('organization_id', profile.organization_id);
+
+        const memberIds = (orgMembers || []).map((cp: any) => String(cp.user_id)).filter(Boolean);
+        if (memberIds.length > 0) {
+          const toldClient = await notifyUsers(memberIds, 'account_manager_assigned', {
+            companyName: orgRow?.name || undefined,
+            inviterName: manager?.name || manager?.email || undefined
+          });
+          warnings.push(...toldClient.warnings);
+        }
+      }
     } else {
       warnings.push('That client is not attached to a company, so their account manager was not changed.');
     }
@@ -284,12 +344,21 @@ export async function assignRequestManagers(
 
   // Being given a request is worth telling someone about. The browser
   // version told nobody.
-  const newlyAssigned = [input.accountManagerId, input.talentManagerId]
-    .filter((id): id is string => Boolean(id));
+  const newlyAssigned = [
+    input.accountManagerId && String(input.accountManagerId) !== String(row.account_manager_id || '')
+      ? String(input.accountManagerId) : null,
+    input.talentManagerId && String(input.talentManagerId) !== String(row.talent_manager_id || '')
+      ? String(input.talentManagerId) : null
+  ].filter((id): id is string => Boolean(id));
 
   if (newlyAssigned.length > 0) {
-    const notified = await notifyUsers(newlyAssigned, 'request_received', {
-      roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined
+    const adminUrl = `${(process.env.NEXT_PUBLIC_ADMIN_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+      || 'http://localhost:3002').replace(/\/$/, '')}/`;
+    const notified = await notifyUsers(newlyAssigned, 'request_assigned', {
+      roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined,
+      companyName: payload.companyName || undefined,
+      actionUrl: adminUrl
     });
     warnings.push(...notified.warnings);
   }

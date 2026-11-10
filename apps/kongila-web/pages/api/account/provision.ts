@@ -67,7 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ── users ────────────────────────────────────────────────────────────────
     const { data: existingUser, error: existingUserError } = await supabase
-      .from('users').select('role').eq('id', userId).maybeSingle();
+      .from('users').select('role, name').eq('id', userId).maybeSingle();
     if (existingUserError) {
       console.error('[account/provision] users lookup failed:', existingUserError.message);
       return res.status(500).json({ error: 'Could not verify your account record.' });
@@ -76,10 +76,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(409).json({ error: 'This account is already registered with a different role.' });
     }
 
+    const personName = String(name || '').trim();
+
     if (!existingUser) {
       const { error: userError } = await supabase.from('users').insert({
         id: userId,
         email,
+        // The name goes in. This insert left it null, and public.users.name is
+        // what the admin company list, the company detail page and the request
+        // board all read for the contact, so every organisation on the admin
+        // side showed a primary contact with a blank name.
+        name: personName || null,
         password_hash: 'auth_managed',
         role,
         status: role === 'talent' ? 'inactive' : 'active',
@@ -88,6 +95,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (userError) {
         console.error('[account/provision] users insert failed:', userError.message);
         return res.status(500).json({ error: `Could not create your account record: ${userError.message}` });
+      }
+    } else if (personName && !String((existingUser as any).name || '').trim()) {
+      // An account provisioned before the line above existed. Fill the name in
+      // on the next pass rather than leaving it blank for ever. A name the
+      // person has already set is never overwritten.
+      const { error: nameError } = await supabase
+        .from('users').update({ name: personName }).eq('id', userId);
+      if (nameError) {
+        console.warn('[account/provision] users name backfill failed:', nameError.message);
       }
     }
 
@@ -134,11 +150,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       organizationId = existingOrganization?.id || null;
       if (!organizationId) {
+        // The company must be named. This used to fall back to
+        // "<person>'s Company", which put a person's name on a company record
+        // and left operations guessing who they were actually dealing with.
+        // Both signup paths collect it, so a request without one is a bug in
+        // the caller and should say so rather than invent a name.
+        const organizationName = String(companyName || '').trim();
+        if (!organizationName) {
+          return res.status(400).json({
+            error: 'A company name is required to create a client account.'
+          });
+        }
+
         organizationId = require('crypto').randomUUID();
         const { error: orgError } = await supabase.from('organizations').insert({
           id: organizationId,
-          name: companyName || `${name || 'New'}'s Company`,
+          name: organizationName,
           created_by: userId,
+          // The account belongs to the company; this person is its primary
+          // contact and administrator. created_by records who inserted the
+          // row and cannot be transferred, so it is not the same fact.
+          primary_contact_user_id: userId,
           contact_email: contactEmail || email || null,
           contact_phone: contactPhone || null
         });
@@ -164,7 +196,60 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    return res.status(201).json({ ok: true, role, organizationId });
+    // ── what the caller needs to confirm the account ─────────────────────────
+    //
+    // This returned { ok, role, organizationId } and nothing else, so the
+    // portal could only say "Account created successfully" and had no way to
+    // name the company it had just created or tell the person what they are
+    // in it. The confirmation screen is built from what comes back here.
+    const { data: organization } = await supabase
+      .from('organizations')
+      .select('id, name, primary_contact_user_id, contact_email, contact_phone, created_at')
+      .eq('id', organizationId)
+      .maybeSingle();
+
+    // An organisation whose primary contact was never recorded, which is any
+    // company created before the column existed, is adopted by whoever is
+    // provisioning now if they created it. Nothing is taken from anyone: a
+    // contact that is already set is left alone.
+    let primaryContactUserId = organization?.primary_contact_user_id || null;
+    if (!primaryContactUserId && !inviteOrgId) {
+      const { error: adoptError } = await supabase
+        .from('organizations')
+        .update({ primary_contact_user_id: userId })
+        .eq('id', organizationId)
+        .is('primary_contact_user_id', null);
+      if (adoptError) {
+        console.warn('[account/provision] primary contact not set:', adoptError.message);
+      } else {
+        primaryContactUserId = userId;
+      }
+    }
+
+    const { data: profileRow } = await supabase
+      .from('client_profiles')
+      .select('position, permission_level')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    return res.status(201).json({
+      ok: true,
+      role,
+      organizationId,
+      organization: {
+        id: organizationId,
+        name: organization?.name || null,
+        contactEmail: organization?.contact_email || null,
+        contactPhone: organization?.contact_phone || null,
+        createdAt: organization?.created_at || null
+      },
+      membership: {
+        isPrimaryContact: String(primaryContactUserId || '') === String(userId),
+        joinedByInvitation: Boolean(inviteOrgId),
+        position: profileRow?.position || null,
+        permissionLevel: profileRow?.permission_level || null
+      }
+    });
   } catch (error: any) {
     console.error('[account/provision] unexpected failure:', error);
     return res.status(500).json({ error: error.message || 'Could not finish creating your account' });

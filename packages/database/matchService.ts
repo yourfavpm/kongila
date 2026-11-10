@@ -20,7 +20,8 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { notifyUsers, notifyAdmins } from './notify';
-import { clientMatchTransition, allCandidatesRejected } from '@kongila/workflows';
+import { clientMatchTransition, allCandidatesRejected, matchingProgressStatus } from '@kongila/workflows';
+import { requestTitle } from '@kongila/shared-types';
 
 export interface MatchResult<T = any> {
   ok: boolean;
@@ -38,14 +39,30 @@ function fail(status: number, error: string): MatchResult {
 async function loadMatchContext(matchId: string) {
   const supabase = getSupabaseClient();
 
-  const { data: match } = await supabase
+  const { data: match, error: matchError } = await supabase
     .from('matches').select('*').eq('id', matchId).maybeSingle();
-  if (!match) return { match: null, request: null };
+  if (matchError) return { match: null, request: null, error: matchError.message };
+  if (!match) return { match: null, request: null, error: null };
 
-  const { data: request } = await supabase
+  const { data: request, error: requestError } = await supabase
     .from('talent_requests').select('*').eq('id', match.request_id).maybeSingle();
 
-  return { match, request };
+  return { match, request, error: requestError?.message || null };
+}
+
+async function clientCanAccessRequest(actor: Actor, request: any): Promise<boolean> {
+  if (String(request.client_id) === String(actor.userId)) return true;
+  if (!actor.organizationId) return false;
+
+  const { data, error } = await getSupabaseClient()
+    .from('client_profiles')
+    .select('user_id')
+    .eq('organization_id', actor.organizationId);
+  if (error) {
+    console.error('[matchService] organization membership lookup failed:', error.message);
+    return false;
+  }
+  return (data || []).some((profile: any) => String(profile.user_id) === String(request.client_id));
 }
 
 /**
@@ -64,14 +81,20 @@ export async function updateMatchStatus(
   const matchId = String(input.matchId || '').trim();
   if (!matchId) return fail(400, 'Which candidate?');
 
-  const { match, request } = await loadMatchContext(matchId);
+  const { match, request, error: contextError } = await loadMatchContext(matchId);
+  if (contextError) return fail(500, `The candidate's request could not be loaded: ${contextError}`);
   if (!match) return fail(404, 'That candidate is not on any of your requests.');
 
   const isOperations = actor.kind === 'admin';
   if (!isOperations) {
-    if (!request || String(request.client_id) !== String(actor.userId)) {
+    if (!request || !(await clientCanAccessRequest(actor, request))) {
       return fail(403, 'That candidate is not on any of your requests.');
     }
+  }
+  if (!request) return fail(404, 'The request for this candidate no longer exists.');
+
+  if (actor.kind === 'client' && String(input.status).toLowerCase() === 'accepted') {
+    return fail(409, 'A candidate can only be accepted through the offer response flow.');
   }
 
   const move = clientMatchTransition(match.status, input.status, input.rejectionReason);
@@ -90,7 +113,7 @@ export async function updateMatchStatus(
 
   // ── Tell the people it affects ───────────────────────────────────────────
   if (move.status === 'accepted') {
-    const roleTitle = request?.service_type || undefined;
+    const roleTitle = requestTitle({ ...(request.payload || {}), title: request.payload?.title || request.title });
     const accepted = await notifyUsers(String(match.talent_id), 'offer_accepted', { roleTitle });
     warnings.push(...accepted.warnings);
 
@@ -101,20 +124,43 @@ export async function updateMatchStatus(
   if (move.status === 'rejected' && request) {
     // Only when the request has run out of candidates. One rejection is
     // routine; no candidates left means somebody has to act.
-    const { data: siblings } = await supabase
+    const { data: siblings, error: siblingsError } = await supabase
       .from('matches').select('id, request_id, status').eq('request_id', request.id);
 
-    const exhausted = allCandidatesRejected(
+    if (siblingsError) {
+      warnings.push(`The rejection was saved, but remaining candidates could not be checked: ${siblingsError.message}`);
+    }
+
+    const exhausted = !siblingsError && allCandidatesRejected(
       (siblings || []).map((m: any) => ({ id: m.id, requestId: m.request_id, status: m.status })),
       String(request.id),
       matchId
     );
 
     if (exhausted) {
+      const requestPayload = { ...(request.payload || {}) };
+      const nextStatus = matchingProgressStatus(
+        requestPayload.status || request.status,
+        'all_candidates_rejected'
+      );
+      if (nextStatus) {
+        requestPayload.status = nextStatus;
+        const { error: requestError } = await supabase
+          .from('talent_requests')
+          .update({
+            payload: requestPayload,
+            status: nextStatus.toLowerCase().replace(/ /g, '_')
+          })
+          .eq('id', request.id);
+        if (requestError) {
+          warnings.push(`All candidates were rejected, but the request stage did not update: ${requestError.message}`);
+        }
+      }
+
       // This used to be an insert addressed to user_id 'admin_team', which
       // is not a row in users, so the foreign key refused it every time.
       const ops = await notifyAdmins('all_candidates_rejected', {
-        roleTitle: request.service_type || undefined,
+        roleTitle: requestTitle({ ...(request.payload || {}), title: request.payload?.title || request.title }),
         reason: String(input.rejectionReason || '').trim() || undefined
       });
       warnings.push(...ops.warnings);
@@ -123,6 +169,9 @@ export async function updateMatchStatus(
 
   const { data: fresh } = await supabase
     .from('matches').select('*').eq('id', matchId).maybeSingle();
+  const { data: freshRequest, error: freshRequestError } = await supabase
+    .from('talent_requests').select('*').eq('id', request.id).maybeSingle();
+  if (freshRequestError) warnings.push(`The candidate decision was saved, but the latest role stage could not be loaded: ${freshRequestError.message}`);
 
   return {
     ok: true,
@@ -133,7 +182,8 @@ export async function updateMatchStatus(
       talentId: fresh?.talent_id,
       status: fresh?.status,
       score: fresh?.score,
-      clientRejectionReason: fresh?.client_rejection_reason
+      clientRejectionReason: fresh?.client_rejection_reason,
+      requestStatus: freshRequest?.payload?.status || freshRequest?.status || request.payload?.status || request.status
     },
     warnings
   };

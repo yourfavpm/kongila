@@ -80,9 +80,24 @@ export async function listClients(actor: Actor): Promise<ClientResult> {
     const orgInvoices = ours(invoices.data as any[]);
     const manager = org.account_manager_id ? userById.get(String(org.account_manager_id)) : null;
 
+    // The person who signed this company up, and the one operations should
+    // talk to. The list gave a member count and no names, so from here there
+    // was no way to tell who to contact about a company.
+    const contactUser = org.primary_contact_user_id
+      ? userById.get(String(org.primary_contact_user_id))
+      : null;
+    const contactProfile = org.primary_contact_user_id
+      ? (profiles.data || []).find((p: any) => String(p.user_id) === String(org.primary_contact_user_id))
+      : null;
+
     return {
       id: org.id,
       name: org.name,
+      primaryContactUserId: org.primary_contact_user_id || null,
+      primaryContactName: contactUser ? (contactUser.name || contactUser.email) : null,
+      primaryContactEmail: contactUser?.email || null,
+      primaryContactPosition: contactProfile?.position || null,
+      primaryContactPhone: contactProfile?.phone || null,
       industry: org.industry,
       companySize: org.company_size,
       country: org.country,
@@ -171,7 +186,15 @@ export async function getClient(actor: Actor, organizationId: string): Promise<C
       organization: {
         ...org,
         accountManagerId: org.account_manager_id,
-        accountManagerName: manager ? (manager.name || manager.email) : null
+        accountManagerName: manager ? (manager.name || manager.email) : null,
+        // The company's own administrator, as distinct from the Kongila
+        // account manager assigned to it. Both were missing from this page,
+        // which made every member look interchangeable.
+        primaryContactUserId: org.primary_contact_user_id || null,
+        primaryContactName: (() => {
+          const u = org.primary_contact_user_id ? memberById.get(String(org.primary_contact_user_id)) : null;
+          return u ? (u.name || u.email) : null;
+        })()
       },
       members: (profiles || []).map((p: any) => {
         const user = memberById.get(String(p.user_id));
@@ -181,6 +204,8 @@ export async function getClient(actor: Actor, organizationId: string): Promise<C
           name: user?.name || null,
           email: user?.email || null,
           status: user?.status || null,
+          isPrimaryContact: Boolean(org.primary_contact_user_id)
+            && String(p.user_id) === String(org.primary_contact_user_id),
           position: p.position,
           phone: p.phone,
           permissionLevel: p.permission_level

@@ -1,9 +1,12 @@
 import { 
   TalentProfile, ServiceRequest, Match, MatchBreakdown, Task, Contract, Notification, AuditLog, AgentLog,
   User, Organization, ClientProfile, Skill, TalentSkill, Document, Project, Assignment,
-  Invoice, Payment, TalentPayout, Message, Conversation, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog
+  Invoice, Payment, TalentPayout, Message, Conversation, SupportTicket, SupportMessage, Interview, RehireRequest, RequestActivityLog,
+  requestTitle
 } from '@kongila/shared-types';
+import { mapWorkSimulationTask } from './workSimulationRow';
 import { coerceRequestStatus, mapInterviewStatusToDb, mapInterviewStatusFromDb } from '@kongila/workflows';
+import { vettingScoreState } from '@kongila/matching-engine';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createClient } from '@supabase/supabase-js';
@@ -161,7 +164,8 @@ export function getSupabaseClient() {
 // route turns that into a 401. Never trust a user id from a request body.
 
 export type { RequestActor } from './scope';
-export { scopeDbForUser, filterWritableDb } from './scope';
+export { scopeDbForUser, filterWritableDb, SCOPED_RESOURCES, isScopedResource } from './scope';
+export type { ScopedResource } from './scope';
 export { parseStorageUrl, clearSignedUrlCache } from './signedUrls';
 
 import { signStoredFileUrls } from './signedUrls';
@@ -417,14 +421,65 @@ function packTalentBio(snapshot: TalentVettingSnapshot): string {
   });
 }
 
+/**
+ * Has the 2026-11-09c migration been applied to this database?
+ *
+ * Checked once per process, not per call. Before that migration the three
+ * vetting columns do not exist, and Postgres answers 42703 — undefined
+ * column — for any statement naming them. Both the read and the write below
+ * named all three, so on a database without the migration every vetting read
+ * threw and every vetting write failed, including the part that writes the
+ * bio envelope, which needs no migration at all.
+ *
+ * That made a missing migration look like a broken product rather than a
+ * pending migration: onboarding completed, no pipeline was created, the
+ * candidate's dashboard had nothing to show, and the only trace was a warning
+ * in a server log. The envelope is the fallback the rest of this file already
+ * expects, so the right behaviour is to use it and say so once, not to fail.
+ */
+let _vettingColumnsPresent: boolean | null = null;
+
+export function isUndefinedColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === '42703') return true;
+  return /column .* does not exist|could not find the .* column/i.test(String(error.message || ''));
+}
+
+function noteVettingColumnsMissing(where: string) {
+  if (_vettingColumnsPresent === false) return;
+  _vettingColumnsPresent = false;
+  console.warn(
+    `[database] ${where}: talent_profiles has no vetting_pipeline/vetting_scores/composite_score ` +
+    'columns, so vetting state is being read and written through the bio envelope instead. ' +
+    'Run packages/database/migrations/2026-11-09c_vetting_columns.sql to move onto the columns.'
+  );
+}
+
 /** Reads one candidate's vetting state. Returns null when there is no such row. */
 export async function readTalentVetting(talentId: string): Promise<TalentVettingSnapshot | null> {
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
+
+  const columns = _vettingColumnsPresent === false
+    ? 'id, bio'
+    : 'id, bio, vetting_pipeline, vetting_scores, composite_score';
+
+  let { data, error } = await supabase
     .from('talent_profiles')
-    .select('id, bio')
+    .select(columns)
     .eq('id', talentId)
     .maybeSingle();
+
+  // The migration has not run. Read what does exist rather than throwing.
+  if (error && isUndefinedColumn(error)) {
+    noteVettingColumnsMissing('readTalentVetting');
+    ({ data, error } = await supabase
+      .from('talent_profiles')
+      .select('id, bio')
+      .eq('id', talentId)
+      .maybeSingle());
+  } else if (!error && _vettingColumnsPresent === null) {
+    _vettingColumnsPresent = true;
+  }
 
   if (error) {
     console.error('[database] readTalentVetting failed:', error.message);
@@ -434,29 +489,83 @@ export async function readTalentVetting(talentId: string): Promise<TalentVetting
 
   const { telemetry, tags, scores, plainBio } = unpackTalentBio(data.bio);
 
+  // The columns are the truth. The bio envelope is read only as a fallback,
+  // for a row the 2026-11-09c migration has not reached, and the next write
+  // moves that row onto the columns.
+  //
+  // The pipeline and the scores used to live inside the bio column, which
+  // made a candidate editing their bio and an operator saving a score the
+  // same UPDATE on the same column, and meant nothing could be queried.
+  const columnPipeline = Array.isArray((data as any).vetting_pipeline) ? (data as any).vetting_pipeline : null;
+  const columnScores =
+    (data as any).vetting_scores && typeof (data as any).vetting_scores === 'object' && !Array.isArray((data as any).vetting_scores)
+      ? (data as any).vetting_scores
+      : null;
+
+  const envelopePipeline = Array.isArray(telemetry.vettingPipeline) ? telemetry.vettingPipeline : [];
+
   return {
-    talentId: data.id,
-    pipeline: Array.isArray(telemetry.vettingPipeline) ? telemetry.vettingPipeline : [],
+    talentId: (data as any).id,
+    pipeline: columnPipeline && columnPipeline.length > 0 ? columnPipeline : envelopePipeline,
     telemetry,
     tags,
-    scores,
+    scores: columnScores && Object.keys(columnScores).length > 0 ? columnScores : scores,
     plainBio
   };
 }
 
 /**
- * Writes one candidate's vetting state back. Only the bio column of that one
- * row is touched, and unlike writeDbAsync the error is returned rather than
- * logged and swallowed, so the route can answer honestly.
+ * Writes one candidate's vetting state back. One row, and unlike
+ * writeDbAsync the error is returned rather than logged and swallowed, so
+ * the route can answer honestly.
+ *
+ * The pipeline and the scores go to their own columns. The bio envelope is
+ * still written alongside them, deliberately: until every row has been
+ * through the 2026-11-09c migration and the application has run on the
+ * columns long enough to trust them, the envelope is the way back. Clearing
+ * it is a separate migration.
  */
 export async function writeTalentVetting(
   snapshot: TalentVettingSnapshot
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase
+
+  const scores = snapshot.scores && typeof snapshot.scores === 'object' ? snapshot.scores : {};
+  const state = vettingScoreState(scores as any);
+
+  // The envelope is written either way, so a database without the 2026-11-09c
+  // migration still records the pipeline and the scores. Before this, naming
+  // the three columns in the same UPDATE meant that on such a database the
+  // whole statement was rejected and the envelope went unwritten too — so
+  // creating a candidate's pipeline failed silently and their dashboard had
+  // nothing to show.
+  const envelope = { bio: packTalentBio(snapshot) };
+  const withColumns = {
+    ...envelope,
+    vetting_pipeline: Array.isArray(snapshot.pipeline) ? snapshot.pipeline : [],
+    vetting_scores: scores,
+    // Null until a stage has actually produced a score. A candidate who
+    // has not been assessed must not acquire a composite of zero, because
+    // zero grades as Reject and reads as a verdict.
+    composite_score: state.score
+  };
+
+  const payload = _vettingColumnsPresent === false ? envelope : withColumns;
+
+  let { error } = await supabase
     .from('talent_profiles')
-    .update({ bio: packTalentBio(snapshot) })
+    .update(payload)
     .eq('id', snapshot.talentId);
+
+  if (error && isUndefinedColumn(error)) {
+    noteVettingColumnsMissing('writeTalentVetting');
+    ({ error } = await supabase
+      .from('talent_profiles')
+      .update(envelope)
+      .eq('id', snapshot.talentId));
+  } else if (!error && _vettingColumnsPresent === null) {
+    _vettingColumnsPresent = true;
+  }
 
   if (error) {
     console.error('[database] writeTalentVetting failed:', error.message);
@@ -550,6 +659,25 @@ export async function readDbAsync(): Promise<Schema> {
     let rRoles: any, rUserRoles: any;
 
     // 1. Attempt to fetch everything using the unified RPC stored procedure
+    // Work simulation tasks, started now and awaited at the end.
+    //
+    // It needs its own query because the table postdates get_full_db_state
+    // and so is in neither the RPC nor the fallback batches. Kicking it off
+    // here rather than awaiting it after everything else means it costs no
+    // extra round trip — it finishes while the snapshot is being read. A
+    // project that has not run 2026-11-10b yet gets an empty list and a
+    // logged warning rather than a failed read of everything else.
+    //
+    // It resolves, never rejects. An unawaited promise that rejects before
+    // the await below is an unhandled rejection, and a throw at the await
+    // itself falls into this function's catch — which returns EMPTY_DB and
+    // blanks every screen in both portals. One optional table, added after
+    // the fact, must not be able to do that to the whole application.
+    const workSimulationTasksPromise: Promise<{ data: any[] | null; error: any }> =
+      Promise.resolve(supabase.from('work_simulation_tasks').select('*'))
+        .then((r: any) => ({ data: r?.data ?? null, error: r?.error ?? null }))
+        .catch((error: any) => ({ data: null, error }));
+
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_full_db_state');
 
     if (rpcData && !rpcError) {
@@ -697,6 +825,13 @@ export async function readDbAsync(): Promise<Schema> {
     // ── Map users ──────────────────────────────────────────────────────────────
     const users: User[] = (rUsers.data || []).map((u: any) => ({
       id: u.id,
+      // The column was never mapped, so every user came back with no name.
+      // User.name is required by the type, so nothing complained, and every
+      // screen that shows a person silently fell through to their email or to
+      // "Unassigned": the account manager on a client's dashboard, the
+      // assignee pickers in the admin portal, the primary contact on an
+      // organisation, the participant names on a conversation.
+      name: u.name || '',
       email: u.email,
       role: u.role,
       status: u.status,
@@ -718,7 +853,17 @@ export async function readDbAsync(): Promise<Schema> {
       // the account manager. Operations read those as real figures, and the
       // numbers changed on every page load. Null means not set.
       accountManagerId: o.account_manager_id || null,
-      accountManagerName: o.account_manager_name || null,
+      // Resolved from the user rather than read from a denormalised column.
+      // The column is kept as a fallback for rows written before this, but a
+      // stored copy of somebody's name goes stale the moment they change it,
+      // and a client looking at "your account manager" should see who it
+      // actually is today.
+      accountManagerName: o.account_manager_id
+        ? (userMap.get(String(o.account_manager_id))?.name
+            || userMap.get(String(o.account_manager_id))?.email
+            || o.account_manager_name
+            || null)
+        : (o.account_manager_name || null),
       status: o.status || 'Active',
       healthScore: o.health_score ?? null,
       internalNotes: o.internal_notes || '',
@@ -856,6 +1001,18 @@ export async function readDbAsync(): Promise<Schema> {
         bio = (bioParts[1] || '').trim();
       }
 
+      // Columns win over the envelope. select('*') brings them back, and a
+      // row the 2026-11-09c migration has not reached still has its envelope
+      // to fall back on.
+      if (Array.isArray((t as any).vetting_pipeline) && (t as any).vetting_pipeline.length > 0) {
+        telemetry = { ...telemetry, vettingPipeline: (t as any).vetting_pipeline };
+      }
+      const columnScores = (t as any).vetting_scores;
+      if (columnScores && typeof columnScores === 'object' && !Array.isArray(columnScores)
+          && Object.keys(columnScores).length > 0) {
+        vettingScores = columnScores;
+      }
+
       const talentDocs = documents.filter(d => (d as any).userId === t.user_id);
 
       return {
@@ -873,6 +1030,9 @@ export async function readDbAsync(): Promise<Schema> {
         salaryExpectationUsd: telemetry.salaryExpectationUsd || (t.salary_expectation ? Number(t.salary_expectation) : null),
         salaryExpectationMinUsd: telemetry.salaryExpectationMinUsd || null,
         salaryExpectationMaxUsd: telemetry.salaryExpectationMaxUsd || null,
+        // The band in the candidate's own currency, alongside the conversion.
+        salaryExpectationMin: telemetry.salaryExpectationMin || null,
+        salaryExpectationMax: telemetry.salaryExpectationMax || null,
         salaryExpectationCurrency: telemetry.salaryExpectationCurrency || t.currency || 'USD',
         experienceYears: t.experience_years ? Number(t.experience_years) : (telemetry.yearsExperience ?? null),
         availability: t.availability_hours ? Number(t.availability_hours) : (telemetry.availability ?? null),
@@ -937,6 +1097,8 @@ export async function readDbAsync(): Promise<Schema> {
         languages: telemetry.languages || [],
         educations: telemetry.educations || [],
         vettingPipeline: telemetry.vettingPipeline || undefined,
+        compositeScore: (t as any).composite_score ?? null,
+        vettingStartedAt: (t as any).vetting_started_at || null,
         requiresReReview: telemetry.requiresReReview || false,
         profileCompletionPercent: telemetry.profileCompletionPercent || null,
         createdAt: telemetry.createdAt || t.created_at || undefined,
@@ -976,6 +1138,12 @@ export async function readDbAsync(): Promise<Schema> {
         clientId: r.client_id || payload.clientId,
         clientName,
         serviceType: r.service_type || payload.serviceType,
+        // What the admin portal calls this request. It used to show the first
+        // 40 characters of roleDescription, so a request was named by a
+        // paragraph cut off mid-word, and Outsource and Managed requests —
+        // which have no role at all — fell back to the service type, making
+        // every one of them look identical on the board.
+        title: requestTitle({ ...payload, title: payload.title || r.title }),
         roleDescription: payload.roleDescription || r.role_description || '',
         requiredSkills: payload.requiredSkills || [],
         duration: payload.duration,
@@ -1181,6 +1349,19 @@ export async function readDbAsync(): Promise<Schema> {
       createdAt: al.created_at
     }));
 
+    const rWorkSimulationTasks = await workSimulationTasksPromise;
+    if (rWorkSimulationTasks.error) {
+      console.error(
+        '[DB] work_simulation_tasks could not be read, continuing without it:',
+        rWorkSimulationTasks.error?.message || rWorkSimulationTasks.error,
+        '- if this says the relation does not exist, run',
+        'packages/database/migrations/2026-11-10b_work_simulation_tasks.sql'
+      );
+    }
+    const workSimulationTasksRows = Array.isArray(rWorkSimulationTasks.data)
+      ? rWorkSimulationTasks.data
+      : [];
+
     const result: Schema = {
       talents,
       clientRequests,
@@ -1235,7 +1416,15 @@ export async function readDbAsync(): Promise<Schema> {
       assessmentQuestions: rAssessmentQuestions?.data || [],
       assessmentAssignments: rAssessmentAssignments?.data || [],
       skillAssessmentResults: rSkillAssessmentResults?.data || [],
-      talentSkillAssessments: rTalentSkillAssessments?.data || []
+      talentSkillAssessments: rTalentSkillAssessments?.data || [],
+      // Read on its own, and mapped.
+      //
+      // work_simulation_tasks arrives with 2026-11-10b and so is not in the
+      // get_full_db_state RPC, which means neither branch above fetched it.
+      // The field defaulted to [] and nothing ever replaced it, so a
+      // candidate assigned a work simulation always saw "Task details not
+      // found" — the task existed in the database the whole time.
+      workSimulationTasks: workSimulationTasksRows.map(mapWorkSimulationTask).filter(Boolean)
     };
     // Cache the successful result for fallback
     _lastSuccessfulRead = result;
@@ -1788,6 +1977,11 @@ export * from './profileService';
 // Submission and marking. The browser used to post its own score.
 export * from './assessmentService';
 
+// Work simulation, stage 6. There was no table, no service and no route:
+// the admin portal built the task in the browser and attached it to a
+// payload that is never sent.
+export * from './workSimulationService';
+
 // -- Matches ------------------------------------------
 // A client shortlisting, rejecting or accepting a candidate, and the
 // notifications that go with it.
@@ -1833,3 +2027,5 @@ export * from './uploadService';
 // pulling the whole database through /api/db and filtering in the browser.
 export * from './clientService';
 export * from './talentDirectoryService';
+export * from './requestAccess';
+export * from './requestCallService';

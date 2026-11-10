@@ -20,7 +20,7 @@ import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { FALLBACK_RATES, normaliseCurrency, resolveRate, recordMoney } from '@kongila/utils';
-import { notifyAdmins } from './notify';
+import { notifyAdmins, notifyUsers, notifyFinance, talentPortalUrl, clientPortalUrl } from './notify';
 import { complianceGate } from './signatureService';
 import {
   planInvoices,
@@ -417,6 +417,19 @@ export async function generateInvoiceDrafts(
     entityId: 'batch'
   });
 
+  // Finance has to know a batch is sitting in draft. The admin FRD lists
+  // this and nothing sent it, so a monthly run produced drafts that waited
+  // until somebody happened to open the invoices screen.
+  const warnings: string[] = [];
+  if (created.length > 0) {
+    const told = await notifyFinance('invoice_issued', {
+      reference: `${created.length} draft invoice${created.length === 1 ? '' : 's'}`,
+      amount: `$${money(created.reduce((sum, c) => sum + c.total, 0))}`,
+      reason: 'They are in draft and need review before they go out.'
+    }, { excludeUserIds: [actor.userId] });
+    warnings.push(...told.warnings);
+  }
+
   return {
     ok: true,
     status: 200,
@@ -425,7 +438,8 @@ export async function generateInvoiceDrafts(
       skipped: plan.skipped,
       failed,
       summary: describePlan(plan)
-    }
+    },
+    warnings
   };
 }
 
@@ -698,7 +712,49 @@ export async function settlePayout(
     entityId: input.payoutId
   });
 
-  return { ok: true, status: 200, data: { id: input.payoutId, status: patch.status } };
+  // Tell the person whose money it is.
+  //
+  // Nothing here notified anybody. A payout was marked paid and the
+  // contractor found out by checking their bank; a payout failed and they
+  // found out by not being paid, with no one telling them their details
+  // needed fixing. Both FRDs list these.
+  const warnings: string[] = [];
+  try {
+    const amount = payout.amount != null
+      ? `${payout.currency || 'USD'} ${Number(payout.amount).toLocaleString()}`
+      : undefined;
+
+    const { data: talent } = await supabase
+      .from('talent_profiles').select('user_id').eq('id', payout.talent_id).maybeSingle();
+
+    if (talent?.user_id) {
+      const told = await notifyUsers(
+        String(talent.user_id),
+        input.outcome === 'paid' ? 'payout_sent' : 'payout_failed',
+        {
+          amount,
+          reference: input.payoutId,
+          reason: input.outcome === 'paid' ? undefined : input.reason!.trim(),
+          actionUrl: talentPortalUrl('/?section=earnings')
+        }
+      );
+      warnings.push(...told.warnings);
+    }
+
+    // A failure is finance's problem too — somebody has to chase the bank.
+    if (input.outcome !== 'paid') {
+      const toldFinance = await notifyFinance('payout_failed', {
+        amount,
+        reference: input.payoutId,
+        reason: input.reason!.trim()
+      }, { excludeUserIds: [actor.userId] });
+      warnings.push(...toldFinance.warnings);
+    }
+  } catch (err: any) {
+    warnings.push(`The payout was settled but not everyone could be told: ${err?.message || err}`);
+  }
+
+  return { ok: true, status: 200, data: { id: input.payoutId, status: patch.status }, warnings };
 }
 
 /**
@@ -815,7 +871,22 @@ export async function markInvoicePaid(
     entityId: input.invoiceId
   });
 
-  return { ok: true, status: 200, data: { id: input.invoiceId, status: 'paid' } };
+  // Acknowledge the payment. A client who has just paid an invoice gets no
+  // confirmation from us at all, which is the one moment they are most
+  // likely to want one.
+  const warnings: string[] = [];
+  if (invoice.client_id) {
+    const told = await notifyUsers(String(invoice.client_id), 'invoice_paid', {
+      reference: invoice.invoice_number || invoice.id,
+      amount: invoice.amount != null
+        ? `${invoice.currency || 'USD'} ${Number(invoice.amount).toLocaleString()}`
+        : undefined,
+      actionUrl: clientPortalUrl('/?section=billing')
+    });
+    warnings.push(...told.warnings);
+  }
+
+  return { ok: true, status: 200, data: { id: input.invoiceId, status: 'paid' }, warnings };
 }
 
 /**

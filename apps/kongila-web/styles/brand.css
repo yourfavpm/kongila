@@ -1,0 +1,302 @@
+/* ===========================================================================
+   Kongila brand layer
+
+   Sits on top of globals.css and changes nothing it already defines. Two jobs:
+   the mascot's motion, and the small set of marketing primitives the public
+   pages share so they cannot drift apart.
+
+   On motion: every animation here is short, eased, and triggered by something
+   the person did or something the system is actually doing. Nothing loops for
+   decoration, nothing drifts across the screen, nothing fades in on scroll
+   just because it can. Restraint is the difference between a page that feels
+   considered and one that feels generated.
+   =========================================================================== */
+
+:root {
+  --kon-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --kon-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Marketing type scale. Headings lean on size and tight tracking rather
+     than weight — 600 is the ceiling, and most headings sit at 500. A heavy
+     heading shouts; a large light one just speaks clearly. */
+  --mk-h1: clamp(2.25rem, 1.4rem + 3.4vw, 3.9rem);
+  --mk-h2: clamp(1.65rem, 1.2rem + 1.9vw, 2.5rem);
+  --mk-h3: clamp(1.15rem, 1rem + 0.7vw, 1.45rem);
+  --mk-lede: clamp(1rem, 0.95rem + 0.35vw, 1.175rem);
+
+  /* Width.
+     1180px with a fixed 24px gutter left a wide screen mostly empty and the
+     content stranded in a column down the middle. The page now uses the room
+     it has: the gutter grows with the viewport instead of the content
+     staying put, and the ceiling is high enough that a large monitor shows a
+     page rather than a strip. */
+  --mk-gutter: clamp(20px, 4vw, 64px);
+  --mk-max: 1480px;
+  --mk-radius: 14px;
+  --mk-radius-lg: 22px;
+
+  --mk-ink: #0E1726;
+  --mk-ink-soft: #52618022;
+  --mk-rule: #E4E9F2;
+  --mk-surface: #FFFFFF;
+  --mk-surface-tint: #F6F8FC;
+}
+
+/* ─── Mascot motion ──────────────────────────────────────────────────────── */
+
+.kon { line-height: 0; }
+.kon svg { display: block; overflow: visible; }
+
+/* Loading: the card rocks while three dots count underneath. The rock is
+   slow and the dots are quick, so the pair reads as patient work rather
+   than a stuck spinner. */
+@keyframes kon-tilt {
+  0%, 100% { transform: rotate(-5deg); }
+  50%      { transform: rotate(5deg); }
+}
+@keyframes kon-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+  40%           { transform: translateY(-6px); opacity: 1; }
+}
+.kon--loading .kon__card { transform-origin: 60px 90px; animation: kon-tilt 1.5s var(--kon-ease) infinite; }
+.kon--loading .kon__dots circle { animation: kon-dot 1.2s ease-in-out infinite; }
+.kon--loading .kon__dots circle:nth-child(2) { animation-delay: 0.15s; }
+.kon--loading .kon__dots circle:nth-child(3) { animation-delay: 0.3s; }
+
+/* Idle: a blink every five seconds. Enough to feel alive, rare enough that
+   nobody notices it happening. */
+@keyframes kon-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96%           { transform: scaleY(0.1); }
+}
+.kon--idle .kon__blink,
+.kon--pointing .kon__blink { transform-origin: center; animation: kon-blink 5s ease-in-out infinite; }
+
+/* Thinking: thought dots rising. */
+@keyframes kon-think {
+  0%, 100% { opacity: 0.3; transform: translateY(2px); }
+  50%      { opacity: 1; transform: translateY(-2px); }
+}
+.kon--thinking .kon__think circle { animation: kon-think 1.8s ease-in-out infinite; }
+.kon--thinking .kon__think circle:nth-child(2) { animation-delay: 0.3s; }
+
+/* Matched: the second card slides in, a ring goes out, the check lands once
+   and stays. The check does not loop — a confirmation that keeps
+   re-confirming itself stops meaning anything. */
+@keyframes kon-join {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(-5px); }
+}
+@keyframes kon-ring {
+  0%, 55% { opacity: 0; transform: scale(0.72); }
+  70%     { opacity: 0.45; }
+  100%    { opacity: 0; transform: scale(1.1); }
+}
+@keyframes kon-pop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.kon--matched .kon__peer  { animation: kon-join 2.4s var(--kon-ease) infinite; }
+.kon--matched .kon__pulse { transform-origin: 60px 60px; animation: kon-ring 2.4s var(--kon-ease-out) infinite; }
+.kon--matched .kon__link  { transform-origin: 97px 98px; animation: kon-pop 0.5s var(--kon-ease-out) 0.2s both; }
+
+/* Happy and congratulations: one bounce, then rest. */
+@keyframes kon-bounce {
+  0%, 100% { transform: translateY(0); }
+  28%      { transform: translateY(-9px); }
+  46%      { transform: translateY(0); }
+  58%      { transform: translateY(-3px); }
+  70%      { transform: translateY(0); }
+}
+.kon--happy .kon__card,
+.kon--congratulations .kon__card { animation: kon-bounce 2.2s var(--kon-ease) infinite; }
+
+@keyframes kon-confetti {
+  0%   { opacity: 0; transform: translateY(10px) rotate(0deg); }
+  25%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-26px) rotate(42deg); }
+}
+.kon--congratulations .kon__confetti { transform-origin: 60px 60px; animation: kon-confetti 2.2s var(--kon-ease-out) infinite; }
+
+/* Sad: settles rather than animates. The lean does the work. */
+.kon--sad .kon__body { transform: rotate(-4deg) translateY(3px); transform-origin: 60px 100px; }
+
+/* Failed: one shake, then still — the shake of something refusing, not of
+   something broken. */
+@keyframes kon-refuse {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px); }
+  40%      { transform: translateX(4px); }
+  60%      { transform: translateX(-2px); }
+  80%      { transform: translateX(2px); }
+}
+.kon--failed .kon__card { animation: kon-refuse 0.45s var(--kon-ease) both; }
+
+/* Pointing: the arm nudges toward what it means. */
+@keyframes kon-nudge {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(3px); }
+}
+.kon--pointing .kon__arm { animation: kon-nudge 1.9s ease-in-out infinite; }
+
+/* Lost: tipped over, with one slow breath so the 404 is not a dead screen. */
+@keyframes kon-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+.kon--lost .kon__card { animation: kon-breathe 4.4s ease-in-out infinite; }
+
+/* Anyone who has asked their system to stop moving things gets a still
+   mascot. Every state still reads, because each differs in face and colour,
+   not only in motion. */
+@media (prefers-reduced-motion: reduce) {
+  .kon *,
+  .mk-reveal { animation: none !important; transition: none !important; }
+  .mk-reveal { opacity: 1 !important; transform: none !important; }
+}
+
+/* ─── Marketing primitives ───────────────────────────────────────────────── */
+
+.mk-shell { background: var(--mk-surface); color: var(--mk-ink); }
+
+.mk-wrap {
+  width: 100%;
+  max-width: var(--mk-max);
+  margin: 0 auto;
+  padding-left: var(--mk-gutter);
+  padding-right: var(--mk-gutter);
+}
+
+.mk-section { padding: clamp(60px, 7vw, 112px) 0; }
+/* The tinted band carries a faint wash rather than a flat fill, so two
+   stacked sections do not read as two grey rectangles. */
+.mk-section--tint {
+  background:
+    radial-gradient(900px 300px at 85% 0%, rgba(0, 71, 204, 0.045), transparent 70%),
+    var(--mk-surface-tint);
+  border-top: 1px solid #EDF1F7;
+  border-bottom: 1px solid #EDF1F7;
+}
+
+.mk-eyebrow {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--kongila-blue);
+}
+
+.mk-h1 {
+  font-size: var(--mk-h1);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.028em;
+  margin: 0;
+  color: var(--mk-ink);
+}
+.mk-h2 {
+  font-size: var(--mk-h2);
+  font-weight: 600;
+  line-height: 1.14;
+  letter-spacing: -0.022em;
+  margin: 0;
+  color: var(--mk-ink);
+}
+.mk-h3 {
+  font-size: var(--mk-h3);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  margin: 0;
+  color: var(--mk-ink);
+}
+.mk-lede {
+  font-size: var(--mk-lede);
+  line-height: 1.62;
+  color: #52618099;
+  color: #526180;
+  font-weight: 400;
+  margin: 0;
+}
+.mk-body { font-size: 15px; line-height: 1.68; color: #526180; margin: 0; }
+.mk-small { font-size: 13px; line-height: 1.6; color: #6B7A99; margin: 0; }
+
+/* Buttons */
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 22px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 160ms var(--kon-ease), border-color 160ms var(--kon-ease),
+              transform 160ms var(--kon-ease), box-shadow 160ms var(--kon-ease);
+}
+.mk-btn:active { transform: translateY(1px); }
+.mk-btn--primary { background: var(--kongila-blue); color: #fff; }
+.mk-btn--primary:hover { background: #0039A6; box-shadow: 0 6px 18px rgba(0, 71, 204, 0.22); }
+.mk-btn--ghost { background: #fff; color: var(--mk-ink); border-color: var(--mk-rule); }
+.mk-btn--ghost:hover { border-color: #C3CEE2; background: #FBFCFE; }
+.mk-btn--quiet { background: transparent; color: var(--kongila-blue); padding-left: 0; padding-right: 0; }
+.mk-btn--quiet:hover { text-decoration: underline; text-underline-offset: 4px; }
+.mk-btn--block { width: 100%; }
+
+/* Cards.
+   A flat white box with a grey hairline is the default look of an unfinished
+   page. These get a soft top light, a real shadow and a hover that lifts, so
+   a grid of them reads as objects on a surface rather than a wireframe. */
+.mk-card {
+  position: relative;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FCFDFF 100%);
+  border: 1px solid var(--mk-rule);
+  border-radius: var(--mk-radius);
+  padding: 26px;
+  box-shadow: 0 1px 2px rgba(14, 23, 38, 0.04), 0 6px 18px rgba(14, 23, 38, 0.035);
+  transition: border-color 200ms var(--kon-ease), box-shadow 200ms var(--kon-ease),
+              transform 200ms var(--kon-ease);
+}
+.mk-card--link:hover {
+  border-color: #BFD3F4;
+  box-shadow: 0 2px 4px rgba(14, 23, 38, 0.05), 0 18px 40px rgba(14, 23, 38, 0.09);
+  transform: translateY(-3px);
+}
+
+/* The colour indicator: a short bar that gives each card or step its own
+   identity without resorting to four competing background colours. */
+.mk-indicator { height: 4px; width: 38px; border-radius: 2px; margin-bottom: 18px; }
+
+.mk-grid { display: grid; gap: 20px; }
+.mk-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mk-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mk-grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (max-width: 980px) {
+  .mk-grid--3, .mk-grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .mk-grid--2, .mk-grid--3, .mk-grid--4 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Reveal on first scroll into view. One short rise, once, never repeated —
+   the opposite of the staggered cascade that makes a page announce itself. */
+.mk-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 520ms var(--kon-ease-out), transform 520ms var(--kon-ease-out);
+}
+.mk-reveal.is-in { opacity: 1; transform: none; }
+
+/* Keyboard users must be able to see where they are. */
+.mk-shell a:focus-visible,
+.mk-shell button:focus-visible {
+  outline: 2px solid var(--kongila-blue);
+  outline-offset: 3px;
+  border-radius: 6px;
+}

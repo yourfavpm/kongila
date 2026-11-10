@@ -23,10 +23,14 @@
 
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
+import { recordAudit } from './audit';
+import { notifyUsers } from './notify';
 import {
   findSchedulingConflicts,
   describeConflict,
-  mapInterviewStatusToDb
+  mapInterviewStatusToDb,
+  matchingProgressStatus,
+  normalizeRequestStatus
 } from '@kongila/workflows';
 import { interviewInstant, formatInstantInZone, wallClockToUtc } from '@kongila/utils';
 import {
@@ -338,19 +342,90 @@ export interface ScheduleInput {
   talentName?: string | null;
   clientName?: string | null;
   talentAvatar?: string | null;
+  /** 'vetting' or 'client'. Inferred from requestId when not given. */
+  interviewType?: string | null;
 }
 
 export async function scheduleInterview(
   actor: Actor,
   input: ScheduleInput
 ): Promise<ServiceResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
   if (actor.kind === 'talent') {
     return fail(403, 'Candidates cannot schedule their own interviews.');
   }
   if (!input.talentId) return fail(400, 'talentId is required.');
 
+  const supabase = getSupabaseClient();
+  let request: any = null;
+  let match: any = null;
+  let requestId = input.requestId ? String(input.requestId) : null;
+  if (actor.kind === 'client' && !requestId) {
+    return fail(400, 'A role request is required for a client interview.');
+  }
+  if (actor.kind === 'client' && !input.matchId) {
+    return fail(400, 'A matched candidate is required for a client interview.');
+  }
+
+  if (requestId) {
+    const { data: rowById, error: rowError } = await supabase
+      .from('talent_requests')
+      .select('*')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (rowError) return fail(500, `The role request could not be loaded: ${rowError.message}`);
+
+    if (rowById) {
+      request = rowById;
+    } else {
+      const { data: rowByPayloadId, error: payloadError } = await supabase
+        .from('talent_requests')
+        .select('*')
+        .eq('payload->>id', requestId)
+        .maybeSingle();
+      if (payloadError) return fail(500, `The role request could not be loaded: ${payloadError.message}`);
+      request = rowByPayloadId;
+    }
+
+    if (!request) return fail(404, 'The role request does not exist.');
+    requestId = String(request.id);
+
+    if (actor.kind === 'client') {
+      let permitted = String(request.client_id) === String(actor.userId);
+      if (!permitted && actor.organizationId) {
+        const { data: members, error: membersError } = await supabase
+          .from('client_profiles')
+          .select('user_id')
+          .eq('organization_id', actor.organizationId);
+        if (membersError) return fail(500, 'Your company membership could not be verified.');
+        permitted = (members || []).some((member: any) => String(member.user_id) === String(request.client_id));
+      }
+      if (!permitted) return fail(403, 'That role request does not belong to your company.');
+    }
+
+    const requestStatus = normalizeRequestStatus(request.payload?.status || request.status);
+    if (requestStatus === 'Closed' || requestStatus === 'Onboarding') {
+      return fail(409, `An interview cannot be requested for a ${requestStatus.toLowerCase()} role.`);
+    }
+
+    const matchQuery = supabase
+      .from('matches')
+      .select('*')
+      .eq('request_id', request.id)
+      .eq('talent_id', input.talentId);
+    const { data: matchingRows, error: matchingError } = input.matchId
+      ? await matchQuery.eq('id', String(input.matchId)).limit(1)
+      : await matchQuery.limit(1);
+    if (matchingError) return fail(500, `The candidate's role match could not be verified: ${matchingError.message}`);
+    match = matchingRows?.[0] || null;
+    if (!match) return fail(403, 'This candidate is not matched to the selected role.');
+    if (['rejected', 'accepted'].includes(String(match.status).toLowerCase())) {
+      return fail(409, 'This candidate is no longer available for an interview on this role.');
+    }
+  }
+
   // A client may only book for themselves; an admin may book for anyone.
-  const clientId = actor.kind === 'client' ? actor.userId : (input.clientId || null);
+  const clientId = actor.kind === 'client' ? actor.userId : (input.clientId || request?.client_id || null);
   if (!clientId) return fail(400, 'clientId is required.');
 
   const startsAt = resolveInstant(input);
@@ -361,20 +436,19 @@ export async function scheduleInterview(
     return fail(400, 'That slot is in the past.');
   }
 
-  const supabase = getSupabaseClient();
-
   try {
     // The cap used to be enforced in the modal only, so it was bypassable by
     // anything that did not go through that screen.
-    if (input.requestId) {
-      const { data: pairRows } = await supabase
+    if (requestId) {
+      const { data: pairRows, error: pairError } = await supabase
         .from('interviews')
         .select('id, status')
-        .eq('request_id', input.requestId)
+        .eq('request_id', requestId)
         .eq('talent_id', input.talentId);
+      if (pairError) return fail(500, `Existing interviews could not be checked: ${pairError.message}`);
 
       const live = (pairRows || []).filter(
-        (r: any) => !['cancelled', 'Cancelled', 'declined', 'expired'].includes(String(r.status))
+        (r: any) => !['cancelled', 'declined', 'expired'].includes(String(r.status).toLowerCase())
       );
       if (live.length >= MAX_INTERVIEWS_PER_PAIR) {
         return fail(409, `There are already ${MAX_INTERVIEWS_PER_PAIR} interviews with this candidate for this request.`);
@@ -398,13 +472,20 @@ export async function scheduleInterview(
     const zone = input.timezone || input.clientTimezone || 'UTC';
     const row = {
       id: `iv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      request_id: input.requestId || null,
-      match_id: input.matchId || null,
+      request_id: requestId || null,
+      match_id: match?.id || input.matchId || null,
       talent_id: input.talentId,
       client_id: clientId,
       talent_name: input.talentName || null,
       talent_avatar: input.talentAvatar || null,
       client_name: input.clientName || null,
+      // The column existed and was never written, so nothing could tell a
+      // vetting interview from a client one. They are different things: a
+      // vetting interview is with the Kongila panel and belongs to a vetting
+      // stage, a client interview belongs to a request.
+      interview_type: actor.kind === 'client'
+        ? 'client'
+        : (input.interviewType || (requestId ? 'client' : 'vetting')),
       title: input.title || 'Interview',
       scheduled_time: startsAt,
       scheduled_timezone: zone,
@@ -431,11 +512,43 @@ export async function scheduleInterview(
 
     if (error) return fail(500, `The interview could not be saved: ${error.message}`);
 
-    const warnings = await notifyParties(
+    const warnings: string[] = [];
+    if (match && String(match.status).toLowerCase() === 'proposed') {
+      const { error: matchUpdateError } = await supabase
+        .from('matches')
+        .update({ status: 'shortlisted' })
+        .eq('id', match.id);
+      if (matchUpdateError) {
+        warnings.push(`The interview was requested, but the match stage did not update: ${matchUpdateError.message}`);
+      }
+    }
+
+    if (requestId && request) {
+      const requestPayload = { ...(request.payload || {}) };
+      const nextStatus = matchingProgressStatus(
+        requestPayload.status || request.status,
+        'interview_requested'
+      );
+      if (nextStatus) {
+        requestPayload.status = nextStatus;
+        const { error: requestUpdateError } = await supabase
+          .from('talent_requests')
+          .update({
+            payload: requestPayload,
+            status: nextStatus.toLowerCase().replace(/ /g, '_')
+          })
+          .eq('id', request.id);
+        if (requestUpdateError) {
+          warnings.push(`The interview was requested, but the role stage did not update: ${requestUpdateError.message}`);
+        }
+      }
+    }
+
+    warnings.push(...await notifyParties(
       inserted || row,
       'scheduled',
       'The candidate has been asked to confirm.'
-    );
+    ));
 
     await writeAudit(
       actor,
@@ -829,4 +942,130 @@ export async function rateInterview(
     console.error('[interviewService] rateInterview failed:', err);
     return fail(500, err?.message || 'The rating could not be saved.');
   }
+}
+
+/**
+ * Moving a vetting interview to a new time, and closing one out.
+ *
+ * Both of these were done in the browser and never sent. The admin portal
+ * rewrote the interview object in React state and attached it to a `payload`
+ * that the stage-decision request does not carry, so rescheduling a vetting
+ * interview changed nothing in the database and neither did marking one
+ * completed. The candidate kept the old time, and a finished interview stayed
+ * open in every queue that reads the table.
+ */
+export async function moveVettingInterview(
+  actor: Actor,
+  input: {
+    interviewId: string;
+    date?: string | null;
+    time?: string | null;
+    timezone?: string | null;
+    scheduledTime?: string | null;
+    meetingLink?: string | null;
+  }
+): Promise<ServiceResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  if (actor.kind === 'talent') return fail(403, 'Candidates cannot move their own interviews.');
+
+  const id = String(input.interviewId || '').trim();
+  if (!id) return fail(400, 'Which interview?');
+
+  const startsAt = resolveInstant(input as any);
+  if (!startsAt) {
+    return fail(400, 'A new time is required. Send scheduledTime, or date, time and timezone.');
+  }
+  if (new Date(startsAt).getTime() < Date.now()) {
+    return fail(400, 'That slot is in the past.');
+  }
+
+  const supabase = getSupabaseClient();
+
+  const { data: existing } = await supabase
+    .from('interviews').select('*').eq('id', id).maybeSingle();
+  if (!existing) return fail(404, 'That interview does not exist.');
+
+  const zone = input.timezone || existing.scheduled_timezone || 'UTC';
+
+  const { data: moved, error } = await supabase
+    .from('interviews')
+    .update({
+      scheduled_time: startsAt,
+      scheduled_timezone: zone,
+      date: input.date || startsAt.slice(0, 10),
+      time: input.time || existing.time,
+      status: mapInterviewStatusToDb('Rescheduled'),
+      meeting_link: isUsableMeetingLink(input.meetingLink) ? input.meetingLink : existing.meeting_link,
+      // The negotiation is settled by this move, so none of it should be left
+      // sitting on the row looking live.
+      reschedule_requested: false,
+      reschedule_reason: null,
+      proposed_new_date: null,
+      proposed_new_time: null
+    })
+    .eq('id', id)
+    .select()
+    .maybeSingle();
+
+  if (error) return fail(500, `The interview could not be moved: ${error.message}`);
+
+  await recordAudit(actor, {
+    action: 'Reschedule Vetting Interview',
+    details: `${existing.title || id}: moved to ${startsAt}.`,
+    entityType: 'interview',
+    entityId: id
+  });
+
+  const warnings: string[] = [];
+  if (existing.talent_id) {
+    const { data: talent } = await supabase
+      .from('talent_profiles').select('user_id').eq('id', existing.talent_id).maybeSingle();
+    if (talent?.user_id) {
+      const notified = await notifyUsers(String(talent.user_id), 'interview_rescheduled', {
+        when: startsAt,
+        roleTitle: existing.title || 'your interview'
+      });
+      warnings.push(...notified.warnings);
+    }
+  }
+
+  return { ok: true, status: 200, data: moved || existing, warnings };
+}
+
+/** Closing an interview out once the stage decision is taken. */
+export async function completeInterview(
+  actor: Actor,
+  input: { interviewId: string; outcome?: string | null }
+): Promise<ServiceResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  if (actor.kind === 'talent') return fail(403, 'Candidates cannot close out their own interviews.');
+
+  const id = String(input.interviewId || '').trim();
+  if (!id) return fail(400, 'Which interview?');
+
+  const supabase = getSupabaseClient();
+  const { data: existing } = await supabase
+    .from('interviews').select('id, title, status').eq('id', id).maybeSingle();
+  if (!existing) return fail(404, 'That interview does not exist.');
+
+  const { data, error } = await supabase
+    .from('interviews')
+    .update({
+      status: mapInterviewStatusToDb('Completed'),
+      outcome: input.outcome || null
+    })
+    .eq('id', id)
+    .select()
+    .maybeSingle();
+
+  if (error) return fail(500, `The interview was not closed out: ${error.message}`);
+
+  await recordAudit(actor, {
+    action: 'Complete Interview',
+    details: `${existing.title || id}: ${input.outcome || 'completed'}.`,
+    entityType: 'interview',
+    entityId: id
+  });
+
+  return { ok: true, status: 200, data: data || existing };
 }
