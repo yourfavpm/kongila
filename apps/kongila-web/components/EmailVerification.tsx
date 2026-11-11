@@ -19,7 +19,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Mascot } from '@kongila/ui';
 
-const CODE_LENGTH = 6;
+/**
+ * Eight, not six.
+ *
+ * Supabase's hosted documentation says `{{ .Token }}` is a 6-digit code and
+ * their local-development page says 8. The project sends 8, which settles
+ * it. Everything below reads this constant — the boxes, the paste handler,
+ * the submit guard and the wording — so if it ever changes this is the only
+ * line to touch.
+ */
+const CODE_LENGTH = 8;
 
 /** Supabase allows one confirmation email per user per 60 seconds. */
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -186,7 +195,7 @@ export default function EmailVerification({ email, onVerified, onChangeEmail }: 
         {status !== 'done' && (
           <>
             <div
-              style={{ display: 'flex', gap: 9, justifyContent: 'center', marginBottom: 20 }}
+              style={{ display: 'flex', gap: 'clamp(5px, 1.6vw, 8px)', justifyContent: 'center', marginBottom: 20 }}
               onPaste={e => {
                 const text = e.clipboardData.getData('text');
                 if (/\d/.test(text)) { e.preventDefault(); setDigit(0, text); }
@@ -205,10 +214,12 @@ export default function EmailVerification({ email, onVerified, onChangeEmail }: 
                   aria-label={`Digit ${i + 1}`}
                   disabled={status === 'verifying'}
                   style={{
-                    width: 50,
-                    height: 58,
+                    width: 'clamp(32px, 9.5vw, 46px)',
+                    height: 'clamp(42px, 12vw, 56px)',
+                    minWidth: 0,
+                    padding: 0,
                     textAlign: 'center',
-                    fontSize: 22,
+                    fontSize: 'clamp(16px, 4.4vw, 21px)',
                     fontWeight: 600,
                     color: '#0E1726',
                     borderRadius: 11,
