@@ -1,5 +1,4 @@
 import { apiFetch } from '../lib/apiFetch';
-import { createAccountWithEmailOtp, requestEmailOtp } from '../lib/emailOtpClient';
 import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
@@ -18,6 +17,7 @@ import { MascotLoader } from '../components/brand/MascotFeedback';
 import { SiteHeader, SiteFooter } from '../components/marketing/SiteChrome';
 import HomePage from '../components/marketing/HomePage';
 import ClientDashboard from '../components/ClientDashboard';
+import EmailVerification from '../components/EmailVerification';
 import SmartIntakeForm from '../components/SmartIntakeForm';
 
 // Custom Reusable High-Fidelity SVG Brand Logo component
@@ -192,8 +192,6 @@ export default function KongilaWeb() {
   // Auth Form Fields
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [signupOtp, setSignupOtp] = useState('');
-  const [signupOtpSent, setSignupOtpSent] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [companyInput, setCompanyInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -409,6 +407,22 @@ export default function KongilaWeb() {
   // Kept so provisioning can re-verify the signature server-side rather than
   // trusting the organisation and permission level held in client state.
   const [inviteTokenRaw, setInviteTokenRaw] = useState<string | null>(null);
+
+  /**
+   * A signup that exists in Supabase but has not been confirmed yet.
+   *
+   * With email confirmation on, signUp creates the account and returns no
+   * session. Everything that follows — provisioning the public.users row,
+   * the talent profile, the onboarding wizard — needs an authenticated
+   * caller, so it is held here until the code has been entered.
+   */
+  const [pendingSignup, setPendingSignup] = useState<{
+    role: 'talent' | 'client';
+    name: string;
+    email: string;
+    companyName?: string;
+    inviteToken?: string;
+  } | null>(null);
 
   useEffect(() => {
     // The bridge from the public site into the portal.
@@ -966,10 +980,6 @@ export default function KongilaWeb() {
       triggerBanner('Please fill in all credentials fields.', 'error');
       return;
     }
-    if (passwordInput.length < 8) {
-      triggerBanner('Use a password with at least 8 characters.', 'error');
-      return;
-    }
 
     // An invitation is bound to the address it was issued to. Without this,
     // a forwarded link would attach whoever opened it to that organisation at
@@ -987,85 +997,125 @@ export default function KongilaWeb() {
 
     try {
       setLoading(true);
-      if (!signupOtpSent) {
-        await requestEmailOtp(emailInput, 'signup');
-        setSignupOtpSent(true);
-        triggerBanner('If this address is eligible, a six-digit verification code is on its way.', 'info');
-        return;
-      }
-
-      const created = await createAccountWithEmailOtp({
+      let { data, error } = await supabase.auth.signUp({
         email: emailInput,
-        code: signupOtp,
         password: passwordInput,
-        role: authRole,
-        name: nameInput,
-        companyName: authRole === 'client' ? companyInput : undefined
+        options: {
+          // Where Supabase sends them after they click the link in the
+          // verification email. Without this it falls back to the project's
+          // Site URL, which is wrong in every environment but one.
+          emailRedirectTo: `${window.location.origin}/?authView=verified`,
+          data: {
+            full_name: nameInput,
+            role: authRole,
+            company_name: authRole === 'client' ? companyInput : undefined,
+          }
+        }
       });
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: emailInput,
-        password: passwordInput
-      });
-      if (error || !data.user) {
-        setSignupOtpSent(false);
-        setAuthView('login');
-        throw new Error('Your email is verified and account created. Sign in to continue.');
+
+      if (error && /already registered|already exists/i.test(error.message)) {
+        const existingAccount = await supabase.auth.signInWithPassword({
+          email: emailInput,
+          password: passwordInput
+        });
+        if (existingAccount.error) {
+          throw new Error(
+            'This email already has an account. Sign in with that account to finish setup.'
+          );
+        }
+        data = existingAccount.data;
+        error = null;
       }
+      if (error) throw error;
 
-      const authUserId = created.userId || data.user.id;
-
-      // The browser can no longer write public.users: UPDATE was revoked from
-      // authenticated and granted back on three harmless columns only, so the
-      // role column cannot be set from here. user_roles and roles are closed
-      // the same way. Provisioning is retried safely on signup and the next
-      // login, so a partial failure does not strand the auth account.
-      const provisionRes = await apiFetch('/api/account/provision', {
-        method: 'POST',
-        body: JSON.stringify({
+      // With confirmation on, signUp returns no session: the account exists
+      // but nobody is signed in. Provisioning is an authenticated call, so
+      // doing it now answers 401 and the signup dies at the last step with a
+      // message about not being able to finish creating the account. It
+      // waits for the code instead.
+      if (!data.session) {
+        setPendingSignup({
           role: authRole,
           name: nameInput,
           email: emailInput,
           companyName: authRole === 'client' ? companyInput : undefined,
           inviteToken: inviteTokenRaw || undefined
-        })
-      });
-      const provision = await provisionRes.json();
-      if (!provisionRes.ok || !provision?.ok) {
-        throw new Error(provision?.error || 'Could not finish creating your account.');
+        });
+        setAuthView('verify');
+        return;
       }
 
-      const newUser = {
-        id: authUserId,
+      await completeSignup({
+        role: authRole,
         name: nameInput,
         email: emailInput,
-        role: authRole,
-        onboardingStatus: 'incomplete',
-        emailVerified: true,
         companyName: authRole === 'client' ? companyInput : undefined,
-        createdAt: new Date().toISOString()
-      };
-
-      setCurrentUser(newUser);
-      await syncAuthSignupToDb(newUser);
-
-      if (authRole === 'talent') {
-        // Always use the name the user just typed — never fall back to stale metadata
-        setTalentOnboardingData(prev => ({
-          ...prev,
-          fullName: nameInput,
-        }));
-        setTalentWizardStep(1);
-        setAuthView('onboarding');
-      } else {
-        setAuthView(null);
-        setActiveTab('client');
-      }
-      triggerBanner('Account created successfully! Welcome to Kongila.', 'success');
+        inviteToken: inviteTokenRaw || undefined
+      });
     } catch (error: any) {
       triggerBanner(`Sign up failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Everything that happens once the account is real and signed in.
+   *
+   * Called straight after signUp when confirmation is off, and after the
+   * verification code when it is on. One path, so the two cannot drift.
+   */
+  const completeSignup = async (details: {
+    role: 'talent' | 'client';
+    name: string;
+    email: string;
+    companyName?: string;
+    inviteToken?: string;
+  }) => {
+    const provisionRes = await apiFetch('/api/account/provision', {
+      method: 'POST',
+      body: JSON.stringify({
+        role: details.role,
+        name: details.name,
+        email: details.email,
+        companyName: details.companyName,
+        inviteToken: details.inviteToken
+      })
+    });
+    const provision = await provisionRes.json().catch(() => ({}));
+    if (!provisionRes.ok || !provision?.ok) {
+      throw new Error(provision?.error || 'Could not finish creating your account.');
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authUserId = sessionData?.session?.user?.id || provision?.userId || crypto.randomUUID();
+
+    const newUser = {
+      id: authUserId,
+      name: details.name,
+      email: details.email,
+      role: details.role,
+      onboardingStatus: 'incomplete',
+      // True by the time this runs: either confirmation is off, or the code
+      // has just been accepted.
+      emailVerified: true,
+      companyName: details.companyName,
+      createdAt: new Date().toISOString()
+    };
+
+    setCurrentUser(newUser);
+    await syncAuthSignupToDb(newUser);
+    setPendingSignup(null);
+
+    if (details.role === 'talent') {
+      setTalentOnboardingData(prev => ({ ...prev, fullName: details.name }));
+      setTalentWizardStep(1);
+      setAuthView('onboarding');
+    } else {
+      setAuthView(null);
+      setActiveTab('client');
+    }
+    triggerBanner('Account created successfully! Welcome to Kongila.', 'success');
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -2128,6 +2178,21 @@ export default function KongilaWeb() {
         {/* UNIFIED AUTHENTICATION VIEWS (Sign-Up / Sign-In / Verification Modal) */}
         {/* ====================================================================== */}
         {/* Auth two-panel: only login / signup / verify — NOT onboarding */}
+        {authView === 'verify' && pendingSignup && (
+          <EmailVerification
+            email={pendingSignup.email}
+            onVerified={async () => {
+              try {
+                await completeSignup(pendingSignup);
+              } catch (err: any) {
+                triggerBanner(err?.message || 'Could not finish creating your account.', 'error');
+                setAuthView('signup');
+              }
+            }}
+            onChangeEmail={() => { setPendingSignup(null); setAuthView('signup'); }}
+          />
+        )}
+
         {(authView === 'login' || authView === 'signup') && !clientIntakeActive && (
           <div style={{
             minHeight: '100vh',
@@ -2407,11 +2472,7 @@ export default function KongilaWeb() {
                       type="email" 
                       className="form-input" 
                       value={emailInput}
-                      onChange={e => {
-                        setEmailInput(e.target.value);
-                        setSignupOtp('');
-                        setSignupOtpSent(false);
-                      }}
+                      onChange={e => setEmailInput(e.target.value)}
                       placeholder="e.g. tariq@gmail.com"
                     />
                   </div>
@@ -2449,45 +2510,6 @@ export default function KongilaWeb() {
                     </div>
                   </div>
 
-                  {signupOtpSent && (
-                    <div className="form-group">
-                      <label className="form-label" htmlFor="signup-email-otp">Six-digit email code</label>
-                      <input
-                        id="signup-email-otp"
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        className="form-input"
-                        value={signupOtp}
-                        onChange={e => setSignupOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        placeholder="000000"
-                      />
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-                        Enter the code sent to {emailInput}. It expires in 10 minutes.
-                        {' '}
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={async () => {
-                            try {
-                              setLoading(true);
-                              await requestEmailOtp(emailInput, 'signup');
-                              triggerBanner('If this address is eligible, a new code is on its way.', 'info');
-                            } catch (error: any) {
-                              triggerBanner(error?.message || 'Could not resend the code.', 'error');
-                            } finally {
-                              setLoading(false);
-                            }
-                          }}
-                          style={{ border: 0, background: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
-                        >
-                          Resend code
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
                   <button
                     type="submit"
                     disabled={loading}
@@ -2516,7 +2538,7 @@ export default function KongilaWeb() {
                         </svg>
                         Creating Account...
                       </>
-                    ) : signupOtpSent ? 'Verify Email & Create Account' : 'Send Verification Code'}
+                    ) : 'Create Account'}
                   </button>
                 </form>
                 )}
