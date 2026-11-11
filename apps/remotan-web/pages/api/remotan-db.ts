@@ -1,66 +1,32 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import fs from 'fs';
-import path from 'path';
+import { getRequestUser } from '@kongila/database';
 
-const DB_PATH = path.join(process.cwd(), '../../db.json');
+/**
+ * Retired.
+ *
+ * This read and wrote a `db.json` file on the server's own disk, with no
+ * authentication of any kind. A POST merged whatever body it was given
+ * into that file and returned `{ ok: true }`; a GET handed the whole
+ * thing back. Anyone who could reach the URL could read every talent,
+ * contract and organisation in it, and overwrite all of them.
+ *
+ * It also wrote to the filesystem, which on a serverless host is either
+ * read-only or a container that is thrown away, so the writes went
+ * nowhere even when they appeared to work.
+ *
+ * Remotan is dormant for the Kongila launch. The route is kept as a
+ * refusal rather than deleted so anything still calling it fails loudly
+ * instead of quietly reading a stale file.
+ */
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Still checks the session, so an unauthenticated caller gets 401 rather
+  // than a description of an endpoint they cannot use.
+  const actor = await getRequestUser(req);
+  if (!actor) return res.status(401).json({ error: 'Not authenticated' });
 
-function readDb() {
-  try {
-    const raw = fs.readFileSync(DB_PATH, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function writeDb(data: any) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
-
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === 'GET') {
-    const db = readDb();
-    return res.status(200).json({
-      // Core shared collections
-      talents: db.talents || [],
-      contracts: db.contracts || [],
-      organizations: db.organizations || [],
-      tasks: db.tasks || [],
-      agentLogs: db.agentLogs || [],
-      notifications: db.notifications || [],
-      interviews: db.interviews || [],
-      // Remotan-specific collections
-      remotanWorkspaces: db.remotanWorkspaces || [],
-      workspaceMembers: db.workspaceMembers || [],
-      workspaceInvitations: db.workspaceInvitations || [],
-      remotanProjects: db.remotanProjects || [],
-      remotanTasks: db.remotanTasks || [],
-      timeLogs: db.timeLogs || [],
-      gdprConsentRecords: db.gdprConsentRecords || [],
-      performanceReviewCycles: db.performanceReviewCycles || [],
-      remotanPerformanceReviews: db.remotanPerformanceReviews || [],
-      calendarEvents: db.calendarEvents || [],
-      workspaceMessages: db.workspaceMessages || [],
-      payrollEntries: db.payrollEntries || [],
-      complianceRecords: db.complianceRecords || [],
-      academyResources: db.academyResources || [],
-      academyEnrollments: db.academyEnrollments || [],
-      remotanAgentLogs: db.remotanAgentLogs || [],
-      remotanProjectMilestones: db.remotanProjectMilestones || [],
-      remotanTaskDependencies: db.remotanTaskDependencies || [],
-      remotanTaskComments: db.remotanTaskComments || [],
-      remotanTaskActivityLogs: db.remotanTaskActivityLogs || [],
-      remotanBoardColumns: db.remotanBoardColumns || [],
-    });
-  }
-
-  if (req.method === 'POST') {
-    const db = readDb();
-    const updates = req.body;
-    const merged = { ...db, ...updates };
-    writeDb(merged);
-    return res.status(200).json({ ok: true });
-  }
-
-  return res.status(405).json({ error: 'Method not allowed' });
+  return res.status(410).json({
+    error:
+      'This endpoint has been retired. It read and wrote an unauthenticated '
+      + 'db.json on the server disk. Remotan is dormant for this launch.'
+  });
 }

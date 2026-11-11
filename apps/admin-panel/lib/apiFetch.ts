@@ -21,5 +21,25 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-  return fetch(input, { ...init, headers });
+  // A request that never answers is worse than one that fails.
+  //
+  // fetch has no timeout of its own, so a route that hangs — a cold
+  // serverless function, a database connection that never comes back — leaves
+  // the caller awaiting for ever. Anything waiting on it waits for ever too,
+  // which is how a loading screen becomes a dead end rather than a delay.
+  // Thirty seconds is longer than any of these routes should take and short
+  // enough that a person has not given up yet.
+  const timeout = (init as any).timeoutMs ?? 30000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      headers,
+      signal: init.signal ?? controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }

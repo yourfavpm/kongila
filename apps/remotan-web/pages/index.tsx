@@ -173,6 +173,7 @@ const getDaysLeft = (date: string) => Math.max(0, Math.ceil((new Date(date).getT
 type Tab = 'home' | 'workspace' | 'tasks' | 'time' | 'performance' | 'calendar' | 'comms' | 'payroll' | 'compliance' | 'analytics' | 'academy' | 'settings';
 
 import { supabase } from '../lib/supabaseClient';
+import { apiFetch } from '../lib/apiFetch';
 import { Session } from '@supabase/supabase-js';
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
@@ -297,12 +298,11 @@ export default function RemotanPlatform() {
     const restoreSession = async (currentSession: Session) => {
       const authUser = currentSession.user;
       
-      // Fetch user role from public.users table
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', authUser.email)
-        .maybeSingle();
+      // The caller's own identity, resolved server-side. This selected
+      // from public.users in the browser; with RLS on that table it
+      // returns nothing, and it was never the right way to do it.
+      const meRes = await apiFetch('/api/session');
+      const dbUser = meRes.ok ? await meRes.json() : null;
       
       const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
       

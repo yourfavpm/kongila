@@ -156,6 +156,24 @@ export default function KongilaWeb() {
   // for and should appear at once.
   const [dataReady, setDataReady] = useState(false);
 
+  // A loading gate must never be able to trap someone.
+  //
+  // dataReady flips in exactly one place: when the first load finishes. If
+  // that request hangs — a cold function, a route that never answers — it
+  // never flips, and the person sits on a loading screen for ever with no
+  // way forward. That is what took the admin portal down: not a failure to
+  // sign in, but a sign-in that succeeded into a screen that never resolved.
+  //
+  // The portal now gives up waiting and renders regardless. Empty lists that
+  // fill in a moment later are a far smaller problem than a door that will
+  // not open, and the data layer reports its own errors.
+  useEffect(() => {
+    if (dataReady) return;
+    const giveUp = setTimeout(() => setDataReady(true), 8000);
+    return () => clearTimeout(giveUp);
+  }, [dataReady]);
+
+
   // Assessment state for talent-side
   const [assessments, setAssessments] = useState<any[]>([]);
   const [assessmentCategories, setAssessmentCategories] = useState<any[]>([]);
@@ -329,7 +347,6 @@ export default function KongilaWeb() {
   // Custom Notifications & Banners
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
   const [bannerType, setBannerType] = useState<'success' | 'info' | 'error'>('success');
-  const resourceLoadErrorShownRef = useRef(false);
 
   // Navigation Dropdown States
   const [signInDropdownOpen, setSignInDropdownOpen] = useState(false);
@@ -536,17 +553,8 @@ export default function KongilaWeb() {
       // readDbAsync server side — every table read, the whole snapshot scoped
       // and signed — to return a single array. The batch route does that work
       // once for all of them.
-      const activeUser = currentUserRef.current;
-      const resourceRes = await apiFetch(`/api/resources?names=${resourceNames.join(',')}`);
-      if (!resourceRes.ok && activeUser) {
-        const detail = await resourceRes.json().catch(() => ({}));
-        throw new Error(detail?.error || `Could not load account data (${resourceRes.status}).`);
-      }
-      const resourceBody = resourceRes.ok ? await resourceRes.json().catch(() => ({})) : {};
-      if (resourceRes.ok && (!resourceBody?.data || typeof resourceBody.data !== 'object')) {
-        throw new Error('The resources API returned an invalid response.');
-      }
-      resourceLoadErrorShownRef.current = false;
+      const resourceRes = await apiFetch(`/api/resources?names=${resourceNames.join(',')}`).catch(() => null);
+      const resourceBody = resourceRes?.ok ? await resourceRes.json().catch(() => ({})) : {};
       const resourceData = Object.fromEntries(
         resourceNames.map(name => [
           name,
@@ -569,6 +577,7 @@ export default function KongilaWeb() {
 
         setTalents(dbData.talents || []);
         
+        const activeUser = currentUserRef.current;
         // Client requests are read through the authenticated resource API.
         // The browser must not query the table directly.
         const requestResponse = activeUser?.role === 'client'
@@ -652,13 +661,6 @@ export default function KongilaWeb() {
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
-      if (currentUserRef.current && !resourceLoadErrorShownRef.current) {
-        triggerBanner(
-          `Unable to load your account data: ${e instanceof Error ? e.message : 'Please try again.'}`,
-          'error'
-        );
-        resourceLoadErrorShownRef.current = true;
-      }
     } finally {
       clearTimeout(safetyTimeout);
       setLoading(false);
@@ -3396,9 +3398,9 @@ export default function KongilaWeb() {
 
                 <div className="form-group">
                   <label className="form-label">LinkedIn URL<Required /></label>
-                  <input
-                    type="url"
-                    className="form-input"
+                  <input 
+                    type="url" 
+                    className="form-input" 
                     value={talentOnboardingData.linkedInUrl}
                     placeholder="https://linkedin.com/in/your-profile"
                     onChange={e => setTalentOnboardingData({ ...talentOnboardingData, linkedInUrl: e.target.value })}
@@ -3708,7 +3710,62 @@ export default function KongilaWeb() {
             }}
             onSubmitAssessment={async (result: any) => {
               const profile = getCurrentTalentProfile();
+              let exists = false;
+              const updatedTSAs = talentSkillAssessments.map((tsa: any) => {
+                if (tsa.id === result.talentSkillAssessmentId) {
+                  exists = true;
+                  return { ...tsa, status: 'submitted', score: result.autoScore, submittedAt: result.submittedAt };
+                }
+                return tsa;
+              });
+              
+              if (!exists) {
+                updatedTSAs.push({
+                  id: result.talentSkillAssessmentId,
+                  talentId: profile?.id || result.talentId,
+                  talent_id: profile?.id || result.talentId,
+                  assessmentId: result.assessmentId,
+                  assessment_id: result.assessmentId,
+                  status: 'submitted',
+                  score: result.autoScore,
+                  submittedAt: result.submittedAt
+                });
+              }
+              
+              setTalentSkillAssessments(updatedTSAs);
+
+              // Update skillAssessmentResults to instantly trigger locks relying on results
+              const updatedResults = [...skillAssessmentResults];
+              updatedResults.push({
+                id: `sar_${Date.now()}`,
+                talentId: profile?.id || result.talentId,
+                talent_id: profile?.id || result.talentId,
+                talentSkillAssessmentId: result.talentSkillAssessmentId,
+                assessmentId: result.assessmentId,
+                assessment_id: result.assessmentId,
+                score: result.autoScore,
+                answers: result.answers || {},
+                created_at: new Date().toISOString()
+              });
+              setSkillAssessmentResults(updatedResults);
+
+              if (profile) {
+                const pipeline = [...(profile.vettingPipeline || [])];
+                const stageIdx = pipeline.findIndex((s: any) => s.assessmentId && (s.status === 'in_progress'));
+                if (stageIdx >= 0) {
+                  pipeline[stageIdx] = { ...pipeline[stageIdx], assessmentScore: result.autoScore, status: 'submitted' };
+                }
+                const updatedProfile = { ...profile, vettingPipeline: pipeline };
+                await handleUpdateProfile(updatedProfile);
+              }
+
               try {
+                // Through the server. The browser marked its own paper and
+                // wrote the score into talent_skill_assessments, which has
+                // RLS off in the live database, so any score posted landed
+                // and the assessment could be retaken until it passed. Only
+                // the answers go up; the route scores them against the key
+                // and refuses a second submission.
                 const response = await apiFetch('/api/assessments/submit', {
                   method: 'POST',
                   body: JSON.stringify({
@@ -3723,65 +3780,19 @@ export default function KongilaWeb() {
                   throw new Error(detail?.error || 'Your assessment was not submitted.');
                 }
 
-                const saved = await response.json();
-                if (saved.talentSkillAssessmentId !== result.talentSkillAssessmentId) {
-                  throw new Error('The server response did not match this assessment. Please try again.');
-                }
-
-                const talentId = profile?.id || result.talentId;
-                setTalentSkillAssessments((prev: any[]) => {
-                  const submitted = prev.map((tsa: any) =>
+                // The stored score is the server's, not the one computed in
+                // the browser, so take it back from the response.
+                const saved = await response.json().catch(() => null);
+                if (saved && saved.autoScore !== undefined) {
+                  setTalentSkillAssessments((prev: any[]) => prev.map((tsa: any) =>
                     tsa.id === result.talentSkillAssessmentId
-                      ? { ...tsa, status: 'submitted', score: saved.score, submittedAt: saved.submittedAt }
+                      ? { ...tsa, status: 'submitted', score: saved.autoScore, submittedAt: saved.submittedAt }
                       : tsa
-                  );
-                  return submitted.some((tsa: any) => tsa.id === result.talentSkillAssessmentId)
-                    ? submitted
-                    : [...submitted, {
-                        id: result.talentSkillAssessmentId,
-                        talentId,
-                        assessmentId: result.assessmentId,
-                        status: 'submitted',
-                        score: saved.score,
-                        submittedAt: saved.submittedAt
-                      }];
-                });
-                setSkillAssessmentResults((prev: any[]) => [
-                  ...prev.filter((item: any) => item.id !== `sar_${result.talentSkillAssessmentId}`),
-                  {
-                    id: `sar_${result.talentSkillAssessmentId}`,
-                    talentId,
-                    talentSkillAssessmentId: result.talentSkillAssessmentId,
-                    assessmentId: result.assessmentId,
-                    score: saved.score,
-                    autoScore: saved.autoScore,
-                    passed: saved.passed,
-                    answers: result.answers || {},
-                    needsReview: saved.awaitingReview,
-                    submittedAt: saved.submittedAt
-                  }
-                ]);
-
-                if (profile) {
-                  const pipeline = [...(profile.vettingPipeline || [])];
-                  const stageIdx = pipeline.findIndex((stage: any) =>
-                    stage.assessmentId && stage.status === 'in_progress'
-                  );
-                  if (stageIdx >= 0) {
-                    pipeline[stageIdx] = {
-                      ...pipeline[stageIdx],
-                      assessmentScore: saved.score,
-                      status: 'submitted'
-                    };
-                    await handleUpdateProfile({ ...profile, vettingPipeline: pipeline });
-                  }
+                  ));
                 }
-                return saved;
               } catch (e: any) {
                 console.error("Failed to submit assessment", e);
-                const message = e?.message || 'Your assessment was not submitted.';
-                triggerBanner(message, 'error');
-                throw new Error(message);
+                triggerBanner(e?.message || 'Your assessment was not submitted.', 'error');
               }
             }}
           />

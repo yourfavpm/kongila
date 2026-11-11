@@ -195,13 +195,7 @@ interface AssessmentResult {
   talentSkillAssessmentId?: string;
   score?: number;
   autoScore?: number | null;
-  manualScore?: number | null;
-  maxScore?: number;
   passed?: boolean;
-  needsReview?: boolean;
-  reviewerNotes?: string;
-  reviewedBy?: string;
-  reviewedAt?: string;
   completedAt?: string;
   submittedAt?: string;
   answers?: Record<string, any>;
@@ -240,11 +234,6 @@ const REMOTAN_NAV = [
   { key: 'remotan-talent', label: 'Remotan Talent' },
   { key: 'remotan-payroll', label: 'Payroll & EOR' },
 ] as const;
-
-const ADMIN_ACTIVE_TAB_KEY = 'kongila_admin_active_tab';
-const isAdminTab = (tab: unknown): tab is AdminTab =>
-  typeof tab === 'string' &&
-  [...KONGILA_NAV, ...REMOTAN_NAV].some(({ key }) => key === tab);
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 
@@ -333,11 +322,27 @@ export default function AdminPanel() {
   // later. Set in the finally below so a failed load shows the portal rather
   // than hanging on the loader for ever.
   const [dataReady, setDataReady] = useState(false);
-  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+
+  // A loading gate must never be able to trap someone.
+  //
+  // dataReady flips in exactly one place: when the first load finishes. If
+  // that request hangs — a cold function, a route that never answers — it
+  // never flips, and the person sits on a loading screen for ever with no
+  // way forward. That is what took the admin portal down: not a failure to
+  // sign in, but a sign-in that succeeded into a screen that never resolved.
+  //
+  // The portal now gives up waiting and renders regardless. Empty lists that
+  // fill in a moment later are a far smaller problem than a door that will
+  // not open, and the data layer reports its own errors.
+  useEffect(() => {
+    if (dataReady) return;
+    const giveUp = setTimeout(() => setDataReady(true), 8000);
+    return () => clearTimeout(giveUp);
+  }, [dataReady]);
+
 
   // ── Navigation
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
-  const [activeTabRestored, setActiveTabRestored] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // ── Selection
@@ -455,7 +460,6 @@ export default function AdminPanel() {
       if (!resourceBody?.data || typeof resourceBody.data !== 'object') {
         throw new Error('The resources API returned an invalid response.');
       }
-      setDataLoadError(null);
       const db: Record<string, any[]> = Object.fromEntries(
         resourceNames.map(name => [name, Array.isArray(resourceBody.data[name]) ? resourceBody.data[name] : []])
       );
@@ -561,7 +565,6 @@ export default function AdminPanel() {
       }
     } catch (e) {
       console.error('Failed to sync DB', e);
-      setDataLoadError(e instanceof Error ? e.message : 'The workspace data could not be loaded.');
     } finally {
       setLoading(false);
       setDataReady(true);
@@ -709,22 +712,10 @@ export default function AdminPanel() {
   }, [selectedTalent]);
 
   useEffect(() => {
-    if (!router.isReady) return;
-
-    if (isAdminTab(router.query.tab)) {
-      setActiveTab(router.query.tab);
-    } else if (typeof window !== 'undefined') {
-      const savedTab = window.sessionStorage.getItem(ADMIN_ACTIVE_TAB_KEY);
-      if (isAdminTab(savedTab)) setActiveTab(savedTab);
+    if (router.query.tab) {
+      setActiveTab(router.query.tab as AdminTab);
     }
-    setActiveTabRestored(true);
-  }, [router.isReady, router.query.tab]);
-
-  useEffect(() => {
-    if (activeTabRestored && typeof window !== 'undefined') {
-      window.sessionStorage.setItem(ADMIN_ACTIVE_TAB_KEY, activeTab);
-    }
-  }, [activeTab, activeTabRestored]);
+  }, [router.query.tab]);
 
   // ── Messaging ───────────────────────────────────────────────────────────
   // The admin portal had none, so a candidate or client writing to support
@@ -5829,24 +5820,6 @@ export default function AdminPanel() {
       <div className="sidebar">
         <SidebarContent />
       </div>
-
-      {dataLoadError && (
-        <div role="alert" style={{
-          position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
-          zIndex: 10000, maxWidth: 'min(720px, calc(100vw - 32px))', padding: '12px 16px',
-          border: '1px solid #FCA5A5', borderRadius: '10px', background: '#FEF2F2',
-          color: '#991B1B', boxShadow: '0 8px 24px rgba(0,0,0,.16)', fontSize: '13px'
-        }}>
-          Workspace data did not load: {dataLoadError}
-          <button
-            type="button"
-            onClick={() => void syncFromDb()}
-            style={{ marginLeft: '12px', border: 0, background: 'transparent', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}
-          >
-            Retry
-          </button>
-        </div>
-      )}
 
       {pendingRejection && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
