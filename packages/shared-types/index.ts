@@ -1194,8 +1194,8 @@ export interface SupportMessage {
 
 export interface Interview {
   id: string;
-  requestId: string;
-  matchId: string;
+  requestId?: string;
+  matchId?: string;
   talentId: string;
   talentName: string;
   talentAvatar?: string;
@@ -1203,6 +1203,10 @@ export interface Interview {
   title: string;
   date: string;
   time: string;
+  scheduledTime?: string;
+  scheduledTimezone?: string;
+  talentTimezone?: string;
+  rescheduledFrom?: string;
   /**
    * The five original values did not include the states the product can
    * actually reach. 'Reschedule Requested' is what the reader returns when
