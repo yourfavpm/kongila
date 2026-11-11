@@ -4,7 +4,7 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**"],
-      "env": ["SUPABASE_SERVICE_ROLE_KEY", "RESEND_API_KEY"]
+      "env": ["SUPABASE_SERVICE_ROLE_KEY", "RESEND_API_KEY", "OTP_HASH_SECRET"]
     },
     "dev": {
       "cache": false,

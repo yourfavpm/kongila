@@ -1,4 +1,5 @@
 import { apiFetch } from '../lib/apiFetch';
+import { createAccountWithEmailOtp, requestEmailOtp } from '../lib/emailOtpClient';
 import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
@@ -191,6 +192,8 @@ export default function KongilaWeb() {
   // Auth Form Fields
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [signupOtp, setSignupOtp] = useState('');
+  const [signupOtpSent, setSignupOtpSent] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [companyInput, setCompanyInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -963,6 +966,10 @@ export default function KongilaWeb() {
       triggerBanner('Please fill in all credentials fields.', 'error');
       return;
     }
+    if (passwordInput.length < 8) {
+      triggerBanner('Use a password with at least 8 characters.', 'error');
+      return;
+    }
 
     // An invitation is bound to the address it was issued to. Without this,
     // a forwarded link would attach whoever opened it to that organisation at
@@ -980,38 +987,32 @@ export default function KongilaWeb() {
 
     try {
       setLoading(true);
-      let { data, error } = await supabase.auth.signUp({
-        email: emailInput,
-        password: passwordInput,
-        options: {
-          // Where Supabase sends them after they click the link in the
-          // verification email. Without this it falls back to the project's
-          // Site URL, which is wrong in every environment but one.
-          emailRedirectTo: `${window.location.origin}/?authView=verified`,
-          data: {
-            full_name: nameInput,
-            role: authRole,
-            company_name: authRole === 'client' ? companyInput : undefined,
-          }
-        }
-      });
-
-      if (error && /already registered|already exists/i.test(error.message)) {
-        const existingAccount = await supabase.auth.signInWithPassword({
-          email: emailInput,
-          password: passwordInput
-        });
-        if (existingAccount.error) {
-          throw new Error(
-            'This email already has an account. Sign in with that account to finish setup.'
-          );
-        }
-        data = existingAccount.data;
-        error = null;
+      if (!signupOtpSent) {
+        await requestEmailOtp(emailInput, 'signup');
+        setSignupOtpSent(true);
+        triggerBanner('If this address is eligible, a six-digit verification code is on its way.', 'info');
+        return;
       }
-      if (error) throw error;
 
-      const authUserId = data.user?.id || crypto.randomUUID();
+      const created = await createAccountWithEmailOtp({
+        email: emailInput,
+        code: signupOtp,
+        password: passwordInput,
+        role: authRole,
+        name: nameInput,
+        companyName: authRole === 'client' ? companyInput : undefined
+      });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailInput,
+        password: passwordInput
+      });
+      if (error || !data.user) {
+        setSignupOtpSent(false);
+        setAuthView('login');
+        throw new Error('Your email is verified and account created. Sign in to continue.');
+      }
+
+      const authUserId = created.userId || data.user.id;
 
       // The browser can no longer write public.users: UPDATE was revoked from
       // authenticated and granted back on three harmless columns only, so the
@@ -1039,7 +1040,7 @@ export default function KongilaWeb() {
         email: emailInput,
         role: authRole,
         onboardingStatus: 'incomplete',
-        emailVerified: false,
+        emailVerified: true,
         companyName: authRole === 'client' ? companyInput : undefined,
         createdAt: new Date().toISOString()
       };
@@ -2406,7 +2407,11 @@ export default function KongilaWeb() {
                       type="email" 
                       className="form-input" 
                       value={emailInput}
-                      onChange={e => setEmailInput(e.target.value)}
+                      onChange={e => {
+                        setEmailInput(e.target.value);
+                        setSignupOtp('');
+                        setSignupOtpSent(false);
+                      }}
                       placeholder="e.g. tariq@gmail.com"
                     />
                   </div>
@@ -2444,6 +2449,45 @@ export default function KongilaWeb() {
                     </div>
                   </div>
 
+                  {signupOtpSent && (
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="signup-email-otp">Six-digit email code</label>
+                      <input
+                        id="signup-email-otp"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        className="form-input"
+                        value={signupOtp}
+                        onChange={e => setSignupOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="000000"
+                      />
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                        Enter the code sent to {emailInput}. It expires in 10 minutes.
+                        {' '}
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={async () => {
+                            try {
+                              setLoading(true);
+                              await requestEmailOtp(emailInput, 'signup');
+                              triggerBanner('If this address is eligible, a new code is on its way.', 'info');
+                            } catch (error: any) {
+                              triggerBanner(error?.message || 'Could not resend the code.', 'error');
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          style={{ border: 0, background: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                        >
+                          Resend code
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <button
                     type="submit"
                     disabled={loading}
@@ -2472,7 +2516,7 @@ export default function KongilaWeb() {
                         </svg>
                         Creating Account...
                       </>
-                    ) : 'Create Account'}
+                    ) : signupOtpSent ? 'Verify Email & Create Account' : 'Send Verification Code'}
                   </button>
                 </form>
                 )}

@@ -1,4 +1,5 @@
 import { apiFetch } from '../lib/apiFetch';
+import { createAccountWithEmailOtp, requestEmailOtp } from '../lib/emailOtpClient';
 import React, { useState, useEffect } from 'react';
 import { GlassCard, NeonButton } from '@kongila/ui';
 import { supabase } from '../lib/supabaseClient';
@@ -32,6 +33,9 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   const [confirmation, setConfirmation] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [signupOtp, setSignupOtp] = useState('');
+  const [signupOtpRequested, setSignupOtpRequested] = useState(false);
+  const [otpMessage, setOtpMessage] = useState('');
   const [phoneCodeSearch, setPhoneCodeSearch] = useState('');
   const [showPhoneCodeDropdown, setShowPhoneCodeDropdown] = useState(false);
 
@@ -205,6 +209,8 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         if (!authData.tosAccepted) throw new Error('You must accept the Terms of Service.');
         
         if (authData.mode === 'signup') {
+          if (!authData.businessEmail.trim()) throw new Error('Enter your business email address.');
+          if (authData.password.length < 8) throw new Error('Use a password with at least 8 characters.');
           // Checked here as well as on the server. Provisioning refuses a
           // client account with no company name rather than inventing one, and
           // a 400 arriving after the whole request has been typed out is a poor
@@ -223,14 +229,32 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
             console.warn('Free email domain detected. We recommend a business email.');
           }
 
-          const { data: authRes, error: signUpErr } = await supabase.auth.signUp({
-            email: authData.businessEmail,
-            password: authData.password,
-            options: { data: { name: authData.fullName, role: 'client' } }
-          });
-          if (signUpErr) throw signUpErr;
+          if (!signupOtpRequested) {
+            const result = await requestEmailOtp(authData.businessEmail, 'signup');
+            setSignupOtpRequested(true);
+            setOtpMessage(result.message || 'If eligible, a six-digit code is on its way.');
+            setIsSubmitting(false);
+            return;
+          }
 
-          finalUserId = authRes.user?.id || crypto.randomUUID();
+          const created = await createAccountWithEmailOtp({
+            email: authData.businessEmail,
+            code: signupOtp,
+            password: authData.password,
+            role: 'client',
+            name: authData.fullName,
+            companyName: authData.companyName
+          });
+          const { data: authRes, error: signInError } = await supabase.auth.signInWithPassword({
+            email: authData.businessEmail,
+            password: authData.password
+          });
+          if (signInError || !authRes.user) {
+            setSignupOtpRequested(false);
+            throw new Error('Your email is verified and account created. Sign in to continue.');
+          }
+
+          finalUserId = created.userId || authRes.user.id;
           finalClientName = `${authData.fullName} (${authData.companyName})`;
 
           // Users, organisation and client profile are created server-side in
@@ -822,12 +846,14 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
       
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
         <button 
-          onClick={() => setAuthData({...authData, mode: 'signup'})} 
+          type="button"
+          onClick={() => { setAuthData({...authData, mode: 'signup'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}
           style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid', borderColor: authData.mode === 'signup' ? 'var(--accent-purple)' : 'transparent', background: authData.mode === 'signup' ? 'var(--accent-purple-glow)' : 'transparent', color: authData.mode === 'signup' ? 'var(--accent-purple)' : 'var(--text-secondary)', cursor: 'pointer' }}>
           Create Account
         </button>
         <button 
-          onClick={() => setAuthData({...authData, mode: 'login'})} 
+          type="button"
+          onClick={() => { setAuthData({...authData, mode: 'login'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}
           style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid', borderColor: authData.mode === 'login' ? 'var(--accent-purple)' : 'transparent', background: authData.mode === 'login' ? 'var(--accent-purple-glow)' : 'transparent', color: authData.mode === 'login' ? 'var(--accent-purple)' : 'var(--text-secondary)', cursor: 'pointer' }}>
           Sign In
         </button>
@@ -905,7 +931,17 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
 
       <div className="form-group">
         <label className="form-label">Business Email</label>
-        <input type="email" className="form-input" value={authData.businessEmail} onChange={e => setAuthData({...authData, businessEmail: e.target.value})} />
+        <input
+          type="email"
+          className="form-input"
+          value={authData.businessEmail}
+          onChange={e => {
+            setAuthData({...authData, businessEmail: e.target.value});
+            setSignupOtpRequested(false);
+            setSignupOtp('');
+            setOtpMessage('');
+          }}
+        />
       </div>
       <div className="form-group">
         <label className="form-label">Password</label>
@@ -949,6 +985,45 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           </button>
         </div>
       </div>
+
+      {authData.mode === 'signup' && signupOtpRequested && (
+        <div className="form-group">
+          <label className="form-label" htmlFor="intake-email-otp">Six-digit email code</label>
+          <input
+            id="intake-email-otp"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            className="form-input"
+            value={signupOtp}
+            onChange={e => setSignupOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="000000"
+          />
+          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+            {otpMessage || `Enter the code sent to ${authData.businessEmail}. It expires in 10 minutes.`}
+            {' '}
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={async () => {
+                try {
+                  setIsSubmitting(true);
+                  const result = await requestEmailOtp(authData.businessEmail, 'signup');
+                  setOtpMessage(result.message || 'If eligible, a new code is on its way.');
+                } catch (error: any) {
+                  setErrorMsg(error?.message || 'Could not resend the code.');
+                } finally {
+                  setIsSubmitting(false);
+                }
+              }}
+              style={{ border: 0, background: 'none', color: 'var(--kongila-blue, #2563EB)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+            >
+              Resend code
+            </button>
+          </div>
+        </div>
+      )}
 
       {authData.mode === 'signup' && (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '8px' }}>
@@ -1115,7 +1190,13 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               onClick={submitRequest} 
               disabled={isSubmitting || (authData.mode === 'signup' && !authData.tosAccepted)}
             >
-              {isSubmitting ? 'Submitting...' : 'Submit Request'}
+              {isSubmitting
+                ? 'Submitting...'
+                : authData.mode === 'signup' && signupOtpRequested
+                  ? 'Verify Email & Submit Request'
+                  : authData.mode === 'signup'
+                    ? 'Send Verification Code'
+                    : 'Sign In & Submit Request'}
             </NeonButton>
           )}
         </div>

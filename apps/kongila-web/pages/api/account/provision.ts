@@ -67,7 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ── users ────────────────────────────────────────────────────────────────
     const { data: existingUser, error: existingUserError } = await supabase
-      .from('users').select('role, name').eq('id', userId).maybeSingle();
+      .from('users').select('role, name, email_verified').eq('id', userId).maybeSingle();
     if (existingUserError) {
       console.error('[account/provision] users lookup failed:', existingUserError.message);
       return res.status(500).json({ error: 'Could not verify your account record.' });
@@ -90,18 +90,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         password_hash: 'auth_managed',
         role,
         status: role === 'talent' ? 'inactive' : 'active',
-        email_verified: false
+        email_verified: auth.emailConfirmed
       });
       if (userError) {
         console.error('[account/provision] users insert failed:', userError.message);
         return res.status(500).json({ error: `Could not create your account record: ${userError.message}` });
       }
-    } else if (personName && !String((existingUser as any).name || '').trim()) {
+    } else if (
+      (personName && !String((existingUser as any).name || '').trim())
+      || (auth.emailConfirmed && !existingUser.email_verified)
+    ) {
       // An account provisioned before the line above existed. Fill the name in
       // on the next pass rather than leaving it blank for ever. A name the
       // person has already set is never overwritten.
       const { error: nameError } = await supabase
-        .from('users').update({ name: personName }).eq('id', userId);
+        .from('users').update({
+          ...(personName && !String((existingUser as any).name || '').trim() ? { name: personName } : {}),
+          ...(auth.emailConfirmed ? { email_verified: true } : {})
+        }).eq('id', userId);
       if (nameError) {
         console.warn('[account/provision] users name backfill failed:', nameError.message);
       }

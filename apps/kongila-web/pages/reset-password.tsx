@@ -1,81 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Head from 'next/head';
+import { requestEmailOtp, resetPasswordWithEmailOtp } from '../lib/emailOtpClient';
 import { supabase } from '../lib/supabaseClient';
 
-/**
- * Password reset.
- *
- * There was no account recovery path of any kind. A user who forgot their
- * password had no way back in, and nothing in the product said so.
- *
- * Two halves on one page, because Supabase brings the user back here with a
- * recovery session in the URL:
- *
- *   1. Signed out, no recovery session: ask for an email address and send
- *      the link.
- *   2. Arriving from that link: Supabase has put a recovery session in
- *      place, so ask for the new password and set it.
- *
- * The request half deliberately gives the same answer whether or not the
- * address exists. Saying "no account with that email" tells anyone who asks
- * which addresses are registered.
- */
 export default function ResetPassword() {
-  const [stage, setStage] = useState<'request' | 'set' | 'checking'>('checking');
+  const [stage, setStage] = useState<'request' | 'verify'>('request');
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    // Supabase puts the recovery token in the URL fragment and exchanges it
-    // for a session as the client starts, so the session is what to check.
-    const decide = async () => {
-      const { data } = await supabase.auth.getSession();
-      const isRecovery = typeof window !== 'undefined'
-        && window.location.hash.includes('type=recovery');
-      if (cancelled) return;
-      setStage(data.session && isRecovery ? 'set' : 'request');
-    };
-
-    const { data: listener } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') setStage('set');
-    });
-
-    decide();
-    return () => {
-      cancelled = true;
-      listener?.subscription?.unsubscribe();
-    };
-  }, []);
-
-  const requestLink = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const requestCode = async () => {
     if (busy) return;
     setBusy(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/reset-password`
-    });
+    try {
+      const result = await requestEmailOtp(email.trim(), 'password_reset');
+      setStage('verify');
+      setMessage({
+        kind: 'ok',
+        text: result.message || 'If an account exists for that address, a six-digit code is on its way.'
+      });
+    } catch (error: any) {
+      setMessage({ kind: 'error', text: error?.message || 'Could not request a reset code.' });
+    } finally {
+      setBusy(false);
+    }
+  };
 
-    if (error) console.error('[reset-password] request failed:', error.message);
-
-    // Same answer either way, deliberately. See the note at the top.
-    setMessage({
-      kind: 'ok',
-      text: 'If there is an account for that address, a reset link is on its way. Check your inbox and your spam folder.'
-    });
-    setBusy(false);
+  const submitRequestCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await requestCode();
   };
 
   const setNewPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
 
+    if (!/^\d{6}$/.test(code)) {
+      setMessage({ kind: 'error', text: 'Enter the six-digit code from your email.' });
+      return;
+    }
     if (password.length < 8) {
       setMessage({ kind: 'error', text: 'Use at least 8 characters.' });
       return;
@@ -88,15 +56,16 @@ export default function ResetPassword() {
     setBusy(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) {
-      setMessage({ kind: 'error', text: error.message });
+    try {
+      await resetPasswordWithEmailOtp({ email: email.trim(), code, password });
+      await supabase.auth.signOut();
+      setMessage({ kind: 'ok', text: 'Your password is set. Taking you to sign in.' });
+      setTimeout(() => { window.location.href = '/login'; }, 1500);
+    } catch (error: any) {
+      setMessage({ kind: 'error', text: error?.message || 'Could not reset the password.' });
+    } finally {
       setBusy(false);
-      return;
     }
-
-    setMessage({ kind: 'ok', text: 'Your password is set. Taking you to sign in.' });
-    setTimeout(() => { window.location.href = '/'; }, 1500);
   };
 
   const card: React.CSSProperties = {
@@ -142,16 +111,16 @@ export default function ResetPassword() {
       }}>
         <div style={card}>
           <h1 style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', margin: '0 0 8px 0' }}>
-            {stage === 'set' ? 'Choose a new password' : 'Reset your password'}
+            {stage === 'verify' ? 'Choose a new password' : 'Reset your password'}
           </h1>
           <p style={{ fontSize: '14px', color: '#64748B', margin: '0 0 24px 0' }}>
-            {stage === 'set'
-              ? 'Pick something you have not used here before.'
-              : 'We will email you a link to set a new one.'}
+            {stage === 'verify'
+              ? `Enter the six-digit code sent to ${email}.`
+              : 'We will email you a six-digit reset code.'}
           </p>
 
           {message && (
-            <div style={{
+            <div role="status" style={{
               padding: '12px 14px',
               borderRadius: '10px',
               marginBottom: '16px',
@@ -164,12 +133,8 @@ export default function ResetPassword() {
             </div>
           )}
 
-          {stage === 'checking' && (
-            <p style={{ fontSize: '14px', color: '#94A3B8' }}>One moment.</p>
-          )}
-
-          {stage === 'request' && (
-            <form onSubmit={requestLink}>
+          {stage === 'request' ? (
+            <form onSubmit={submitRequestCode}>
               <input
                 style={input}
                 type="email"
@@ -180,39 +145,80 @@ export default function ResetPassword() {
                 autoComplete="email"
               />
               <button style={button} type="submit" disabled={busy}>
-                {busy ? 'Sending...' : 'Send the reset link'}
+                {busy ? 'Sending...' : 'Send reset code'}
               </button>
             </form>
-          )}
-
-          {stage === 'set' && (
-            <form onSubmit={setNewPassword}>
-              <input
-                style={input}
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="New password"
-                autoComplete="new-password"
-              />
-              <input
-                style={input}
-                type="password"
-                required
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-                placeholder="Confirm new password"
-                autoComplete="new-password"
-              />
-              <button style={button} type="submit" disabled={busy}>
-                {busy ? 'Saving...' : 'Set my password'}
+          ) : (
+            <>
+              <form onSubmit={setNewPassword}>
+                <input
+                  style={input}
+                  type="email"
+                  required
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  autoComplete="email"
+                  aria-label="Email address"
+                />
+                <input
+                  style={input}
+                  type="text"
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={code}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Six-digit code"
+                  aria-label="Six-digit email code"
+                />
+                <input
+                  style={input}
+                  type="password"
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="New password"
+                  autoComplete="new-password"
+                />
+                <input
+                  style={input}
+                  type="password"
+                  required
+                  minLength={8}
+                  value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                />
+                <button style={button} type="submit" disabled={busy}>
+                  {busy ? 'Saving...' : 'Set my password'}
+                </button>
+              </form>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={requestCode}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  marginTop: '10px',
+                  background: 'transparent',
+                  border: 0,
+                  color: '#0047CC',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: busy ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Resend code
               </button>
-            </form>
+            </>
           )}
 
           <p style={{ fontSize: '13px', color: '#94A3B8', marginTop: '20px', textAlign: 'center' }}>
-            <a href="/" style={{ color: '#0047CC', textDecoration: 'none', fontWeight: 600 }}>
+            <a href="/login" style={{ color: '#0047CC', textDecoration: 'none', fontWeight: 600 }}>
               Back to sign in
             </a>
           </p>
