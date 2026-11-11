@@ -79,11 +79,16 @@ export default function EmailVerification({ email, onVerified, onChangeEmail }: 
       }
 
       if (!data?.session) {
-        // Verification succeeded without a session, which the rest of the
-        // flow cannot proceed from. Rare, and worth saying plainly.
-        setStatus('error');
-        setMessage('Your email is verified, but we could not sign you in. Try signing in now.');
-        return;
+        // Verified, but no session came back. That happens when the person
+        // was already signed in on an unconfirmed account: the confirmation
+        // lands on the existing session rather than issuing a new one, so
+        // check for one before calling this a failure.
+        const { data: existing } = await supabase.auth.getSession();
+        if (!existing?.session) {
+          setStatus('error');
+          setMessage('Your email is verified, but we could not sign you in. Try signing in now.');
+          return;
+        }
       }
 
       setStatus('done');

@@ -722,6 +722,32 @@ export default function KongilaWeb() {
   useEffect(() => {
     const restoreUserFromSession = async (session: Session) => {
       const authUser = session.user;
+
+      // An unverified address never reaches a dashboard.
+      //
+      // This function routes by role and clears authView, and it runs from
+      // onAuthStateChange — which fires the moment a session appears. For an
+      // account that has signed up but not confirmed, that overrode the code
+      // screen a beat after it rendered and dropped them into onboarding, so
+      // verification could be skipped by doing nothing at all.
+      //
+      // Supabase's own confirmation timestamp decides. When it is absent the
+      // person goes to the code screen instead, whichever way they arrived —
+      // a fresh signup, or signing in later to an account they never
+      // finished confirming.
+      const confirmedAt =
+        (authUser as any)?.email_confirmed_at || (authUser as any)?.confirmed_at || null;
+      if (!confirmedAt) {
+        setPendingSignup(prev => prev || {
+          role: ((authUser.user_metadata?.role as any) === 'client' ? 'client' : 'talent'),
+          name: authUser.user_metadata?.full_name || '',
+          email: authUser.email || '',
+          companyName: authUser.user_metadata?.company_name || undefined
+        });
+        setAuthView('verify');
+        setLoading(false);
+        return;
+      }
       // The caller's own identity, resolved server-side. This used to
       // select from public.users in the browser, which is also what RLS
       // on that table had to permit.
@@ -1028,12 +1054,42 @@ export default function KongilaWeb() {
       }
       if (error) throw error;
 
-      // With confirmation on, signUp returns no session: the account exists
-      // but nobody is signed in. Provisioning is an authenticated call, so
-      // doing it now answers 401 and the signup dies at the last step with a
-      // message about not being able to finish creating the account. It
-      // waits for the code instead.
-      if (!data.session) {
+      // Whether this address has actually been verified.
+      //
+      // The absence of a session is not the test. It is *a* symptom of an
+      // unconfirmed signup, but it misses two real cases: an existing
+      // unconfirmed account that the branch above just signed into, and a
+      // project where confirmation was switched on after some accounts were
+      // already made. Both hand back a session for an address nobody has
+      // proved they own, and both skipped the code screen entirely.
+      //
+      // email_confirmed_at is Supabase's own answer to the question, so ask
+      // that instead. It is set at signup when confirmation is off, which is
+      // correct: there is no code to enter, and stranding someone on a
+      // screen waiting for an email that will never arrive is worse than
+      // letting them through.
+      const confirmedAt =
+        (data.user as any)?.email_confirmed_at || (data.user as any)?.confirmed_at || null;
+      const emailConfirmed = Boolean(confirmedAt);
+
+      if (!emailConfirmed && data.session) {
+        // Signed in but unverified. Keep them out of onboarding, and make
+        // sure the code screen has something to verify against.
+        await supabase.auth.resend({ type: 'signup', email: emailInput }).catch(() => {});
+      }
+
+      if (emailConfirmed && data.session && process.env.NODE_ENV !== 'production') {
+        // Worth saying out loud, because it looks identical to a bug: the
+        // account was confirmed the instant it was created, which only
+        // happens when "Confirm email" is off in the Supabase project. No
+        // code was sent because none exists.
+        console.warn(
+          '[signup] Supabase confirmed this email immediately, so no verification code was sent. '
+          + 'Turn on Authentication -> Sign In / Providers -> Email -> "Confirm email" to require one.'
+        );
+      }
+
+      if (!emailConfirmed) {
         setPendingSignup({
           role: authRole,
           name: nameInput,
