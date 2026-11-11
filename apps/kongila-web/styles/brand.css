@@ -300,3 +300,72 @@
   outline-offset: 3px;
   border-radius: 6px;
 }
+
+
+/* ─── Mobile form behaviour ──────────────────────────────────────────────
+ *
+ * Safari on iOS zooms the page in whenever you focus a field whose text is
+ * smaller than 16px, and it does not zoom back out afterwards. Every form in
+ * this app set 13px, 14px or 14.5px on its inputs, so tapping any field on a
+ * phone threw the layout out and left it there.
+ *
+ * The usual "fix" is maximum-scale=1 in the viewport tag, which works by
+ * disabling pinch zoom for everyone, including people who need it to read.
+ * This fixes the actual cause instead: on small screens, fields get 16px.
+ * Nothing changes on desktop, where the smaller sizes are a deliberate part
+ * of the dense layouts.
+ *
+ * 16px is Safari's threshold, not a rounding — 15.9px still zooms.
+ */
+@media (max-width: 860px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select,
+  .form-input {
+    font-size: 16px !important;
+  }
+
+  /* A field at 16px needs the room to match, or the text crowds its box. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    max-width: 100%;
+  }
+}
+
+/* Long unbroken strings — a pasted URL, an email address in a narrow card —
+   are the usual cause of a phone scrolling sideways. They wrap instead.
+   Deliberately not `overflow-x: hidden` on html or body: that hides the
+   symptom rather than fixing it, and in several browsers it also breaks
+   position: sticky for everything inside, which would take the site header
+   down with it. */
+@media (max-width: 860px) {
+  .mk-shell p,
+  .mk-shell a,
+  .mk-shell h1,
+  .mk-shell h2,
+  .mk-shell h3 { overflow-wrap: anywhere; }
+}
+
+/* ─── Marketing hero on small screens ────────────────────────────────────
+ *
+ * The hero laid out as two columns at every width, with no breakpoint at
+ * all: on a phone the headline and the panel beside it each got half of a
+ * 360px screen. Below 900px they stack, and the panel comes second so the
+ * headline and its buttons are what you land on. */
+@media (max-width: 900px) {
+  .mk-hero-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 28px !important;
+  }
+  .mk-hero-aside { order: 2; }
+  .mk-split-2 { grid-template-columns: minmax(0, 1fr) !important; gap: 24px !important; }
+}
+
+/* The hero's own padding and type want tightening on a narrow screen, where
+   the clamp floors alone still leave it feeling loose. */
+@media (max-width: 620px) {
+  .mk-hero { padding-top: 36px !important; padding-bottom: 32px !important; }
+  .mk-hero .mk-btn { width: 100%; justify-content: center; }
+  .mk-section { padding-top: 48px; padding-bottom: 48px; }
+}

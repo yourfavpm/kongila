@@ -91,13 +91,14 @@ export function Hero({
 }) {
   return (
     <section
+      className="mk-hero"
       style={{
         padding: 'clamp(52px, 7vw, 92px) 0 clamp(44px, 6vw, 76px)',
         background: 'radial-gradient(1000px 440px at 12% -12%, rgba(0,71,204,0.07), transparent 68%)'
       }}
     >
       <div
-        className="mk-wrap"
+        className="mk-wrap mk-hero-grid"
         style={{
           display: 'grid',
           gridTemplateColumns: aside ? 'minmax(0, 1.02fr) minmax(0, 1fr)' : 'minmax(0, 1fr)',
@@ -105,7 +106,7 @@ export function Hero({
           alignItems: 'center'
         }}
       >
-        <div className="mk-reveal is-in" style={{ maxWidth: aside ? 560 : 780 }}>
+        <div className="mk-reveal is-in" style={{ maxWidth: aside ? 560 : 780, minWidth: 0 }}>
           {eyebrow && <div className="mk-eyebrow" style={{ marginBottom: 16 }}>{eyebrow}</div>}
           <h1 className="mk-h1">{title}</h1>
           {lede && <p className="mk-lede" style={{ marginTop: 20, maxWidth: 560 }}>{lede}</p>}
@@ -124,7 +125,7 @@ export function Hero({
           )}
           {footnote && <div style={{ marginTop: 26 }}>{footnote}</div>}
         </div>
-        {aside && <div className="mk-reveal is-in">{aside}</div>}
+        {aside && <div className="mk-reveal is-in mk-hero-aside">{aside}</div>}
       </div>
     </section>
   );

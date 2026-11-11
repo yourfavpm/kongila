@@ -70,6 +70,7 @@ export default function EnterprisePage() {
       <Section tint>
         <div
           className="mk-reveal"
+          className="mk-split-2"
           style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 40, alignItems: 'start' }}
         >
           <div>
