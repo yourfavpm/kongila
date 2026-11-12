@@ -196,6 +196,9 @@ interface AssessmentResult {
   talentSkillAssessmentId?: string;
   score?: number;
   autoScore?: number | null;
+  manualScore?: number | null;
+  maxScore?: number;
+  needsReview?: boolean;
   passed?: boolean;
   completedAt?: string;
   submittedAt?: string;

@@ -12,4 +12,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // Bound waits when session restore, sign-in, or another tab contends for
+    // Supabase's browser auth lock.
+    lockAcquireTimeout: 10000,
+    persistSession: true,
+    autoRefreshToken: true
+  }
+});
