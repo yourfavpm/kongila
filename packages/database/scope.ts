@@ -14,12 +14,6 @@
 // the failure direction we want.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { resolveRole } from '@kongila/auth';
-import { SCOPED_RESOURCES, isScopedResource } from './resources';
-
-export { SCOPED_RESOURCES, isScopedResource } from './resources';
-export type { ScopedResource } from './resources';
-
 export interface RequestActor {
   userId: string;
   email: string | null;
@@ -103,30 +97,91 @@ function stripAnswerKey(q: any) {
  * Cut a full database snapshot down to what this actor may read.
  * Admins get everything. Everyone else gets their own slice.
  */
+/**
+ * The resources a portal may ask for through /api/resources.
+ *
+ * It lived as a copy in each app's route. It belongs here, beside the
+ * scoping that decides what each caller actually receives.
+ */
+export const SCOPED_RESOURCES = [
+  'organizations', 'clientProfiles', 'users', 'talents', 'clientRequests', 'matches',
+  'notifications', 'rehireRequests', 'supportTickets', 'supportMessages', 'interviews',
+  'documents', 'requestActivityLogs', 'assessments', 'assessmentCategories',
+  'assessmentQuestions', 'talentSkillAssessments', 'skillAssessmentResults',
+  'assessmentAssignments', 'workSimulationTasks', 'contracts', 'contractTemplates',
+  'auditLogs', 'agentLogs', 'invoices', 'payments', 'talentPayouts',
+  'platformSettings', 'tagDictionary', 'performanceReviews'
+] as const;
+
+export type ScopedResource = typeof SCOPED_RESOURCES[number];
+
+const SCOPED_RESOURCE_SET = new Set<string>(SCOPED_RESOURCES);
+
+export function isScopedResource(name: unknown): name is ScopedResource {
+  return typeof name === 'string' && SCOPED_RESOURCE_SET.has(name);
+}
+
+/**
+ * Operations roles that see the whole book of business.
+ *
+ * Everyone else in operations sees what they are responsible for. That is
+ * not a security boundary — every one of these people is an administrator
+ * and could widen it — it is so a talent manager with nine candidates opens
+ * their dashboard to nine candidates instead of all two hundred.
+ */
+const SEES_EVERYTHING = new Set([
+  'super_admin', 'superadmin', 'admin', 'ops_manager', 'operations_manager'
+]);
+
+function normaliseRole(role: unknown): string {
+  return String(role || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+/**
+ * A talent manager's own book.
+ *
+ * Narrowed by candidate: the candidates they own, and then everything that
+ * hangs off those candidates — their interviews, matches, assessments and
+ * vetting. Requests and clients are left whole, because a talent manager
+ * fills roles across the business and needs to see what is being asked for.
+ *
+ * An unassigned candidate is visible to everyone in operations. They have to
+ * be: somebody has to pick them up, and a candidate nobody can see is a
+ * candidate nobody assigns.
+ */
+function scopeForTalentManager(db: any, actor: RequestActor): any {
+  const allTalents = arr(db.talents);
+  const mine = allTalents.filter((t: any) => {
+    const owner = t?.talentManagerId ? String(t.talentManagerId) : null;
+    return !owner || owner === String(actor.userId);
+  });
+  const mineIds = new Set(mine.map((t: any) => String(t.id)));
+  const keep = (id: unknown) => mineIds.has(String(id));
+
+  return {
+    ...db,
+    talents: mine,
+    interviews: arr(db.interviews).filter((iv: any) => keep(iv.talentId)),
+    matches: arr(db.matches).filter((m: any) => keep(m.talentId)),
+    talentSkillAssessments: arr(db.talentSkillAssessments)
+      .filter((a: any) => keep(a.talentId ?? a.talent_id)),
+    skillAssessmentResults: arr(db.skillAssessmentResults)
+      .filter((r: any) => keep(r.talentId ?? r.talent_id)),
+    workSimulationTasks: arr(db.workSimulationTasks)
+      .filter((w: any) => keep(w.talentId ?? w.talent_id))
+  };
+}
+
 export function scopeDbForUser(db: any, actor: RequestActor): any {
   if (!db) return db;
   if (actor.kind === 'admin') {
-    if (resolveRole(actor.role) !== 'account_manager') return db;
-
-    const managedOrganizationIds = idsOf(
-      arr(db.organizations).filter((organization: any) =>
-        String(organization.accountManagerId ?? organization.account_manager_id ?? '') === actor.userId
-      )
-    );
-    const managedClientIds = new Set(
-      arr(db.clientProfiles)
-        .filter((profile: any) =>
-          managedOrganizationIds.has(String(profile.organizationId ?? profile.organization_id ?? ''))
-        )
-        .map((profile: any) => profile.userId ?? profile.user_id)
-        .filter((userId: any) => userId != null)
-        .map(String)
-    );
-    const requests = arr(db.clientRequests).filter((request: any) =>
-      String(request.assignedAccountManagerId || request.account_manager_id || '') === actor.userId
-      || managedClientIds.has(String(request.clientId ?? request.client_id ?? ''))
-    );
-    return { ...db, clientRequests: requests };
+    const role = normaliseRole(actor.role);
+    if (SEES_EVERYTHING.has(role)) return db;
+    if (role === 'talent_manager') return scopeForTalentManager(db, actor);
+    // Account managers, finance and assessors keep the view they had. Their
+    // narrowing is a separate piece of work and guessing at it here would
+    // hide records people are using today.
+    return db;
   }
   if (actor.kind === 'talent') return scopeForTalent(db, actor);
   if (actor.kind === 'client') return scopeForClient(db, actor);

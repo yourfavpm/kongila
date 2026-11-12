@@ -67,7 +67,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // No client on a vetting interview. The column will not take null.
     clientId: actor.userId,
     clientName: 'Kongila Vetting Panel',
-    interviewType: 'vetting',
+    // The database stores the format here; the externally hosted meeting
+    // URL remains a separate meetingLink, saved and emailed to the talent.
+    interviewType: 'video',
     title: body.title || (body.talentName ? `Behavioural Interview: ${body.talentName}` : 'Behavioural Interview'),
     date: body.date,
     time: body.time,

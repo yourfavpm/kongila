@@ -209,7 +209,7 @@ function normalizeRoleValue(role: any): string {
  */
 export async function getAuthenticatedUserId(
   req: { headers?: any }
-): Promise<{ userId: string; email: string | null; emailConfirmed: boolean } | null> {
+): Promise<{ userId: string; email: string | null } | null> {
   const header = req?.headers?.authorization || req?.headers?.Authorization;
   const token =
     typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : null;
@@ -219,11 +219,7 @@ export async function getAuthenticatedUserId(
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) return null;
 
-  return {
-    userId: data.user.id,
-    email: data.user.email ?? null,
-    emailConfirmed: Boolean(data.user.email_confirmed_at)
-  };
+  return { userId: data.user.id, email: data.user.email ?? null };
 }
 
 export async function getRequestUser(req: { headers?: any }): Promise<Actor | null> {
@@ -1019,11 +1015,26 @@ export async function readDbAsync(): Promise<Schema> {
 
       const talentDocs = documents.filter(d => (d as any).userId === t.user_id);
 
+      // Who owns this candidate.
+      //
+      // The column arrives with 2026-11-11. Before it, assignTalentManager
+      // wrote the id into the envelope, so a project that has not run the
+      // migration still resolves an owner from there. Column wins, same as
+      // the pipeline and scores above.
+      const talentManagerId =
+        (t as any).talent_manager_id || telemetry.talentManagerId || null;
+
       return {
         id: t.id,
         name: t.full_name || '',
         email: userMap.get(t.user_id)?.email || '',
         avatar: t.avatar_url || null,
+        talentManagerId,
+        // Resolved here rather than denormalised, so a manager who is renamed
+        // is renamed everywhere at once.
+        talentManagerName: talentManagerId
+          ? (userMap.get(talentManagerId)?.name || userMap.get(talentManagerId)?.email || null)
+          : null,
         title: t.level || telemetry.title || '',
         skills: telemetry.skills || talentSkillsMap.get(t.id) || [],
         primarySkills: telemetry.primarySkills || talentSkillsMap.get(t.id) || [],
@@ -2031,6 +2042,3 @@ export * from './uploadService';
 // pulling the whole database through /api/db and filtering in the browser.
 export * from './clientService';
 export * from './talentDirectoryService';
-export * from './requestAccess';
-export * from './requestCallService';
-export * from './emailOtpCrypto';

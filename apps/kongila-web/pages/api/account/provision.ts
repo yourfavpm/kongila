@@ -114,13 +114,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (role === 'talent') {
-      const { error: talentError } = await supabase.from('talent_profiles').upsert(
-        { id: userId, user_id: userId, full_name: name || null, status: 'active' },
-        { onConflict: 'id' }
+      const { error: talentCreateError } = await supabase.from('talent_profiles').upsert(
+        {
+          id: userId,
+          user_id: userId,
+          full_name: name || null,
+          status: 'active',
+          vetting_stage: 'Application Screening',
+          vetting_status: 'Applied',
+          grade: 'Ungraded'
+        },
+        { onConflict: 'id', ignoreDuplicates: true }
       );
-      if (talentError) {
-        console.error('[account/provision] talent_profiles upsert failed:', talentError.message);
-        return res.status(500).json({ error: `Could not create your profile: ${talentError.message}` });
+      if (talentCreateError) {
+        console.error('[account/provision] talent_profiles insert failed:', talentCreateError.message);
+        return res.status(500).json({ error: `Could not create your profile: ${talentCreateError.message}` });
+      }
+
+      const { error: talentUpdateError } = await supabase
+        .from('talent_profiles')
+        .update({ full_name: name || null, status: 'active' })
+        .eq('id', userId);
+      if (talentUpdateError) {
+        console.error('[account/provision] talent_profiles update failed:', talentUpdateError.message);
+        return res.status(500).json({ error: `Could not update your profile: ${talentUpdateError.message}` });
       }
       return res.status(201).json({ ok: true, role });
     }

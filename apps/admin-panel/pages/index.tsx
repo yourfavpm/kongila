@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader } from '@kongila/ui';
+import UnassignedTalentPrompt from '../components/UnassignedTalentPrompt';
 import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
 import FinanceManager from '../components/FinanceManager';
@@ -195,9 +196,6 @@ interface AssessmentResult {
   talentSkillAssessmentId?: string;
   score?: number;
   autoScore?: number | null;
-  manualScore?: number | null;
-  maxScore?: number;
-  needsReview?: boolean;
   passed?: boolean;
   completedAt?: string;
   submittedAt?: string;
@@ -475,7 +473,28 @@ export default function AdminPanel() {
       // resource APIs enforce authorization and scope server-side.
         const requestApiBody = requestRes.ok ? await requestRes.json().catch(() => ({})) : {};
         const supportApiBody = supportRes.ok ? await supportRes.json().catch(() => ({})) : {};
-        const freshTalents = db.talents || [];
+        const freshTalents = (db.talents || []).map((talent: any) => {
+          const scoreState = vettingScoreState(talent.vettingScores);
+          const pipeline = Array.isArray(talent.vettingPipeline) ? talent.vettingPipeline : [];
+          const hasVettingProgress = scoreState.isScored || pipeline.some((stage: any) =>
+            ['passed', 'failed', 'rejected'].includes(String(stage.status || '').toLowerCase())
+          );
+          const hasUninitializedDatabaseDefaults =
+            talent.vettingStatus === 'Vetted'
+            && talent.grade === 'A'
+            && !scoreState.isFullyScored;
+
+          return {
+            ...talent,
+            vettingStage: hasUninitializedDatabaseDefaults && !hasVettingProgress
+              ? 'Application Screening'
+              : talent.vettingStage,
+            vettingStatus: hasUninitializedDatabaseDefaults
+              ? hasVettingProgress ? 'Review' : 'Applied'
+              : talent.vettingStatus,
+            grade: scoreState.grade
+          };
+        });
         setTalents(freshTalents);
 
         // The browser-side organizations query is subject to client RLS. For
@@ -625,20 +644,27 @@ export default function AdminPanel() {
       setAuthChecking(false);
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        const role = await getAdminRoleForSession(session.user);
-        // No auto-provisioning here either. See the note on the getSession
-        // branch above.
-        if (isAdminRole(role)) {
-          setIsAuthenticated(true);
-          setCurrentRole(role);
-          setCurrentAdminId(session.user.id);
-        } else {
-          await supabase.auth.signOut();
-          setIsAuthenticated(false);
-          setCurrentRole('');
-        }
+        // Do not await Supabase work inside onAuthStateChange: the callback
+        // runs while auth is updating its session, and getSession/signOut here
+        // can wait on that same auth lock.
+        setTimeout(() => {
+          void (async () => {
+            const role = await getAdminRoleForSession(session.user);
+            // No auto-provisioning here either. See the note on the getSession
+            // branch above.
+            if (isAdminRole(role)) {
+              setIsAuthenticated(true);
+              setCurrentRole(role);
+              setCurrentAdminId(session.user.id);
+            } else {
+              await supabase.auth.signOut();
+              setIsAuthenticated(false);
+              setCurrentRole('');
+            }
+          })();
+        }, 0);
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
         setCurrentRole('');
@@ -2194,7 +2220,7 @@ export default function AdminPanel() {
   // Never hide the sign-in screen behind the data loader. If there is no
   // verified session, the user must be able to authenticate even when an API
   // request is slow or unavailable.
-  if (authChecking || (isAuthenticated && loading)) {
+  if (authChecking || (isAuthenticated && loading && !dataReady)) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-primary)' }}>
         <div style={{ textAlign: 'center' }}>
@@ -2560,6 +2586,14 @@ export default function AdminPanel() {
               <p className="page-subtitle">All registered talent — vetting status, grade, profiles, and details.</p>
             </div>
           </div>
+
+          {/* Asks before a candidate is forgotten, and shows nothing when
+              every candidate already has an owner. */}
+          <UnassignedTalentPrompt
+            talents={talents}
+            users={users as any}
+            onAssigned={syncFromDb}
+          />
           <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
             <input 
                   type="text" 

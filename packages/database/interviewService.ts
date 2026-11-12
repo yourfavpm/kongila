@@ -51,6 +51,7 @@ export interface ServiceResult<T = any> {
 }
 
 const DEFAULT_DURATION_MINUTES = 60;
+const INTERVIEW_TYPES = new Set(['video', 'phone', 'async_video']);
 
 /** A client may schedule at most this many interviews per candidate, per request. */
 const MAX_INTERVIEWS_PER_PAIR = 3;
@@ -342,7 +343,7 @@ export interface ScheduleInput {
   talentName?: string | null;
   clientName?: string | null;
   talentAvatar?: string | null;
-  /** 'vetting' or 'client'. Inferred from requestId when not given. */
+  /** Delivery format accepted by interviews.interview_type. Defaults to video. */
   interviewType?: string | null;
 }
 
@@ -355,6 +356,10 @@ export async function scheduleInterview(
     return fail(403, 'Candidates cannot schedule their own interviews.');
   }
   if (!input.talentId) return fail(400, 'talentId is required.');
+  const interviewType = String(input.interviewType || 'video');
+  if (!INTERVIEW_TYPES.has(interviewType)) {
+    return fail(400, 'interviewType must be video, phone, or async_video.');
+  }
 
   const supabase = getSupabaseClient();
   let request: any = null;
@@ -479,13 +484,9 @@ export async function scheduleInterview(
       talent_name: input.talentName || null,
       talent_avatar: input.talentAvatar || null,
       client_name: input.clientName || null,
-      // The column existed and was never written, so nothing could tell a
-      // vetting interview from a client one. They are different things: a
-      // vetting interview is with the Kongila panel and belongs to a vetting
-      // stage, a client interview belongs to a request.
-      interview_type: actor.kind === 'client'
-        ? 'client'
-        : (input.interviewType || (requestId ? 'client' : 'vetting')),
+      // This column stores the interview format, not whether it is vetting or
+      // client-facing. The request and title carry that distinction.
+      interview_type: interviewType,
       title: input.title || 'Interview',
       scheduled_time: startsAt,
       scheduled_timezone: zone,

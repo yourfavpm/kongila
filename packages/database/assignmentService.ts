@@ -17,11 +17,11 @@
  *     none of them were ever written, and had they been, they would have
  *     named the wrong person.
  *
- * Only operations managers and super admins assign. Everyone else gets a 403:
+ * Only a super admin assigns. Everyone else gets a 403, which is also new:
  * nothing checked before.
  */
 
-import { getSupabaseClient } from './index';
+import { getSupabaseClient, isUndefinedColumn } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { notifyUsers } from './notify';
@@ -31,7 +31,6 @@ import {
   isAccountManagerAssignable,
   isTalentManagerAssignable
 } from '@kongila/auth';
-import { canAccessRequest } from './requestAccess';
 
 export interface AssignmentResult<T = any> {
   ok: boolean;
@@ -45,10 +44,9 @@ function fail(status: number, error: string): AssignmentResult {
   return { ok: false, status, error };
 }
 
-/** Super admins and operations managers can assign client ownership. */
-function canAssignManagers(actor: Actor): boolean {
-  const role = resolveRole(actor.role);
-  return actor.kind === 'admin' && (role === 'super_admin' || role === 'ops_manager');
+/** Only a super admin changes who is responsible for what. */
+function isSuperAdmin(actor: Actor): boolean {
+  return actor.kind === 'admin' && resolveRole(actor.role) === 'super_admin';
 }
 
 /**
@@ -117,7 +115,7 @@ export async function assignAccountManager(
   input: { organizationId: string; userId: string; reason?: string | null }
 ): Promise<AssignmentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
-  if (!canAssignManagers(actor)) return fail(403, 'Only operations managers and super admins can assign an account manager.');
+  if (!isSuperAdmin(actor)) return fail(403, 'Only a super admin assigns an account manager.');
 
   const organizationId = String(input.organizationId || '').trim();
   const userId = String(input.userId || '').trim();
@@ -162,24 +160,11 @@ export async function assignAccountManager(
     entityId: organizationId
   });
 
-  const adminUrl = `${(process.env.NEXT_PUBLIC_ADMIN_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
-    || 'http://localhost:3002').replace(/\/$/, '')}/`;
-  if (String(previousId || '') !== userId) {
-    const notified = await notifyUsers(userId, 'account_manager_assignment', {
-      companyName: organization.name || organizationId,
-      actionUrl: adminUrl
-    });
-    warnings.push(...notified.warnings);
-    if (previousId) {
-      const previousNotice = await notifyUsers(String(previousId), 'account_manager_removed', {
-        companyName: organization.name || organizationId,
-        reason,
-        actionUrl: adminUrl
-      });
-      warnings.push(...previousNotice.warnings);
-    }
-  }
+  const notified = await notifyUsers(userId, 'stage_advanced', {
+    stageName: 'Account manager',
+    reason: `You are now the account manager for ${organization.name || organizationId}.`
+  });
+  warnings.push(...notified.warnings);
 
   // And the company, which is the half that was missing. The manager was told
   // and the client was not, so the name on their dashboard changed with no
@@ -188,7 +173,7 @@ export async function assignAccountManager(
     .from('client_profiles').select('user_id').eq('organization_id', organizationId);
 
   const memberIds = (orgMembers || []).map((cp: any) => String(cp.user_id)).filter(Boolean);
-  if (memberIds.length > 0 && String(previousId || '') !== userId) {
+  if (memberIds.length > 0) {
     const toldClient = await notifyUsers(memberIds, 'account_manager_assigned', {
       companyName: organization.name || undefined,
       inviterName: user.name || user.email || undefined
@@ -247,16 +232,6 @@ export async function assignRequestManagers(
   if (loadError) return fail(500, `That request could not be loaded: ${loadError.message}`);
   if (!rows || rows.length === 0) return fail(404, 'That request does not exist.');
   const row = rows[0];
-  try {
-    if (!await canAccessRequest(supabase, actor, row)) return fail(404, 'That request does not exist.');
-  } catch (accessError: any) {
-    return fail(500, `Request ownership could not be verified: ${accessError.message}`);
-  }
-
-  const changingManager = Boolean(input.accountManagerId || input.talentManagerId || input.alsoSetClientAccountManager);
-  if (changingManager && !canAssignManagers(actor)) {
-    return fail(403, 'Only operations managers and super admins can change request assignments.');
-  }
 
   const warnings: string[] = [];
   const payload = { ...(row.payload || {}) };
@@ -344,21 +319,12 @@ export async function assignRequestManagers(
 
   // Being given a request is worth telling someone about. The browser
   // version told nobody.
-  const newlyAssigned = [
-    input.accountManagerId && String(input.accountManagerId) !== String(row.account_manager_id || '')
-      ? String(input.accountManagerId) : null,
-    input.talentManagerId && String(input.talentManagerId) !== String(row.talent_manager_id || '')
-      ? String(input.talentManagerId) : null
-  ].filter((id): id is string => Boolean(id));
+  const newlyAssigned = [input.accountManagerId, input.talentManagerId]
+    .filter((id): id is string => Boolean(id));
 
   if (newlyAssigned.length > 0) {
-    const adminUrl = `${(process.env.NEXT_PUBLIC_ADMIN_URL
-      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
-      || 'http://localhost:3002').replace(/\/$/, '')}/`;
-    const notified = await notifyUsers(newlyAssigned, 'request_assigned', {
-      roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined,
-      companyName: payload.companyName || undefined,
-      actionUrl: adminUrl
+    const notified = await notifyUsers(newlyAssigned, 'request_received', {
+      roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined
     });
     warnings.push(...notified.warnings);
   }
@@ -429,8 +395,30 @@ export async function assignTalentManager(
   }
   envelope.telemetry = { ...(envelope.telemetry || {}), talentManagerId: managerId || undefined };
 
-  const { error } = await supabase
-    .from('talent_profiles').update({ bio: JSON.stringify(envelope) }).eq('id', talentId);
+  // The column is the real home; the envelope is kept in step for anything
+  // still reading it and so a rollback loses nothing. Written together, and
+  // the column is tried first — if the 2026-11-11 migration has not run the
+  // whole statement is rejected, so the envelope-only write is the fallback
+  // rather than a silent half-save.
+  let error: any = null;
+  const withColumn = await supabase
+    .from('talent_profiles')
+    .update({ talent_manager_id: managerId, bio: JSON.stringify(envelope) })
+    .eq('id', talentId);
+
+  if (withColumn.error && isUndefinedColumn(withColumn.error)) {
+    warnings.push(
+      'Saved, but only in the profile envelope: talent_profiles has no '
+      + '"talent_manager_id" column yet. Run '
+      + 'packages/database/migrations/2026-11-11_talent_manager.sql so managers '
+      + 'can be filtered on.'
+    );
+    const envelopeOnly = await supabase
+      .from('talent_profiles').update({ bio: JSON.stringify(envelope) }).eq('id', talentId);
+    error = envelopeOnly.error;
+  } else {
+    error = withColumn.error;
+  }
 
   if (error) return fail(500, `The talent manager was not saved: ${error.message}`);
 
