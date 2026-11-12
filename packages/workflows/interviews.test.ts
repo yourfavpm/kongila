@@ -16,7 +16,9 @@ import {
   interviewForMatch,
   mapInterviewStatusToDb,
   mapInterviewStatusFromDb,
-  isLiveInterview
+  isLiveInterview,
+  isUpcomingInterviewStatus,
+  isPastInterviewStatus
 } from './interviews.ts';
 
 const at = (iso: string, over: any = {}) => ({
@@ -141,6 +143,40 @@ test('Reschedule Requested is a flag, not a status', () => {
 
 test('lowercase scheduled reads back as Scheduled', () => {
   assert.equal(mapInterviewStatusFromDb({ status: 'scheduled' }), 'Scheduled');
+});
+
+test('all active interview lifecycle statuses appear in upcoming', () => {
+  for (const status of [
+    'Proposed',
+    'client_requested',
+    'admin_reviewing',
+    'sent_to_talent',
+    'pending_confirmation',
+    'talent_accepted',
+    'talent_countered',
+    'confirmed',
+    'Interview Scheduled',
+    'Scheduled',
+    'Rescheduled'
+  ]) {
+    assert.equal(isUpcomingInterviewStatus(status), true, status);
+  }
+  assert.equal(isUpcomingInterviewStatus('Reschedule Requested'), false);
+});
+
+test('closed interview lifecycle statuses appear in past', () => {
+  for (const status of [
+    'Completed',
+    'Cancelled',
+    'failed',
+    'passed',
+    'talent_declined',
+    'admin_declined',
+    'expired'
+  ]) {
+    assert.equal(isPastInterviewStatus(status), true, status);
+  }
+  assert.equal(isPastInterviewStatus('Scheduled'), false);
 });
 
 test('an unknown status does not break the write', () => {

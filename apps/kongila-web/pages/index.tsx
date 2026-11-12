@@ -3781,6 +3781,12 @@ export default function KongilaWeb() {
             clientRequests={requests}
             allDocuments={documents}
             interviews={interviews}
+            onInterviewUpdate={(interviewId, changes) => setInterviews(previous =>
+              previous.map(interview => interview.id === interviewId
+                ? { ...interview, ...changes }
+                : interview
+              )
+            )}
             offers={talentOffers}
             onRespondToOffer={handleRespondToOffer}
             dashboardNotifications={notifications}

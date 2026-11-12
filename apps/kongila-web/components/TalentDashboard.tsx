@@ -21,6 +21,7 @@ function whenForTalent(interview: any, fallbackZone?: string | null) {
   return formatForBothParties(iso, talentZone, clientZone, "client's time");
 }
 import type { Interview, Contract } from '@kongila/shared-types';
+import { isPastInterviewStatus, isUpcomingInterviewStatus } from '@kongila/workflows';
 import {
   calculateCompositeVettingGrade,
   vettingScoreState,
@@ -101,6 +102,7 @@ interface TalentDashboardProps {
   onSignOut?: () => void;
   onUpdateProfile?: (updatedProfile: any) => void;
   onUpdateMatch?: (updatedMatch: any) => void;
+  onInterviewUpdate?: (interviewId: string, changes: Record<string, unknown>) => void;
   onUpdateDocument?: (updatedDocument: any) => void;
   supportTickets?: any[];
   setSupportTickets?: (tickets: any[] | ((previous: any[]) => any[])) => void;
@@ -1397,7 +1399,12 @@ const ProfessionalSection = ({ profile }: { profile: any }) => {
 
 // ─── Section 2.5: Interviews (KT-INTERVIEW) ─────────────────────────────────────────
 
-const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { scheduledInterviews?: any[]; profile?: any; onRespond?: (interviewId: string, accept: boolean) => void }) => {
+const InterviewsSection = ({ scheduledInterviews, profile, onRespond, onRequestReschedule }: {
+  scheduledInterviews?: any[];
+  profile?: any;
+  onRespond?: (interviewId: string, accept: boolean) => void;
+  onRequestReschedule?: (interview: any) => void;
+}) => {
   const [activeTab, setActiveTab] = useState<'upcoming'|'reschedules'|'past'>('upcoming');
   // Was `scheduledInterviews || MOCK_INTERVIEWS`, a two-item fixture with a
   // client called Nexus Health and a July date. A candidate with no
@@ -1407,9 +1414,11 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { schedu
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
 
-  const upcoming = interviews.filter((i: any) => i.status === 'Interview Scheduled' || i.status === 'Scheduled' || i.status === 'Rescheduled');
-  const reschedules = interviews.filter((i: any) => i.status === 'Reschedule Requested');
-  const past = interviews.filter((i: any) => i.status === 'Completed' || i.status === 'Cancelled' || i.status === 'failed' || i.status === 'passed');
+  const upcoming = interviews.filter((i: any) => isUpcomingInterviewStatus(i.status));
+  const reschedules = interviews.filter((i: any) =>
+    i.rescheduleRequested || i.status === 'Reschedule Requested'
+  );
+  const past = interviews.filter((i: any) => isPastInterviewStatus(i.status));
 
   const handleSaveNotes = (id: string) => {
     // Implement save notes logic
@@ -1587,6 +1596,13 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond }: { schedu
                     </a>
                   ) : (
                     <span style={{ color: '#6B7A99', fontSize: '13px' }}>Link will be provided soon</span>
+                  )}
+                  {onRequestReschedule && (
+                    <button onClick={() => onRequestReschedule(i)} style={{
+                      padding: '10px 16px', background: '#F5F7FA', color: '#0047CC', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
+                    }}>
+                      Request Reschedule
+                    </button>
                   )}
                   {generateGoogleCalendarLink(i) && (
                     <a href={generateGoogleCalendarLink(i) as string} target="_blank" rel="noopener noreferrer" style={{
@@ -7972,6 +7988,7 @@ export default function TalentDashboard({
   onUpdateProfile,
   onUpdateMatch,
   onUpdateDocument,
+  onInterviewUpdate,
   supportTickets = [],
   setSupportTickets
 }: TalentDashboardProps) {
@@ -8058,8 +8075,15 @@ export default function TalentDashboard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `Could not send the request (${response.status}).`);
 
-      // interviews is a read-only prop here, so the list refreshes on the
-      // next poll rather than being patched locally and drifting.
+      onInterviewUpdate?.(targetId, {
+        status: 'Reschedule Requested',
+        rescheduleRequested: true,
+        rescheduleReason,
+        proposedNewDate: rescheduleDate,
+        proposedNewTime: rescheduleTime,
+        proposedTime: payload.interview?.proposed_time || null,
+        proposedTimezone: payload.interview?.proposed_timezone || talentProfile?.timezone || viewerTimeZone()
+      });
       setRescheduleModalOpen(false);
       showGlobalToast('Reschedule request sent. Operations will confirm a new time.');
     } catch (err: any) {
@@ -8090,6 +8114,9 @@ export default function TalentDashboard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `Could not send your response (${response.status}).`);
 
+      onInterviewUpdate?.(interviewId, {
+        status: accept ? 'talent_accepted' : 'talent_declined'
+      });
       showGlobalToast(accept ? 'Interview confirmed.' : 'Interview declined. Operations has been told.');
     } catch (err: any) {
       console.error('[TalentDashboard] interview response failed:', err);
@@ -8250,7 +8277,15 @@ export default function TalentDashboard({
         return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} interviews={interviews} contracts={contracts} />;
-      case 'interviews':       return <InterviewsSection scheduledInterviews={interviews.filter(iv => iv.talentId === talentProfile?.id)} profile={talentProfile} onRespond={respondToInterview} />;
+      case 'interviews':       return <InterviewsSection
+        scheduledInterviews={interviews.filter(iv =>
+          String(iv.talentId) === String(talentProfile?.id) ||
+          String(iv.talentId) === String(currentUser?.id)
+        )}
+        profile={talentProfile}
+        onRespond={respondToInterview}
+        onRequestReschedule={handleRequestReschedule}
+      />;
       case 'contracts':        return <ContractSection profile={talentProfile} />;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
       case 'tasks':            return <TasksSection profile={talentProfile} />;

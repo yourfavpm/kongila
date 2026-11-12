@@ -248,3 +248,37 @@ export function mapInterviewStatusFromDb(row: any): string {
   if (value === 'scheduled') return 'Scheduled';
   return value || 'Proposed';
 }
+
+const UPCOMING_INTERVIEW_STATUSES = new Set([
+  'proposed',
+  'client_requested',
+  'admin_reviewing',
+  'sent_to_talent',
+  'pending_confirmation',
+  'talent_accepted',
+  'talent_countered',
+  'confirmed',
+  'interview scheduled',
+  'scheduled',
+  'rescheduled'
+]);
+
+const PAST_INTERVIEW_STATUSES = new Set([
+  'completed',
+  'cancelled',
+  'canceled',
+  'failed',
+  'passed',
+  'talent_declined',
+  'admin_declined',
+  'declined',
+  'expired'
+]);
+
+export function isUpcomingInterviewStatus(status?: string | null): boolean {
+  return UPCOMING_INTERVIEW_STATUSES.has(String(status || '').trim().toLowerCase());
+}
+
+export function isPastInterviewStatus(status?: string | null): boolean {
+  return PAST_INTERVIEW_STATUSES.has(String(status || '').trim().toLowerCase());
+}

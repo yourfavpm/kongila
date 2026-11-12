@@ -194,13 +194,16 @@ export function scopeDbForUser(db: any, actor: RequestActor): any {
 function scopeForTalent(db: any, actor: RequestActor) {
   const uid = actor.userId;
   const tid = actor.talentProfileId;
+  const talentIds = new Set([tid, uid].filter(Boolean).map(String));
 
   // A talent with no talent_profiles row has nothing to show yet. Return the
   // empty shape rather than null so the dashboard renders its empty states.
   const ownTalents = tid ? arr(db.talents).filter((t: any) => String(t.id) === String(tid)) : EMPTY;
 
   const ownMatches = tid ? arr(db.matches).filter((m: any) => String(m.talentId) === String(tid)) : EMPTY;
-  const ownInterviews = tid ? arr(db.interviews).filter((iv: any) => String(iv.talentId) === String(tid)) : EMPTY;
+  const ownInterviews = talentIds.size
+    ? arr(db.interviews).filter((iv: any) => talentIds.has(String(iv.talentId)))
+    : EMPTY;
   const ownContracts = tid ? arr(db.contracts).filter((c: any) => String(c.talentId) === String(tid)) : EMPTY;
   const ownTickets = tid ? arr(db.supportTickets).filter((st: any) => String(st.talentId) === String(tid)) : EMPTY;
 
