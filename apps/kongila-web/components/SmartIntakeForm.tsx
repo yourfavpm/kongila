@@ -1,7 +1,9 @@
 import { apiFetch } from '../lib/apiFetch';
 import { createAccountWithEmailOtp, requestEmailOtp } from '../lib/emailOtpClient';
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { GlassCard, NeonButton } from '@kongila/ui';
+import { KongilaWordmark } from './marketing/SiteChrome';
 import { supabase } from '../lib/supabaseClient';
 import {
   ServiceRequest,
@@ -22,6 +24,149 @@ interface SmartIntakeFormProps {
    */
   onComplete: (requests: ServiceRequest[]) => void;
   onCancel?: () => void;
+}
+
+const INTAKE_SERVICES = [
+  {
+    id: 'Hire Talent', title: 'Hire Talent', model: 'You employ and manage directly',
+    desc: 'Find and screen professionals for your organisation to employ and manage directly.'
+  },
+  {
+    id: 'Outsource Talent', title: 'Outsource Talent', model: 'You direct the day-to-day work',
+    desc: 'Engage dedicated remote team members while Kongila supports the agreed outsourcing arrangements.'
+  },
+  {
+    id: 'Managed Workforce', title: 'Managed Workforce', model: 'Kongila manages the workforce',
+    desc: 'Kongila provides, supervises and manages the workforce according to your agreed engagement.'
+  },
+  {
+    id: 'Project Execution', title: 'Project Execution', model: 'Kongila manages defined delivery',
+    desc: 'Engage Kongila to staff and manage the delivery of a specific project or defined deliverable.'
+  }
+];
+
+function findIntakeService(serviceType: unknown) {
+  const aliases: Record<string, string> = {
+    placement: 'Hire Talent', outsourcing: 'Outsource Talent',
+    managed_workforce: 'Managed Workforce', project: 'Project Execution'
+  };
+  const normalized = typeof serviceType === 'string' ? (aliases[serviceType] || serviceType) : '';
+  return INTAKE_SERVICES.find(item => item.id === normalized);
+}
+
+function getIntakeStepTitle(step: number, accountMode: string) {
+  if (step === 1) return 'Choose the right engagement.';
+  if (step === 2) return 'Tell us what your work needs.';
+  if (step === 3) return 'Shape the engagement.';
+  if (step === 4) return 'Set a working budget.';
+  if (step === 5) return 'Add timing and context.';
+  return accountMode === 'signup' ? 'Establish your client account.' : 'Sign in to send your request.';
+}
+
+function getIntakeSupport(step: number, serviceId: string | undefined, formData: any, authData: any) {
+  if (step === 1) return {
+    kicker: 'A considered first step',
+    title: 'The right structure starts with your goal.',
+    description: 'Choose how you want Kongila to contribute. Your selection shapes the questions and details we ask for next.'
+  };
+  if (step === 2) {
+    const byService: Record<string, { title: string; description: string }> = {
+      'Hire Talent': { title: 'Define the people you need.', description: 'Add one or more roles. Each role can be tracked as its own request, while shared details are collected once.' },
+      'Outsource Talent': { title: 'Describe the team arrangement.', description: 'Share the team size and coverage model so we can understand how the professionals will fit into your operation.' },
+      'Managed Workforce': { title: 'Set the workforce scope.', description: 'Outline the size and coverage you need for Kongila to manage the engagement.' },
+      'Project Execution': { title: 'Make the deliverable clear.', description: 'A project name, description and target date help frame the work and expected delivery.' }
+    };
+    const specific = serviceId ? byService[serviceId] : undefined;
+    return { kicker: 'The engagement brief', title: specific?.title || 'Describe the work ahead.', description: specific?.description || 'Share the essential requirements for this service.' };
+  }
+  if (step === 3) return {
+    kicker: 'Working arrangement',
+    title: 'A little more context helps us plan.',
+    description: 'Set the commitment, duration, start date and preferred time zones that fit your organisation.'
+  };
+  if (step === 4) return {
+    kicker: 'Budget context',
+    title: 'Start with a useful range.',
+    description: 'A budget range helps frame the conversation. If you are still exploring, choose “Not Sure” and discuss it with the team.'
+  };
+  if (step === 5) return {
+    kicker: 'Timing and next steps',
+    title: 'Help us understand your timing.',
+    description: 'Choose the urgency that reflects your plans and add any other context that would help your team review the request.'
+  };
+  return {
+    kicker: 'Your Kongila relationship',
+    title: authData.mode === 'signup' ? 'One step closer to your workforce needs.' : 'Your request stays with your account.',
+    description: authData.mode === 'signup'
+      ? 'Create a company account to complete this service request. Your organisation becomes the account holder, with you as its primary contact.'
+      : 'Sign in with your existing client account to associate this request with your organisation.',
+  };
+}
+
+function getRequestSummary(serviceId: string, formData: any, roles: any[]) {
+  if (serviceId === 'Hire Talent') {
+    const titles = roles.map(role => String(role.title || '').trim()).filter(Boolean);
+    if (!titles.length) return 'Roles in progress';
+    return titles.length > 1 ? `${titles[0]} + ${titles.length - 1} more` : titles[0];
+  }
+  if (serviceId === 'Outsource Talent' || serviceId === 'Managed Workforce') {
+    const detail = String(formData.teamDescription || '').trim();
+    const conciseDetail = detail.length > 72 ? `${detail.slice(0, 69)}…` : detail;
+    return [formData.teamSize ? `${formData.teamSize} people` : '', formData.coverageType, conciseDetail]
+      .filter(Boolean).join(' · ') || 'Team details in progress';
+  }
+  if (serviceId === 'Project Execution') return formData.projectName || 'Project details in progress';
+  return 'Details in progress';
+}
+
+function IntakeTopBar({ onCancel }: { onCancel?: () => void }) {
+  return (
+    <header className="intake-topbar">
+      <Link href="/" className="intake-topbar-logo" aria-label="Kongila home"><KongilaWordmark height={30} /></Link>
+      <div className="intake-topbar-title"><span className="intake-topbar-mark" aria-hidden="true">K</span><span>Client Service Request</span></div>
+      <div className="intake-topbar-actions">
+        <span className="intake-secure-label"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="8" width="12" height="9" rx="2"/><path d="M6.5 8V6a3.5 3.5 0 0 1 7 0v2"/></svg> Private intake</span>
+        {onCancel ? <button type="button" onClick={onCancel}>Exit</button> : <Link href="/">Exit</Link>}
+      </div>
+    </header>
+  );
+}
+
+function ServiceGlyph({ service }: { service: string }) {
+  if (service === 'Hire Talent') return <svg viewBox="0 0 32 32" fill="none"><circle cx="13" cy="11" r="5"/><path d="M4 27c.7-5.2 3.7-8 9-8 3 0 5.2 1 6.7 2.8M23 11v10M18 16h10"/></svg>;
+  if (service === 'Outsource Talent') return <svg viewBox="0 0 32 32" fill="none"><circle cx="8" cy="10" r="3"/><circle cx="24" cy="10" r="3"/><circle cx="16" cy="23" r="3"/><path d="m10 12 4 8m8-8-4 8M11 10h10"/></svg>;
+  if (service === 'Managed Workforce') return <svg viewBox="0 0 32 32" fill="none"><path d="M16 4 26 8v7c0 6-4 10-10 13C10 25 6 21 6 15V8l10-4Z"/><path d="m11.5 16 3 3 6-7"/></svg>;
+  return <svg viewBox="0 0 32 32" fill="none"><path d="M7 6h18v20H7zM11 11h10M11 16h6"/><path d="m19 22 2 2 4-5"/></svg>;
+}
+
+function IntakeIllustration({ service, step }: { service?: string; step: number }) {
+  const accent = service === 'Project Execution' ? '#b77d37' : service === 'Managed Workforce' ? '#427766' : '#1764a8';
+  const labels = service === 'Hire Talent'
+    ? ['Role brief', 'Shortlist', 'Your decision']
+    : service === 'Outsource Talent'
+      ? ['Team', 'Employment', 'Daily direction']
+      : service === 'Managed Workforce'
+        ? ['Workforce', 'Operations', 'Oversight']
+        : service === 'Project Execution'
+          ? ['Scope', 'Milestones', 'Handover']
+          : ['Talent', 'Employment', 'Operations'];
+  return (
+    <svg viewBox="0 0 340 214" fill="none" role="img" aria-label="Illustration of a connected workforce request">
+      <path d="M45 107h250" stroke="#cad5d8" strokeWidth="2" strokeDasharray="4 6"/>
+      {[62,170,278].map((x, i) => <g key={x}>
+        <circle cx={x} cy="107" r="33" fill={i === 1 ? '#fff' : '#f4f6f3'} stroke={i === 1 ? accent : '#d7e0df'} strokeWidth={i === 1 ? 2 : 1}/>
+        {i === 0 && <g stroke={accent} strokeWidth="2" strokeLinecap="round"><circle cx={x} cy="98" r="7"/><path d={`M${x-13} 121c1-8 5-12 13-12s12 4 13 12`}/></g>}
+        {i === 1 && <g stroke={accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={`M${x-10} 95h12l8 8v17h-20z`}/><path d={`M${x+2} 95v8h8M${x-5} 110h9M${x-5} 115h9`}/></g>}
+        {i === 2 && <g stroke={accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={`m${x-11} 108 8 8 15-17`}/><circle cx={x} cy="107" r="18"/></g>}
+        <text x={x} y="163" textAnchor="middle" fill="#304958" fontSize="10" fontWeight="600">{labels[i]}</text>
+      </g>)}
+      <rect x="114" y="14" width="112" height="32" rx="5" fill="#fff" stroke="#dbe2df"/>
+      <circle cx="130" cy="30" r="5" fill={accent}/><path d="M142 26h68M142 34h48" stroke="#b8c5c6" strokeWidth="2" strokeLinecap="round"/>
+      <rect x="126" y="184" width="88" height="20" rx="10" fill="#e8efec"/><circle cx="139" cy="194" r="3" fill={accent}/><path d="M148 194h52" stroke="#94a9a5" strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="48" cy="54" r="3" fill="#c78d43"/><circle cx="287" cy="52" r="4" fill={accent} opacity=".7"/><circle cx="292" cy="159" r="3" fill="#c78d43"/>
+      {step >= 2 && <path d="M62 107h108" stroke={accent} strokeWidth="2" strokeLinecap="round" strokeDasharray="4 6"><animate attributeName="stroke-dashoffset" values="20;0" dur="1.8s" repeatCount="indefinite"/></path>}
+    </svg>
+  );
 }
 
 export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: SmartIntakeFormProps) {
@@ -128,6 +273,13 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     (total, role) => total + (Number(role.count) > 0 ? Math.floor(Number(role.count)) : 1),
     0
   );
+
+  const totalSteps = currentUser ? 5 : 6;
+  const progressLabels = currentUser
+    ? ['Service', 'Requirement', 'Engagement', 'Budget', 'Request details']
+    : ['Service', 'Requirement', 'Engagement', 'Budget', 'Request details', 'Account'];
+  const selectedService = findIntakeService(formData.serviceType);
+  const supportContent = getIntakeSupport(step, selectedService?.id, formData, authData);
 
   const handleNext = () => {
     // Validation Gate
@@ -448,32 +600,34 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   };
 
   const renderStep1 = () => (
-    <div>
-      <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>What service level do you require?</h3>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Select an engagement structure scaled to your operational backing.</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
-        {[
-          { id: 'Hire Talent', title: 'Hire Talent (Placement)', desc: 'Find and screen talent for me to employ and manage directly. One-time placement fee.' },
-          { id: 'Outsource Talent', title: 'Outsource Talent', desc: 'Dedicated remote team members under my direction, payroll/compliance managed by Kongila.' },
-          { id: 'Managed Workforce', title: 'Managed Workforce', desc: 'Kongila provides, supervises, and manages performance end-to-end.' },
-          { id: 'Project Execution', title: 'Project Execution', desc: 'I have a specific deliverable; Kongila staffs and manages delivery.' }
-        ].map(item => (
-          <div 
-            key={item.id}
-            onClick={() => updateForm('serviceType', item.id as ServiceType)}
-            style={{
-              padding: '16px', borderRadius: '10px',
-              border: `1.5px solid ${formData.serviceType === item.id ? 'var(--accent-purple)' : 'var(--border-glass)'}`,
-              background: formData.serviceType === item.id ? 'var(--accent-purple-glow)' : 'var(--bg-secondary)',
-              cursor: 'pointer', display: 'flex', gap: '16px', alignItems: 'center'
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{item.title}</div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{item.desc}</div>
-            </div>
-          </div>
-        ))}
+    <div className="intake-step-content">
+      <div className="intake-section-heading">
+        <p className="intake-kicker">START WITH THE ENGAGEMENT</p>
+        <h2>What are you looking to accomplish?</h2>
+        <p>Choose the structure that best fits how you want Kongila to support your workforce.</p>
+      </div>
+      <div className="intake-service-grid" role="radiogroup" aria-label="Choose a service type">
+        {INTAKE_SERVICES.map(item => {
+          const selected = selectedService?.id === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={`intake-service-option ${selected ? 'is-selected' : ''}`}
+              onClick={() => { setErrorMsg(''); updateForm('serviceType', item.id as ServiceType); }}
+            >
+              <span className="intake-service-icon"><ServiceGlyph service={item.id} /></span>
+              <span className="intake-service-copy">
+                <strong>{item.title}</strong>
+                <span className="intake-service-description">{item.desc}</span>
+                <span className="intake-service-model">{item.model}</span>
+              </span>
+              <span className="intake-service-choice" aria-hidden="true">{selected ? '✓' : '+'}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -555,7 +709,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: '16px' }}>
+        <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
                   <div className="form-group" style={{ flex: 1 }}>
                     <label className="form-label">Seniority Level <span style={{color:'red'}}>*</span></label>
                     <select
@@ -627,7 +781,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
 
         {(isOutsource || isManaged) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', gap: '16px' }}>
+            <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
               <div className="form-group" style={{ flex: 1 }}>
                 <label className="form-label">Team Size <span style={{color:'red'}}>*</span></label>
                 <input type="number" min={1} max={100} className="form-input" value={formData.teamSize || ''} onChange={e => updateForm('teamSize', Number(e.target.value))} />
@@ -697,7 +851,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
               <label className="form-label">Skills Required <span style={{color:'red'}}>*</span></label>
               <input type="text" className="form-input" placeholder="e.g. React, Node.js" value={(formData.requiredSkills || []).join(', ')} onChange={e => updateForm('requiredSkills', e.target.value.split(',').map(s=>s.trim()))} />
             </div>
-            <div style={{ display: 'flex', gap: '16px' }}>
+            <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
               {/* "Estimated Scope" asked Small / Medium / Large / Enterprise
                   about a project whose budget range and deadline are both
                   asked for a moment later. It was a vaguer restatement of two
@@ -716,7 +870,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   const renderStep3 = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>Engagement Details</h3>
-      <div style={{ display: 'flex', gap: '16px' }}>
+      <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
         {/* Stored as commitmentLevel, which is the field the rest of the
             product reads. It was collected as engagementType and mapped on
             submit, with the two sets of values differing by a hyphen and a
@@ -738,7 +892,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           </div>
         )}
       </div>
-      <div style={{ display: 'flex', gap: '16px' }}>
+      <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
         <div className="form-group" style={{ flex: 1 }}>
           <label className="form-label">Duration <span style={{color:'red'}}>*</span></label>
           <select className="form-select" value={formData.durationType || ''} onChange={e => updateForm('durationType', e.target.value)}>
@@ -841,33 +995,26 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   const renderStep6 = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>
-        {authData.mode === 'signup' ? 'Create Account & Submit' : 'Sign In & Submit'}
+        {authData.mode === 'signup' ? 'Establish your client account' : 'Sign in to complete your request'}
       </h3>
       
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-        <button 
-          type="button"
-          onClick={() => { setAuthData({...authData, mode: 'signup'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}
-          style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid', borderColor: authData.mode === 'signup' ? 'var(--accent-purple)' : 'transparent', background: authData.mode === 'signup' ? 'var(--accent-purple-glow)' : 'transparent', color: authData.mode === 'signup' ? 'var(--accent-purple)' : 'var(--text-secondary)', cursor: 'pointer' }}>
-          Create Account
-        </button>
-        <button 
-          type="button"
-          onClick={() => { setAuthData({...authData, mode: 'login'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}
-          style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid', borderColor: authData.mode === 'login' ? 'var(--accent-purple)' : 'transparent', background: authData.mode === 'login' ? 'var(--accent-purple-glow)' : 'transparent', color: authData.mode === 'login' ? 'var(--accent-purple)' : 'var(--text-secondary)', cursor: 'pointer' }}>
-          Sign In
-        </button>
+      <div className="intake-account-switch">
+        {authData.mode === 'signup' ? (
+          <><span>Already have a Kongila account?</span><button type="button" onClick={() => { setAuthData({...authData, mode: 'login'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}>Sign in</button></>
+        ) : (
+          <><span>New to Kongila?</span><button type="button" onClick={() => { setAuthData({...authData, mode: 'signup'}); setSignupOtpRequested(false); setSignupOtp(''); setOtpMessage(''); }}>Create a client account</button></>
+        )}
       </div>
 
       {authData.mode === 'signup' && (
         <>
           <div className="form-group">
-            <label className="form-label">Full Name <span style={{color:'red'}}>*</span></label>
-            <input type="text" className="form-input" value={authData.fullName} onChange={e => setAuthData({...authData, fullName: e.target.value})} />
+            <label className="form-label" htmlFor="intake-full-name">Full Name <span style={{color:'red'}}>*</span></label>
+            <input id="intake-full-name" type="text" autoComplete="name" className="form-input" value={authData.fullName} onChange={e => setAuthData({...authData, fullName: e.target.value})} />
           </div>
           <div className="form-group">
-            <label className="form-label">Company Name <span style={{color:'red'}}>*</span></label>
-            <input type="text" className="form-input" maxLength={200} value={authData.companyName} onChange={e => setAuthData({...authData, companyName: e.target.value})} placeholder="The company this account is for" />
+            <label className="form-label" htmlFor="intake-company-name">Company Name <span style={{color:'red'}}>*</span></label>
+            <input id="intake-company-name" type="text" autoComplete="organization" className="form-input" maxLength={200} value={authData.companyName} onChange={e => setAuthData({...authData, companyName: e.target.value})} placeholder="The company this account is for" />
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
               The account is created for this company. You become its primary contact and administrator, and can invite colleagues once you are in.
             </div>
@@ -876,21 +1023,25 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
             {/* Called "Job Title" here, which read as the role being hired
                 for rather than the signer's own role. The field name and the
                 column it lands in (client_profiles.position) are unchanged. */}
-            <label className="form-label">Position Held <span style={{color:'red'}}>*</span></label>
-            <input type="text" className="form-input" value={authData.jobTitle} onChange={e => setAuthData({...authData, jobTitle: e.target.value})} placeholder="e.g. Head of Operations" />
+            <label className="form-label" htmlFor="intake-position">Position Held <span style={{color:'red'}}>*</span></label>
+            <input id="intake-position" type="text" autoComplete="organization-title" className="form-input" value={authData.jobTitle} onChange={e => setAuthData({...authData, jobTitle: e.target.value})} placeholder="e.g. Head of Operations" />
           </div>
           <div className="form-group">
-            <label className="form-label">Phone</label>
+            <label className="form-label" htmlFor="intake-phone">Phone</label>
             <div style={{ display: 'flex', gap: '8px', position: 'relative' }}>
               {/* Phone code searchable dropdown */}
-              <div 
+              <button
+                type="button"
                 className="form-input" 
                 style={{ width: '120px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px' }}
                 onClick={() => { setShowPhoneCodeDropdown(v => !v); setPhoneCodeSearch(''); }}
+                aria-label="Choose phone country code"
+                aria-expanded={showPhoneCodeDropdown}
+                aria-controls="intake-phone-country-options"
               >
                 <span style={{ fontWeight: 600 }}>{authData.phoneCode || '+?'}</span>
                 <span style={{ fontSize: '10px', color: '#64748b' }}>▼</span>
-              </div>
+              </button>
               {showPhoneCodeDropdown && (
                 <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 50, background: 'var(--bg-secondary, #fff)', border: '1px solid var(--border-glass, #e2e8f0)', borderRadius: '10px', marginTop: '4px', width: '260px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
                   <div style={{ padding: '8px' }}>
@@ -904,35 +1055,38 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
                       onChange={e => setPhoneCodeSearch(e.target.value)}
                     />
                   </div>
-                  <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                  <div id="intake-phone-country-options" role="listbox" aria-label="Phone country codes" style={{ maxHeight: '220px', overflowY: 'auto' }}>
                     {COUNTRIES_AND_CODES
                       .filter(c => c.name.toLowerCase().includes(phoneCodeSearch.toLowerCase()) || c.code.includes(phoneCodeSearch))
                       .map(c => (
-                        <div
+                        <button
+                          type="button"
                           key={c.name + c.code}
-                          onMouseDown={() => { setAuthData({ ...authData, phoneCode: c.code }); setShowPhoneCodeDropdown(false); }}
-                          style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid var(--border-glass, #e2e8f0)' }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-tertiary, #f1f5f9)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                          role="option"
+                          aria-selected={authData.phoneCode === c.code}
+                          onClick={() => { setAuthData({ ...authData, phoneCode: c.code }); setShowPhoneCodeDropdown(false); }}
+                          style={{ width: '100%', padding: '10px 14px', border: 0, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#21394a', background: 'white', textAlign: 'left', borderBottom: '1px solid var(--border-glass, #e2e8f0)' }}
                         >
                           <span>{c.name}</span>
                           <span style={{ fontWeight: 700, color: 'var(--accent-cyan, #0ea5e9)' }}>{c.code}</span>
-                        </div>
+                        </button>
                       ))}
                   </div>
                 </div>
               )}
               
-              <input type="tel" style={{ flex: 1 }} className="form-input" value={authData.phone} onChange={e => setAuthData({...authData, phone: e.target.value})} />
+              <input id="intake-phone" type="tel" autoComplete="tel-national" style={{ flex: 1 }} className="form-input" value={authData.phone} onChange={e => setAuthData({...authData, phone: e.target.value})} />
             </div>
           </div>
         </>
       )}
 
       <div className="form-group">
-        <label className="form-label">Business Email</label>
+        <label className="form-label" htmlFor="intake-business-email">Business Email</label>
         <input
+          id="intake-business-email"
           type="email"
+          autoComplete="email"
           className="form-input"
           value={authData.businessEmail}
           onChange={e => {
@@ -944,10 +1098,12 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         />
       </div>
       <div className="form-group">
-        <label className="form-label">Password</label>
+        <label className="form-label" htmlFor="intake-client-password">Password</label>
         <div style={{ position: 'relative' }}>
           <input 
+            id="intake-client-password"
             type={showPassword ? "text" : "password"} 
+            autoComplete={authData.mode === 'signup' ? 'new-password' : 'current-password'}
             className="form-input" 
             style={{ width: '100%', paddingRight: '40px' }}
             value={authData.password} 
@@ -956,6 +1112,8 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            aria-pressed={showPassword}
             style={{
               position: 'absolute',
               right: '12px',
@@ -984,6 +1142,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
             )}
           </button>
         </div>
+        {authData.mode === 'signup' && <div className="intake-password-hint">Use at least 8 characters for your password.</div>}
       </div>
 
       {authData.mode === 'signup' && signupOtpRequested && (
@@ -1029,7 +1188,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '8px' }}>
           <input type="checkbox" id="tosAccepted" style={{ marginTop: '4px' }} checked={authData.tosAccepted} onChange={e => setAuthData({...authData, tosAccepted: e.target.checked})} />
           <label htmlFor="tosAccepted" style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4' }}>
-            I agree to the Terms of Service and Privacy Policy. I understand that submitting this form will create a Kongila account.
+            I agree to the Terms of Service and <Link href="/legal/privacy">Privacy Policy</Link>. I understand that submitting this form will create a Kongila account.
           </label>
         </div>
       )}
@@ -1050,8 +1209,10 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
     );
 
     return (
-      <div style={{ padding: '24px', boxSizing: 'border-box', width: '100%' }}>
-        <GlassCard className="intake-card" style={{ maxWidth: '650px', width: '100%', margin: '0 auto' }}>
+      <div className="client-intake-shell client-intake-confirmed">
+        <IntakeTopBar onCancel={onCancel} />
+        <div className="intake-confirmation-wrap">
+        <GlassCard className="intake-card intake-confirmation-card" style={{ maxWidth: '760px', width: '100%', margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
             <div style={{ fontSize: '56px', lineHeight: 1, color: 'var(--accent-green)' }}>✓</div>
             <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', margin: '12px 0 6px 0' }}>
@@ -1129,78 +1290,107 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
             </NeonButton>
           </div>
         </GlassCard>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '24px', boxSizing: 'border-box', width: '100%' }}>
-      <GlassCard className="intake-card" style={{ maxWidth: step === 1 ? '650px' : '850px', width: '100%', margin: '0 auto', transition: 'max-width 0.3s ease' }}>
-        {/* Header step counter */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ display: 'flex', alignItems: 'center', color: 'var(--accent-purple)' }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
-            </span>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)' }}>New Service Request</h2>
+    <div className="client-intake-shell">
+      <IntakeTopBar onCancel={onCancel} />
+      <div className="intake-progress-shell" aria-label={`Step ${step} of ${totalSteps}`}>
+        <div className="intake-progress-meta"><span>CLIENT SERVICE REQUEST</span><strong>Step {step} <span>of {totalSteps}</span></strong></div>
+        <div className="intake-progress-track" role="list" aria-label="Request progress">
+          {progressLabels.map((label, index) => {
+            const number = index + 1;
+            const complete = number < step;
+            const active = number === step;
+            return (
+              <button
+                type="button"
+                key={label}
+                role="listitem"
+                className={`intake-progress-step ${complete ? 'is-complete' : ''} ${active ? 'is-active' : ''}`}
+                aria-current={active ? 'step' : undefined}
+                aria-label={`${label}${complete ? ', completed. Go back to edit.' : active ? ', current step.' : ', upcoming.'}`}
+                disabled={!complete}
+                onClick={() => { setErrorMsg(''); setStep(number); }}
+              >
+                <span className="intake-progress-number">{complete ? '✓' : `0${number}`}</span>
+                <span className="intake-progress-label">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="intake-main-layout">
+        <section className="intake-main-column" aria-label="Request details">
+          <GlassCard className={`intake-card intake-workspace intake-workspace-step-${step}`} style={{ maxWidth: 'none', width: '100%', margin: 0, transition: 'none' }}>
+            <div className="intake-current-heading">
+              <span className="intake-current-number">{`0${step}`}</span>
+              <div><p>{selectedService?.title || 'KONGILA WORKFORCE SOLUTIONS'}</p><h1>{getIntakeStepTitle(step, authData.mode)}</h1></div>
+            </div>
+
+            {errorMsg && <div className="intake-error" role="alert"><span aria-hidden="true">!</span>{errorMsg}</div>}
+
+            <div className="intake-step-transition" key={`intake-step-${step}`}>
+              {step === 1 && renderStep1()}
+              {step === 2 && renderStep2()}
+              {step === 3 && renderStep3()}
+              {step === 4 && renderStep4()}
+              {step === 5 && renderStep5()}
+              {step === 6 && !currentUser && renderStep6()}
+            </div>
+
+            <div className="intake-navigation">
+              {step > 1 ? (
+                <button className="intake-back-button" type="button" onClick={() => { setErrorMsg(''); setStep(step - 1); }}><span aria-hidden="true">←</span> Back</button>
+              ) : (
+                <button className="intake-back-button" type="button" onClick={() => onCancel && onCancel()}><span aria-hidden="true">←</span> Exit request</button>
+              )}
+
+              {step < totalSteps ? (
+                <NeonButton onClick={handleNext}>Continue <span aria-hidden="true">→</span></NeonButton>
+              ) : (
+                <NeonButton onClick={submitRequest} disabled={isSubmitting || (authData.mode === 'signup' && !authData.tosAccepted)}>
+                  {isSubmitting
+                    ? 'Submitting...'
+                    : authData.mode === 'signup' && signupOtpRequested
+                      ? 'Verify Email & Submit Request'
+                      : authData.mode === 'signup'
+                        ? 'Send Verification Code'
+                        : 'Sign In & Submit Request'}
+                </NeonButton>
+              )}
+            </div>
+          </GlassCard>
+        </section>
+
+        <aside className="intake-support-column" aria-live="polite">
+          <div className="intake-support-panel">
+            <div className="intake-support-visual"><IntakeIllustration service={selectedService?.id} step={step} /></div>
+            <p className="intake-support-kicker">{supportContent.kicker}</p>
+            <h2>{supportContent.title}</h2>
+            <p className="intake-support-description">{supportContent.description}</p>
+            {(selectedService || step > 1) && (
+              <div className="intake-summary-block">
+                <span className="intake-summary-label">YOUR REQUEST SO FAR</span>
+                {selectedService && <div className="intake-summary-line"><span>Engagement</span><strong>{selectedService.title}</strong></div>}
+                {step >= 2 && selectedService && (
+                  <div className="intake-summary-line"><span>Request type</span><strong>{getRequestSummary(selectedService.id, formData, roles)}</strong></div>
+                )}
+                {step >= 6 && authData.companyName && <div className="intake-summary-line"><span>Organisation</span><strong>{authData.companyName}</strong></div>}
+              </div>
+            )}
+              <div className="intake-support-note"><span aria-hidden="true">✓</span><p>{currentUser
+                ? 'This brief will be linked to your existing Kongila client account when you submit.'
+                : 'After email verification, your client account and service request are completed together.'}</p></div>
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Step {step} of {currentUser ? 5 : 6}</div>
-        </div>
+        </aside>
+      </div>
 
-        {/* Progress lines */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '32px' }}>
-          {Array.from({ length: currentUser ? 5 : 6 }).map((_, i) => (
-            <div 
-              key={i} 
-              style={{
-                flex: 1, 
-                height: '4px', 
-                borderRadius: '2px', 
-                background: step >= (i + 1) ? 'var(--accent-purple)' : 'var(--border-glass)',
-                transition: 'all 0.3s ease'
-              }}
-            />
-          ))}
-        </div>
-
-        {errorMsg && (
-          <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', marginBottom: '24px', fontSize: '14px' }}>
-            {errorMsg}
-          </div>
-        )}
-
-        {step === 1 && renderStep1()}
-        {step === 2 && renderStep2()}
-        {step === 3 && renderStep3()}
-        {step === 4 && renderStep4()}
-        {step === 5 && renderStep5()}
-        {step === 6 && !currentUser && renderStep6()}
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '32px' }}>
-          {step > 1 ? (
-            <NeonButton variant="ghost" onClick={() => { setErrorMsg(''); setStep(step - 1); }}>Back</NeonButton>
-          ) : (
-            <NeonButton variant="ghost" onClick={() => onCancel && onCancel()}>Cancel</NeonButton>
-          )}
-
-          {step < (currentUser ? 5 : 6) ? (
-            <NeonButton onClick={handleNext}>Continue</NeonButton>
-          ) : (
-            <NeonButton 
-              onClick={submitRequest} 
-              disabled={isSubmitting || (authData.mode === 'signup' && !authData.tosAccepted)}
-            >
-              {isSubmitting
-                ? 'Submitting...'
-                : authData.mode === 'signup' && signupOtpRequested
-                  ? 'Verify Email & Submit Request'
-                  : authData.mode === 'signup'
-                    ? 'Send Verification Code'
-                    : 'Sign In & Submit Request'}
-            </NeonButton>
-          )}
-        </div>
-      </GlassCard>
+      <footer className="intake-footer"><span>© {new Date().getFullYear()} Kongila</span><span>Thoughtful workforce solutions, built around your needs.</span><Link href="/">Return to kongila.com</Link></footer>
     </div>
   );
 }

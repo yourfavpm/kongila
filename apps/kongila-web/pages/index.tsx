@@ -3,6 +3,7 @@ import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import Head from 'next/head';
+import Link from 'next/link';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
 import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, TIMEZONE_OPTIONS } from '@kongila/utils';
 import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
@@ -116,6 +117,14 @@ const SENIORITY_LEVELS = [
 const getSeniorityRange = (level: string) =>
   SENIORITY_LEVELS.find(s => s.label === level) ?? null;
 
+const TALENT_ONBOARDING_STEPS = [
+  { title: 'Personal Information', description: 'Establish your professional identity.' },
+  { title: 'Professional Details', description: 'Describe your role, experience, and skills.' },
+  { title: 'Pay & Availability', description: 'Set your preferences and start timing.' },
+  { title: 'Documents & Links', description: 'Add the documents and profiles you want to share.' },
+  { title: 'Finalization', description: 'Submit your profile to begin the next stage.' },
+] as const;
+
 const isTalentProfileOnboardingComplete = (profileRow: any) => {
   if (!profileRow) return false;
   // Primary check: bio envelope with __kongila marker means onboarding was submitted
@@ -136,7 +145,21 @@ const isTalentProfileOnboardingComplete = (profileRow: any) => {
   return false;
 };
 
-export default function KongilaWeb() {
+type KongilaWebProps = {
+  initialAuthView: 'login' | 'signup' | null;
+  initialAuthRole: 'talent' | 'client';
+  initialClientIntakeActive: boolean;
+  initialWorkspaceTransition: boolean;
+  initialInviteTransition: boolean;
+};
+
+export default function KongilaWeb({
+  initialAuthView,
+  initialAuthRole,
+  initialClientIntakeActive,
+  initialWorkspaceTransition,
+  initialInviteTransition
+}: KongilaWebProps) {
   // DB States
   const [talents, setTalents] = useState<TalentProfile[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -186,8 +209,9 @@ export default function KongilaWeb() {
   // Identity & Unified Auth Progressive States
   const [currentUser, setCurrentUser] = useState<any>(null); // { id, name, email, role, onboardingStatus, emailVerified, organizationId }
   const currentUserRef = useRef<any>(null);
-  const [authView, setAuthView] = useState<'login' | 'signup' | 'verify' | 'onboarding' | null>(null);
-  const [authRole, setAuthRole] = useState<'talent' | 'client'>('talent');
+  const [authView, setAuthView] = useState<'login' | 'signup' | 'verify' | 'onboarding' | null>(initialAuthView);
+  const [authRole, setAuthRole] = useState<'talent' | 'client'>(initialAuthRole);
+  const [routeTransitionPending, setRouteTransitionPending] = useState(initialWorkspaceTransition || initialInviteTransition);
   
   // Auth Form Fields
   const [emailInput, setEmailInput] = useState('');
@@ -195,9 +219,11 @@ export default function KongilaWeb() {
   const [nameInput, setNameInput] = useState('');
   const [companyInput, setCompanyInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   
   // Talent Wizard Steps (1 to 5)
   const [talentWizardStep, setTalentWizardStep] = useState(1);
+  const [furthestWizardStep, setFurthestWizardStep] = useState(1);
   const [wizardStepErrors, setWizardStepErrors] = useState<string[]>([]);
   const [talentOnboardingData, setTalentOnboardingData] = useState({
     fullName: '',
@@ -299,7 +325,7 @@ export default function KongilaWeb() {
   }, [currentUser?.role, currentUser?.onboardingStatus]); // intentionally omit authView
 
   // Client Smart Intake (Smart Intake FIRST flow)
-  const [clientIntakeActive, setClientIntakeActive] = useState(false);
+  const [clientIntakeActive, setClientIntakeActive] = useState(initialClientIntakeActive);
   const [clientIntakeStep, setClientIntakeStep] = useState(1);
   const [formData, setFormData] = useState({
     serviceType: '' as ServiceType,
@@ -334,6 +360,7 @@ export default function KongilaWeb() {
   const [activeNDA, setActiveNDA] = useState<string>('');
   const [signingContractId, setSigningContractId] = useState<string | null>(null);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const signOutCancelButtonRef = useRef<HTMLButtonElement | null>(null);
 
   // File uploading simulator
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -446,6 +473,7 @@ export default function KongilaWeb() {
     const view = params.get('view');
     const role = params.get('role');
     const wantsIntake = params.get('intake') === '1';
+    const wantsWorkspace = params.get('workspace') === '1';
     let consumed = false;
 
     if (wantsIntake) {
@@ -457,6 +485,8 @@ export default function KongilaWeb() {
       if (role === 'talent' || role === 'client') setAuthRole(role);
       consumed = true;
     }
+
+    if (wantsWorkspace) consumed = true;
 
     if (consumed) {
       const clean = window.location.pathname + window.location.hash;
@@ -483,6 +513,7 @@ export default function KongilaWeb() {
         if (role) setAuthRole(role as any);
         window.history.replaceState({}, '', '/');
       }
+      if (initialInviteTransition) setRouteTransitionPending(false);
       return;
     }
 
@@ -502,6 +533,7 @@ export default function KongilaWeb() {
         if (!res.ok || !data?.ok) {
           setInviteError(data?.error || 'This invitation link is not valid.');
           setAuthView('signup');
+          setRouteTransitionPending(false);
           return;
         }
 
@@ -514,12 +546,29 @@ export default function KongilaWeb() {
         setInviteOrgId(data.orgId);
         setInviteOrgName(data.organizationName || '');
         setInvitePermission(data.permissionLevel);
+        setRouteTransitionPending(false);
       } catch (e) {
         setInviteError('Could not check this invitation. Try the link again.');
         setAuthView('signup');
+        setRouteTransitionPending(false);
       }
     })();
   }, []);
+
+  // A successful sign-in returns to the root route with an explicit handoff
+  // marker. Keep the public homepage out of that transition until the session,
+  // role and first workspace data load have selected the right destination.
+  useEffect(() => {
+    if (!initialWorkspaceTransition || initialInviteTransition || !routeTransitionPending) return;
+    if (currentUser && (authView === 'onboarding' || dataReady)) {
+      setRouteTransitionPending(false);
+      return;
+    }
+    if (!loading && !currentUser) {
+      setAuthView('login');
+      setRouteTransitionPending(false);
+    }
+  }, [initialWorkspaceTransition, initialInviteTransition, routeTransitionPending, currentUser, authView, dataReady, loading]);
 
   // Load offers once a candidate is signed in, and again whenever the
   // poll refreshes their profile, so an offer sent while they are looking
@@ -534,6 +583,8 @@ export default function KongilaWeb() {
   // organisation. An invited colleague is joining a company that already
   // exists and keeps using the form.
   const clientNeedsIntake = authRole === 'client' && !inviteTokenRaw;
+  const isTalentSignup = authView === 'signup' && authRole === 'talent';
+  const signupBusy = isTalentSignup ? authSubmitting : loading;
 
   // Trigger temporary floating notification
   const triggerBanner = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
@@ -817,10 +868,12 @@ export default function KongilaWeb() {
             currencyTouched: deliberateCurrency
           }));
           setTalentWizardStep(draftWizardStep);
+          setFurthestWizardStep(draftWizardStep);
         } else {
           // Fresh onboarding — pre-fill name from this user's auth metadata
           setTalentOnboardingData(prev => ({ ...prev, fullName: authName !== restoredUser.email ? authName : '' }));
           setTalentWizardStep(1);
+          setFurthestWizardStep(1);
         }
         setAuthView('onboarding');
       } else {
@@ -1022,6 +1075,7 @@ export default function KongilaWeb() {
     }
 
     try {
+      setAuthSubmitting(true);
       setLoading(true);
       let { data, error } = await supabase.auth.signUp({
         email: emailInput,
@@ -1111,6 +1165,7 @@ export default function KongilaWeb() {
     } catch (error: any) {
       triggerBanner(`Sign up failed: ${error.message}`, 'error');
     } finally {
+      setAuthSubmitting(false);
       setLoading(false);
     }
   };
@@ -1166,6 +1221,7 @@ export default function KongilaWeb() {
     if (details.role === 'talent') {
       setTalentOnboardingData(prev => ({ ...prev, fullName: details.name }));
       setTalentWizardStep(1);
+      setFurthestWizardStep(1);
       setAuthView('onboarding');
     } else {
       setAuthView(null);
@@ -1351,6 +1407,7 @@ export default function KongilaWeb() {
     }
     setWizardStepErrors([]);
     saveDraftOnboarding(nextStep, talentOnboardingData);
+    setFurthestWizardStep(previous => Math.max(previous, nextStep));
     setTalentWizardStep(nextStep);
     // Always scroll to the very top of the page when moving between steps
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -1770,7 +1827,7 @@ export default function KongilaWeb() {
     setAuthView(null);
     setActiveTab('talent');
     setLoading(false);
-    triggerBanner('Onboarding Complete! Your profile is live. Workspace deployed.', 'success');
+    triggerBanner('Talent profile submitted. Your verification process can now begin.', 'success');
   };
 
 
@@ -2038,6 +2095,19 @@ export default function KongilaWeb() {
     setShowSignOutConfirm(true);
   };
 
+  useEffect(() => {
+    if (!showSignOutConfirm) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowSignOutConfirm(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const focusTimer = window.setTimeout(() => signOutCancelButtonRef.current?.focus(), 0);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.clearTimeout(focusTimer);
+    };
+  }, [showSignOutConfirm]);
+
   const performSignOut = async () => {
     setShowSignOutConfirm(false);
     try {
@@ -2162,7 +2232,7 @@ export default function KongilaWeb() {
         {/* ====================================================================== */}
         {/* MARKETING HUB & HERO (Shown if not logged in AND not inside intake/auth) */}
         {/* ====================================================================== */}
-        {!currentUser && !authView && !clientIntakeActive && (
+        {!currentUser && !authView && !clientIntakeActive && !routeTransitionPending && (
           /* The public site.
            *
              The marketing pages used to live here as roughly nine hundred lines
@@ -2176,6 +2246,15 @@ export default function KongilaWeb() {
             <HomePage />
             <SiteFooter />
           </>
+        )}
+
+        {routeTransitionPending && !authView && !clientIntakeActive && (
+          <div className="route-transition-loader">
+            <MascotLoader
+              variant="page"
+              message={initialInviteTransition ? 'Checking your invitation…' : 'Opening your workspace…'}
+            />
+          </div>
         )}
 
         {/* ====================================================================== */}
@@ -2250,14 +2329,16 @@ export default function KongilaWeb() {
         )}
 
         {(authView === 'login' || authView === 'signup') && !clientIntakeActive && (
-          <div style={{
+          <div className={isTalentSignup ? 'talent-signup-experience' : 'legacy-auth-experience'} style={{
             minHeight: '100vh',
             width: '100%',
             display: 'flex',
             backgroundColor: 'var(--bg-secondary, #FFFFFF)'
           }}>
-            {/* Left Brand Panel — hidden on mobile */}
-            <div className="auth-brand-panel hide-mobile" style={{
+            {isTalentSignup && <TalentSignupBrandPanel />}
+
+            {/* Existing client and dashboard authentication keeps its established presentation. */}
+            {!isTalentSignup && <div className="auth-brand-panel hide-mobile" style={{
               flex: 1.1,
               display: 'flex',
               background: 'radial-gradient(circle at top left, #1E1B4B 0%, #0F0C20 40%, #080711 100%)',
@@ -2415,28 +2496,31 @@ export default function KongilaWeb() {
                   <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', cursor: 'pointer' }}>Terms of Service</span>
                 </div>
               </div>
-            </div>
+            </div>}
 
             {/* Right Form Panel */}
-            <div className="auth-form-panel" style={{
+            <div className={`auth-form-panel ${isTalentSignup ? 'talent-signup-form-panel' : ''}`} style={{
               flex: 1,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: 'var(--bg-secondary, #FFFFFF)'
             }}>
-              <div style={{ maxWidth: '400px', width: '100%' }}>
+              <div className={`auth-form-inner ${isTalentSignup ? 'talent-signup-form-inner' : ''}`} style={{ maxWidth: '400px', width: '100%' }}>
             
             {/* View: Auth Role Selector or Signup */}
             {authView === 'signup' && (
-              <div>
-                <h2 style={{ fontSize: '24px', fontWeight: 800, marginBottom: '8px', fontFamily: 'var(--font-display)' }}>
+              <div className={isTalentSignup ? 'talent-signup-content' : ''}>
+                {isTalentSignup && <p className="talent-signup-eyebrow">TALENT REGISTRATION</p>}
+                <h2 className={isTalentSignup ? 'talent-signup-title' : ''} style={{ fontSize: '24px', fontWeight: 800, marginBottom: '8px', fontFamily: 'var(--font-display)' }}>
                   Join Kongila
                 </h2>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
+                <p className={isTalentSignup ? 'talent-signup-description' : ''} style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
                   {clientNeedsIntake
                     ? 'Kongila client accounts are company accounts, and they start with a request.'
-                    : 'Access premium remote EOR opportunities globally.'}
+                    : isTalentSignup
+                      ? 'Create your talent account to begin your application and connect with opportunities through Kongila.'
+                      : 'Create an account to continue.'}
                 </p>
 
 
@@ -2482,15 +2566,17 @@ export default function KongilaWeb() {
 
                 {/* Form */}
                 {!clientNeedsIntake && (
-                <form onSubmit={handleSignUpSubmit}>
+                <form className={isTalentSignup ? 'talent-signup-form' : ''} onSubmit={handleSignUpSubmit}>
                   <div className="form-group">
-                    <label className="form-label">Full Name</label>
+                    <label className="form-label" htmlFor="talent-signup-name">Full name</label>
                     <input 
+                      id="talent-signup-name"
                       type="text" 
+                      autoComplete="name"
                       className="form-input" 
                       value={nameInput}
                       onChange={e => setNameInput(e.target.value)}
-                      placeholder="e.g. Tariq Ibrahim"
+                      placeholder="Your full name"
                     />
                   </div>
 
@@ -2523,30 +2609,36 @@ export default function KongilaWeb() {
                   )}
 
                   <div className="form-group">
-                    <label className="form-label">Email Address</label>
+                    <label className="form-label" htmlFor="talent-signup-email">Email address</label>
                     <input 
+                      id="talent-signup-email"
                       type="email" 
+                      autoComplete="email"
                       className="form-input" 
                       value={emailInput}
                       onChange={e => setEmailInput(e.target.value)}
-                      placeholder="e.g. tariq@gmail.com"
+                      placeholder="you@example.com"
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Password</label>
+                    <label className="form-label" htmlFor="talent-signup-password">Password</label>
                     <div style={{ position: 'relative' }}>
                       <input 
+                        id="talent-signup-password"
                         type={showPassword ? "text" : "password"} 
+                        autoComplete="new-password"
                         className="form-input" 
                         value={passwordInput}
                         onChange={e => setPasswordInput(e.target.value)}
-                        placeholder="••••••••"
+                        placeholder="Create a password"
                         style={{ paddingRight: '60px' }}
                       />
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        aria-pressed={showPassword}
                         style={{
                           position: 'absolute',
                           right: '12px',
@@ -2564,21 +2656,22 @@ export default function KongilaWeb() {
                         {showPassword ? 'Hide' : 'Show'}
                       </button>
                     </div>
+                    {isTalentSignup && <p className="talent-signup-password-hint">Use a password that you can keep secure and remember.</p>}
                   </div>
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={signupBusy}
                     style={{
                       width: '100%',
-                      background: loading ? '#7BA8E8' : '#0047CC',
+                      background: signupBusy ? '#7BA8E8' : '#0047CC',
                       color: '#fff',
                       border: 'none',
-                      borderRadius: '8px',
-                      height: '42px',
-                      fontSize: '14px',
+                      borderRadius: '6px',
+                      height: '52px',
+                      fontSize: '15px',
                       fontWeight: 600,
-                      cursor: loading ? 'not-allowed' : 'pointer',
+                      cursor: signupBusy ? 'not-allowed' : 'pointer',
                       marginTop: '16px',
                       display: 'flex',
                       alignItems: 'center',
@@ -2586,7 +2679,7 @@ export default function KongilaWeb() {
                       gap: '8px'
                     }}
                   >
-                    {loading ? (
+                    {signupBusy ? (
                       <>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.8s linear infinite' }}>
                           <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" strokeWidth="3" />
@@ -2594,14 +2687,17 @@ export default function KongilaWeb() {
                         </svg>
                         Creating Account...
                       </>
-                    ) : 'Create Account'}
+                    ) : isTalentSignup ? 'Create Talent Account' : 'Create Account'}
                   </button>
                 </form>
                 )}
 
-                <div style={{ fontSize: '12px', textAlign: 'center', marginTop: '24px', color: 'var(--text-secondary)' }}>
-                  Already have an account? <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setAuthView('login')}>Sign In</span>
+                <div className={isTalentSignup ? 'talent-signup-signin' : ''} style={{ fontSize: '12px', textAlign: 'center', marginTop: '24px', color: 'var(--text-secondary)' }}>
+                  Already have a Kongila account? {isTalentSignup
+                    ? <Link href="/login">Sign in.</Link>
+                    : <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setAuthView('login')}>Sign In</span>}
                 </div>
+                {isTalentSignup && <div className="talent-signup-mobile-legal"><span>© {new Date().getFullYear()} Kongila</span><Link href="/legal/privacy">Privacy</Link></div>}
               </div>
             )}
 
@@ -2711,7 +2807,40 @@ export default function KongilaWeb() {
         {/* TALENT PROGRESSIVE ONBOARDING WIZARD (Full Screen when active) */}
         {/* ====================================================================== */}
         {currentUser && authView === 'onboarding' && (
-          <GlassCard style={{ maxWidth: '700px', margin: '40px auto', padding: '32px', paddingBottom: '250px', overflow: 'visible' }}>
+          <div className={`talent-onboarding-workspace talent-onboarding-step-${talentWizardStep}`}>
+          <aside className="talent-onboarding-rail">
+            <div className="talent-onboarding-brand"><img src="/images/kongilalogo.png" alt="Kongila" /><span>PROFESSIONAL NETWORK</span></div>
+            <div className="talent-onboarding-rail-copy">
+              <p className="talent-onboarding-kicker">TALENT ONBOARDING</p>
+              <h1>Let’s build your professional profile.</h1>
+              <p>Tell us about yourself, your experience, and the work you’re interested in. We’ll use this information to understand your professional background and guide your Kongila talent journey.</p>
+            </div>
+            <div className="talent-onboarding-progress-head">
+              <div><span>YOUR PROGRESS</span><strong>Step {talentWizardStep} of 5</strong></div>
+              <b>{Math.round(((furthestWizardStep - 1) / 5) * 100)}%</b>
+            </div>
+            <div className="talent-onboarding-progress-track" aria-hidden="true"><span style={{ width: `${((furthestWizardStep - 1) / 5) * 100}%` }} /></div>
+            <nav className="talent-onboarding-step-list" aria-label="Onboarding progress">
+              {TALENT_ONBOARDING_STEPS.map((step, index) => {
+                const number = index + 1;
+                const isComplete = number < furthestWizardStep;
+                const isActive = number === talentWizardStep;
+                return <button key={step.title} type="button" className={`talent-onboarding-step-item${isComplete ? ' is-complete' : ''}${isActive ? ' is-active' : ''}`} aria-current={isActive ? 'step' : undefined} disabled={number >= talentWizardStep} onClick={() => { setWizardStepErrors([]); setTalentWizardStep(number); window.scrollTo({ top: 0, behavior: 'instant' }); }}>
+                  <span className="talent-onboarding-step-marker">{isComplete ? '✓' : String(number).padStart(2, '0')}</span>
+                  <span className="talent-onboarding-step-text"><strong>{step.title}</strong><small>{step.description}</small></span>
+                </button>;
+              })}
+            </nav>
+            <div className="talent-onboarding-rail-note"><span aria-hidden="true">✓</span><p>Your details stay in this session as you move through the steps. Return to completed sections to make changes.</p></div>
+            <div className="talent-onboarding-rail-footer">Kongila Talent Portal</div>
+          </aside>
+          <main className="talent-onboarding-main">
+            <div className="talent-onboarding-mobile-progress">
+              <span>STEP {String(talentWizardStep).padStart(2, '0')} / 05</span>
+              <strong>{TALENT_ONBOARDING_STEPS[talentWizardStep - 1]?.title}</strong>
+              <div className="talent-onboarding-progress-track" aria-hidden="true"><span style={{ width: `${((furthestWizardStep - 1) / 5) * 100}%` }} /></div>
+            </div>
+          <GlassCard className="talent-onboarding-form" style={{ maxWidth: '700px', margin: '40px auto', padding: '32px', paddingBottom: '48px', overflow: 'visible' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '20px' }}>🧙‍♂️</span>
@@ -2739,11 +2868,11 @@ export default function KongilaWeb() {
 
             {/* Step 1: Basic Profile */}
             {talentWizardStep === 1 && (
-              <div>
+              <div className="talent-onboarding-step-content talent-onboarding-content-step-1">
                 <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>1. Personal Information</h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>We use this to verify your identity and personalize your dashboard experience.</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>First, tell us a little about yourself so we can set up your professional profile.</p>
 
-                <div className="form-group">
+                <div className="form-group talent-onboarding-photo-section">
                   <label className="form-label">Profile Photo<Required /></label>
                   <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{
@@ -2765,7 +2894,7 @@ export default function KongilaWeb() {
                         talentOnboardingData.fullName?.[0]?.toUpperCase() || 'U'
                       )}
                     </div>
-                    <label style={{
+                    <label className="talent-onboarding-upload-action" style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -2778,9 +2907,10 @@ export default function KongilaWeb() {
                       fontWeight: 700,
                       fontSize: '13px'
                     }}>
-                      {talentOnboardingData.profilePhotoName ? 'Replace Photo' : 'Upload Photo'}
-                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleProfilePhotoUpload} />
+                      {mockUploading ? 'Uploading…' : talentOnboardingData.profilePhotoName ? 'Change photo' : 'Upload photo'}
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleProfilePhotoUpload} disabled={mockUploading} />
                     </label>
+                    {talentOnboardingData.profilePhotoUrl && !mockUploading && <button type="button" className="talent-onboarding-remove-photo" onClick={() => setTalentOnboardingData(prev => ({ ...prev, profilePhotoUrl: '', profilePhotoName: '', profilePhotoSize: 0 }))}>Remove photo</button>}
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                       JPG or PNG, at least 200x200px, under 2MB.
                     </div>
@@ -2790,6 +2920,7 @@ export default function KongilaWeb() {
                 <div className="form-group">
                   <label className="form-label">Full Name<Required /></label>
                   {talentOnboardingData.fullName ? (
+                    <>
                     <div style={{
                       padding: '12px 14px',
                       borderRadius: '10px',
@@ -2801,13 +2932,15 @@ export default function KongilaWeb() {
                     }}>
                       {talentOnboardingData.fullName}
                     </div>
+                    <small className="talent-onboarding-prefilled-note">This name comes from your Kongila account.</small>
+                    </>
                   ) : (
                     <input 
                       type="text" 
                       className="form-input" 
                       value={talentOnboardingData.fullName}
                       onChange={e => setTalentOnboardingData({ ...talentOnboardingData, fullName: e.target.value })}
-                      placeholder="Chidi Anya"
+                      placeholder="Your full name"
                     />
                   )}
                 </div>
@@ -2819,8 +2952,14 @@ export default function KongilaWeb() {
                     <div style={{ position: 'relative', width: '140px', flexShrink: 0 }}>
                       <div
                         className="form-input"
+                        role="button"
+                        tabIndex={0}
+                        aria-haspopup="listbox"
+                        aria-expanded={showPhoneCodeDropdown}
+                        aria-label="Choose phone country code"
                         style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', paddingRight: '10px' }}
                         onClick={() => { setShowPhoneCodeDropdown(v => !v); setPhoneCodeSearch(''); }}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowPhoneCodeDropdown(v => !v); setPhoneCodeSearch(''); } }}
                       >
                         <span style={{ fontWeight: 600 }}>{talentOnboardingData.phoneCode || '+?'}</span>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
@@ -2875,8 +3014,14 @@ export default function KongilaWeb() {
                     <div style={{ position: 'relative' }}>
                       <div
                         className="form-input"
+                        role="button"
+                        tabIndex={0}
+                        aria-haspopup="listbox"
+                        aria-expanded={showCountryDropdown}
+                        aria-label="Choose your country"
                         style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                         onClick={() => { setShowCountryDropdown(v => !v); setCountrySearch(''); }}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowCountryDropdown(v => !v); setCountrySearch(''); } }}
                       >
                         <span style={{ color: talentOnboardingData.country ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                           {talentOnboardingData.country || 'Select a country'}
@@ -2972,8 +3117,14 @@ export default function KongilaWeb() {
                       <div style={{ position: 'relative' }}>
                         <div
                           className="form-input"
+                          role="button"
+                          tabIndex={0}
+                          aria-haspopup="listbox"
+                          aria-expanded={showTimezoneDropdown}
+                          aria-label="Choose your timezone"
                           style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                           onClick={() => { setShowTimezoneDropdown(v => !v); setTimezoneSearch(''); }}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowTimezoneDropdown(v => !v); setTimezoneSearch(''); } }}
                         >
                           <span style={{ color: talentOnboardingData.timezone ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                             {selected?.label || talentOnboardingData.timezone || 'Select your timezone'}
@@ -3034,7 +3185,7 @@ export default function KongilaWeb() {
 
             {/* Step 2: Professional Info */}
             {talentWizardStep === 2 && (
-              <div>
+              <div className="talent-onboarding-step-content talent-onboarding-content-step-2">
                 <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>2. Professional Details</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Tell us about your current role, specialization, and seniority.</p>
 
@@ -3361,7 +3512,7 @@ export default function KongilaWeb() {
 
             {/* Step 3: Compensation */}
             {talentWizardStep === 3 && (
-              <div>
+              <div className="talent-onboarding-step-content talent-onboarding-content-step-3">
                 <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>3. Pay &amp; Availability</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>What you expect to be paid and how soon you can start. Every field here is required.</p>
 
@@ -3454,7 +3605,7 @@ export default function KongilaWeb() {
 
             {/* Step 4: Documents (Supabase Storage upload progress) */}
             {talentWizardStep === 4 && (
-              <div>
+              <div className="talent-onboarding-step-content talent-onboarding-content-step-4">
                 <h3 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>4. Documents & Links</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>Upload the mandatory CV and add any supporting certification or portfolio links.</p>
 
@@ -3607,11 +3758,11 @@ export default function KongilaWeb() {
 
             {/* Step 5: Finalization */}
             {talentWizardStep === 5 && (
-              <div style={{ textAlign: 'center', padding: '32px 16px' }}>
+              <div className="talent-onboarding-step-content talent-onboarding-content-step-5" style={{ textAlign: 'center', padding: '32px 16px' }}>
                 <div style={{ fontSize: '72px', marginBottom: '24px', color: 'var(--accent-green)', textShadow: '0 0 20px rgba(51, 255, 87, 0.4)' }}>✓</div>
-                <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '16px' }}>You're All Set!</h3>
+                <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '16px' }}>Ready to complete your profile?</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '15px', lineHeight: 1.6, maxWidth: '450px', margin: '0 auto 32px auto' }}>
-                  Your profile and documents have been successfully securely uploaded. Click <strong>Complete Onboarding</strong> below to access your dashboard and begin your verification process.
+                  Your profile details and required document are ready to submit. Complete onboarding to finish setting up your talent profile and begin the verification process. Profile completion does not mean your profile has been approved or vetted.
                 </p>
 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
@@ -3621,8 +3772,8 @@ export default function KongilaWeb() {
                     onClick={handleTalentWizardSubmit}
                     disabled={loading}
                     style={{
-                      background: 'linear-gradient(135deg, var(--accent-green), #2db33d)', 
-                      color: '#000', 
+                      background: '#0758B8',
+                      color: '#fff',
                       border: 'none', 
                       borderRadius: '8px', 
                       height: '44px', 
@@ -3631,11 +3782,11 @@ export default function KongilaWeb() {
                       fontWeight: 700, 
                       cursor: loading ? 'not-allowed' : 'pointer',
                       opacity: loading ? 0.8 : 1,
-                      boxShadow: '0 4px 15px rgba(51, 255, 87, 0.3)',
-                      transition: 'transform 0.2s, box-shadow 0.2s'
+                      boxShadow: 'none',
+                      transition: 'background-color 0.2s'
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(51, 255, 87, 0.4)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 15px rgba(51, 255, 87, 0.3)'; }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#064C9B'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#0758B8'; }}
                   >
                     {loading ? 'Completing...' : 'Complete Onboarding'}
                   </button>
@@ -3644,52 +3795,13 @@ export default function KongilaWeb() {
             )}
 
           </GlassCard>
+          </main>
+          </div>
         )}
 
         {currentUser && authView === 'onboarding' && loading && (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 2500,
-              background: 'rgba(8, 15, 36, 0.72)',
-              backdropFilter: 'blur(10px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '24px'
-            }}
-          >
-            <div
-              style={{
-                width: '100%',
-                maxWidth: '360px',
-                background: 'linear-gradient(180deg, rgba(10,18,44,0.98), rgba(23,37,84,0.98))',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '20px',
-                padding: '28px',
-                textAlign: 'center',
-                boxShadow: '0 24px 80px rgba(0,0,0,0.45)'
-              }}
-            >
-              <div
-                style={{
-                  width: '56px',
-                  height: '56px',
-                  margin: '0 auto 16px',
-                  borderRadius: '50%',
-                  border: '4px solid rgba(255,255,255,0.12)',
-                  borderTopColor: 'var(--accent-cyan)',
-                  animation: 'spin 0.9s linear infinite'
-                }}
-              />
-              <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
-                Completing onboarding
-              </div>
-              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.72)', lineHeight: 1.6 }}>
-                We’re saving your profile, syncing Supabase, and preparing your dashboard.
-              </div>
-            </div>
+          <div className="onboarding-completion-loader">
+            <MascotLoader variant="page" message="Finishing…" />
           </div>
         )}
 
@@ -4004,54 +4116,91 @@ export default function KongilaWeb() {
 
       {/* ── Sign Out Confirmation Modal ── */}
       {showSignOutConfirm && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(16px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999
-        }}>
-          <div style={{
-            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95))',
-            border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px',
-            padding: '36px', maxWidth: '440px', width: '100%',
-            boxShadow: '0 24px 48px rgba(0, 0, 0, 0.4)', textAlign: 'center'
-          }}>
-            <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚪</div>
-            <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#FFFFFF', margin: '0 0 12px 0', letterSpacing: '-0.02em' }}>
-              Confirm Sign Out
-            </h2>
-            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: '1.6', margin: '0 0 28px 0' }}>
-              Are you sure you want to end your session? You will be signed out securely from the system backend.
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-              <button 
-                onClick={() => setShowSignOutConfirm(false)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '12px', padding: '12px 24px', color: '#E2E8F0',
-                  fontWeight: 700, fontSize: '13px', cursor: 'pointer', flex: 1,
-                  transition: 'background 0.2s'
-                }}
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={performSignOut}
-                style={{
-                  background: 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none',
-                  borderRadius: '12px', padding: '12px 24px', color: '#FFFFFF',
-                  fontWeight: 700, fontSize: '13px', cursor: 'pointer', flex: 1,
-                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)',
-                  transition: 'background 0.2s'
-                }}
-              >
-                Sign Out
-              </button>
+        <div className="signout-confirm-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setShowSignOutConfirm(false); }}>
+          <section className="signout-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-description" tabIndex={-1}>
+            <div className="signout-confirm-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M12 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/>
+              </svg>
             </div>
-          </div>
+            <p className="signout-confirm-eyebrow">ACCOUNT</p>
+            <h2 id="signout-title">Sign out of Kongila?</h2>
+            <p id="signout-description">You can sign back in at any time to continue where you left off.</p>
+            <div className="signout-confirm-actions">
+              <button ref={signOutCancelButtonRef} type="button" className="signout-cancel-button" onClick={() => setShowSignOutConfirm(false)}>Stay signed in</button>
+              <button type="button" className="signout-submit-button" onClick={performSignOut}>Sign out</button>
+            </div>
+          </section>
         </div>
       )}
 
+    </div>
+  );
+}
+
+export async function getServerSideProps(context: { query: Record<string, string | string[] | undefined> }) {
+  const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+  const requestedView = first(context.query.view);
+  const requestedRole = first(context.query.role);
+  return {
+    props: {
+      // Resolve entry routes before rendering the public homepage. This keeps
+      // signup/intake deep links visually continuous on the first response.
+      initialAuthView: requestedView === 'login' || requestedView === 'signup' ? requestedView : null,
+      initialAuthRole: requestedRole === 'client' ? 'client' : 'talent',
+      initialClientIntakeActive: first(context.query.intake) === '1',
+      initialWorkspaceTransition: first(context.query.workspace) === '1',
+      initialInviteTransition: Boolean(first(context.query.invite))
+    }
+  };
+}
+
+function TalentSignupBrandPanel() {
+  return (
+    <aside className="talent-signup-brand" aria-labelledby="talent-brand-heading">
+      <div className="talent-signup-brand-top"><KongilaLogo size={38} textColor="#FFFFFF" /><span>FOR PROFESSIONALS</span></div>
+      <div className="talent-signup-brand-copy">
+        <p className="talent-signup-brand-eyebrow"><span /> THE KONGILA TALENT NETWORK</p>
+        <h1 id="talent-brand-heading">Your next opportunity starts with the right connection.</h1>
+        <p>Join the Kongila talent network and take the next step towards opportunities that match your skills and professional experience.</p>
+      </div>
+      <TalentSignupVisual />
+      <div className="talent-signup-brand-reassurance"><span>01</span><p>Create your account to get started. You can continue with your professional profile afterwards.</p></div>
+      <footer className="talent-signup-brand-footer"><span>© {new Date().getFullYear()} Kongila</span><Link href="/legal/privacy">Privacy policy</Link></footer>
+    </aside>
+  );
+}
+
+function TalentSignupVisual() {
+  return (
+    <div className="talent-signup-visual" aria-hidden="true">
+      <svg viewBox="0 0 560 390" fill="none">
+        <path className="talent-visual-route" d="M91 221c53-73 103-92 163-72 64 22 83 80 142 56 27-11 50-34 76-71" stroke="#6F9BB4" strokeWidth="1.5" strokeDasharray="5 8" />
+        <circle cx="92" cy="220" r="5" fill="#E5BA77"/><circle cx="396" cy="205" r="5" fill="#E5BA77"/><circle cx="472" cy="135" r="5" fill="#8CC5B4"/>
+        <rect x="72" y="72" width="326" height="250" rx="10" fill="#1B3A52" stroke="#456177"/>
+        <path d="M72 100h326" stroke="#456177"/>
+        <circle cx="91" cy="86" r="3" fill="#B6C6CD"/><circle cx="103" cy="86" r="3" fill="#B6C6CD"/><circle cx="115" cy="86" r="3" fill="#B6C6CD"/>
+        <rect x="92" y="123" width="114" height="153" rx="6" fill="#F2F0E8"/>
+        <circle cx="149" cy="167" r="26" fill="#D6A27C"/>
+        <path d="M123 169c-1-21 10-36 27-36 19 0 29 16 25 38-11-3-22-10-28-18-6 9-14 14-24 16Z" fill="#1D3444"/>
+        <path d="M105 252c3-32 17-47 44-47s40 15 43 47" fill="#315B71"/>
+        <path d="M111 263h76" stroke="#A9BAB9" strokeWidth="3" strokeLinecap="round"/><path d="M121 272h54" stroke="#C4CFCA" strokeWidth="3" strokeLinecap="round"/>
+        <rect x="228" y="124" width="145" height="54" rx="5" fill="#274961" stroke="#527187"/>
+        <circle cx="247" cy="151" r="8" fill="#8FB6C4"/><path d="M264 145h86M264 157h62" stroke="#C4D1D3" strokeWidth="3" strokeLinecap="round"/>
+        <rect x="228" y="191" width="145" height="85" rx="5" fill="#F5F4ED"/>
+        <text x="244" y="213" fill="#547081" fontSize="9" fontWeight="700" letterSpacing="1">PROFESSIONAL PROFILE</text>
+        <path d="M244 229h104M244 240h84" stroke="#AAB9BB" strokeWidth="3" strokeLinecap="round"/>
+        <rect x="244" y="251" width="47" height="15" rx="7.5" fill="#E0EAE5"/><text x="267" y="261" textAnchor="middle" fill="#477463" fontSize="7" fontWeight="700">DESIGN</text>
+        <rect x="296" y="251" width="58" height="15" rx="7.5" fill="#E4ECF1"/><text x="325" y="261" textAnchor="middle" fill="#45677B" fontSize="7" fontWeight="700">STRATEGY</text>
+        <rect x="348" y="55" width="146" height="73" rx="7" fill="#F5F3EB" stroke="#D8DFDB"/>
+        <circle cx="371" cy="78" r="8" fill="#548373"/><path d="m367 78 3 3 5-6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <text x="387" y="77" fill="#304B59" fontSize="9" fontWeight="700">SKILLS MEET NEEDS</text>
+        <path d="M367 98h104" stroke="#AAB9B6" strokeWidth="3" strokeLinecap="round"/>
+        <rect x="373" y="283" width="130" height="47" rx="6" fill="#E9EDE5" stroke="#D2DCD3"/>
+        <circle cx="392" cy="306" r="8" fill="#527968"/><path d="m388 306 3 3 5-6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <text x="408" y="303" fill="#314E48" fontSize="8" fontWeight="700">A connection begins</text><text x="408" y="315" fill="#6A817B" fontSize="7">with your profile</text>
+        <path d="M35 302h28M49 288v28M490 178h22M501 167v22" stroke="#82A9B4" strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
     </div>
   );
 }

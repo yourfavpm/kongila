@@ -265,9 +265,17 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: 'support',          label: 'Support' },
 ];
 
+const NAV_GROUP_STARTS: Record<string, string> = {
+  dashboard: 'Workspace',
+  contracts: 'Professional',
+  messages: 'Communication',
+  profile: 'Account',
+};
+
 // ─── Shared Sub-Components ────────────────────────────────────────────────────
-const Card = ({ children, style = {}, onClick }: { children: React.ReactNode; style?: React.CSSProperties; onClick?: () => void }) => (
+const Card = ({ children, style = {}, onClick, className = '' }: { children: React.ReactNode; style?: React.CSSProperties; onClick?: () => void; className?: string }) => (
   <div 
+    className={`talent-portal-surface ${className}`.trim()}
     onClick={onClick}
     style={{
       background: '#FFFFFF',
@@ -743,7 +751,7 @@ const ProfileSection = ({
       : (vettingStatus === 'Applied' && passedCount === 0 && activeVettingStage?.status === 'pending' ? 'Applied' : 'Vetting In Progress');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="talent-overview-page" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {profile?.requiresReReview && (
         <div style={{
           background: 'rgba(239, 68, 68, 0.08)',
@@ -868,7 +876,7 @@ const ProfileSection = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                background: 'linear-gradient(135deg, #0ABFBC, #0284C7)',
+                background: '#0758B8',
                 color: '#fff',
                 padding: '10px 16px',
                 borderRadius: '999px',
@@ -886,9 +894,9 @@ const ProfileSection = ({
       </div>
 
       {!hasCompletedVetting && (
-      <Card style={{
+      <Card className="talent-active-stage" style={{
         padding: '22px',
-        background: 'linear-gradient(135deg, rgba(0, 71, 204, 0.08), rgba(16, 185, 129, 0.08))',
+        background: '#EDF4FC',
         border: '1px solid rgba(0, 71, 204, 0.14)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
@@ -907,7 +915,7 @@ const ProfileSection = ({
           <div style={{ textAlign: 'right', flexShrink: 0, minWidth: '160px' }}>
             <div style={{ fontSize: '13px', fontWeight: 800, color: '#0047CC', marginBottom: '6px' }}>{vettingProgressLabel}</div>
             <div style={{ height: '8px', background: 'rgba(255,255,255,0.45)', borderRadius: '999px', overflow: 'hidden' }}>
-              <div style={{ width: `${vettingProgressPercent}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #10B981)', borderRadius: '999px' }} />
+              <div style={{ width: `${vettingProgressPercent}%`, height: '100%', background: '#0758B8', borderRadius: '999px' }} />
             </div>
           </div>
         </div>
@@ -950,7 +958,7 @@ const ProfileSection = ({
                 <button
                   onClick={() => onOpenAssessment?.(activeSkillAssessment?.id || activeVettingStage.assessmentId)}
                   style={{
-                    background: 'linear-gradient(135deg, #0047CC, #3B82F6)',
+                    background: '#0758B8',
                     color: '#fff',
                     border: 'none',
                     padding: '10px 16px',
@@ -1039,56 +1047,26 @@ const ProfileSection = ({
       )}
 
       {profileCompletion < 100 && (
-        <Card style={{ padding: '20px', borderLeft: '4px solid #0047CC' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: '12px', color: '#6B7A99', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Profile Completion</div>
-              <div style={{ fontSize: '24px', fontWeight: 900, color: '#1A2340', marginTop: '4px' }}>{profileCompletion}% complete</div>
+        <section className="talent-profile-completion-inline" aria-label={`Profile completion ${profileCompletion} percent`}>
+          <div className="talent-profile-completion-copy">
+            <span><strong>Profile completion</strong><b>{profileCompletion}%</b></span>
+            <div className="talent-profile-completion-track" role="progressbar" aria-label="Profile completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={profileCompletion}>
+              <span style={{ width: `${profileCompletion}%` }} />
             </div>
-            <button
-              onClick={() => setActiveSection('profile')}
-              style={{
-                background: '#0047CC',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '10px',
-                padding: '10px 14px',
-                fontWeight: 700,
-                fontSize: '12px',
-                cursor: 'pointer',
-              }}
-            >
-              Continue Profile
-            </button>
+            {incompleteFields.length > 0 && <small>Still to add: {incompleteFields.slice(0, 3).join(' · ')}{incompleteFields.length > 3 ? ` · +${incompleteFields.length - 3} more` : ''}</small>}
           </div>
-          <div style={{ height: '8px', background: '#EDF2F7', borderRadius: '999px', overflow: 'hidden', marginTop: '14px' }}>
-            <div style={{ width: `${profileCompletion}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #10B981)', borderRadius: '999px' }} />
-          </div>
-          {incompleteFields.length > 0 && (
-            <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {incompleteFields.slice(0, 6).map(field => (
-                <span key={field} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '999px', background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#475569', fontWeight: 600 }}>
-                  {field}
-                </span>
-              ))}
-              {incompleteFields.length > 6 && (
-                <span style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '999px', background: '#EEF3FF', color: '#0047CC', fontWeight: 700 }}>
-                  +{incompleteFields.length - 6} more
-                </span>
-              )}
-            </div>
-          )}
-        </Card>
+          <button type="button" onClick={() => setActiveSection('profile')}>Continue profile <span aria-hidden="true">→</span></button>
+        </section>
       )}
 
 
       {shouldShowOnboardingVideo && (
-        <Card style={{ padding: 0, overflow: 'hidden', border: '1px solid rgba(0, 71, 204, 0.16)' }}>
+        <Card className="talent-welcome-video" style={{ padding: 0, overflow: 'hidden', border: '1px solid rgba(0, 71, 204, 0.16)' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch' }}>
             <div style={{
               flex: '1 1 320px',
               minHeight: '240px',
-              background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+              background: '#14213D',
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
@@ -1384,7 +1362,7 @@ const ProfessionalSection = ({ profile }: { profile: any }) => {
           <h3 style={{ fontWeight: 700, fontSize: '15px', color: '#1A2340', marginBottom: '16px' }}>Salary Expectation</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
             <div style={{ flex: 1, background: '#F5F7FA', borderRadius: '8px', height: '8px', overflow: 'hidden' }}>
-              <div style={{ width: '70%', height: '100%', background: 'linear-gradient(90deg, #0047CC, #3D7FFF)', borderRadius: '8px' }} />
+              <div style={{ width: '70%', height: '100%', background: '#0758B8', borderRadius: '8px' }} />
             </div>
             <span style={{ fontWeight: 800, fontSize: '20px', color: '#0047CC' }}>
               ${(profile?.salaryExpectation || 4500).toLocaleString()} / mo
@@ -1888,34 +1866,9 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
   const [dragOver, setDragOver] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState('');
 
-  // Pull documents from profile or fallback to defaults
-  const profileDocs = profile?.documents || [
-    {
-      id: 'doc_chidi_cv',
-      name: 'Professional_CV_2024.pdf',
-      category: 'Professional (CV, Portfolio)',
-      fileSize: '1.2 MB',
-      uploadedAt: 'Uploaded 2 days ago',
-      status: 'Vetted'
-    },
-    {
-      id: 'doc_chidi_portfolio',
-      name: 'UX_Case_Studies.pdf',
-      category: 'Professional (CV, Portfolio)',
-      fileSize: '18.5 MB',
-      uploadedAt: 'Updated 1 week ago',
-      status: 'Vetted'
-    },
-    {
-      id: 'doc_chidi_aws',
-      name: 'AWS_Devops_cert_Assoc.png',
-      category: 'Certifications',
-      fileSize: '4.8 MB',
-      uploadedAt: 'Verified Jun 2023',
-      status: 'Verified',
-      certificateImage: 'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=150'
-    }
-  ];
+  // Render only persisted profile documents; a new or still-loading profile
+  // should not be populated with example files.
+  const profileDocs = Array.isArray(profile?.documents) ? profile.documents : [];
 
   // Document counting by category
   const counts = {
@@ -1981,7 +1934,7 @@ const DocumentsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdate
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
+    <div className="talent-documents-page" style={{ display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
       
       {/* Page header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3020,11 +2973,11 @@ const PipelineSection = ({ profile, matches = [], clientRequests = [], interview
   const getRequestInfo = (requestId: string) => {
     const info = getRequestInfoLocally(requestId, clientRequests);
     return {
-      clientName: info?.clientName || info?.companyName || 'Horizon Fintech',
-      role: info?.roleDescription || info?.title || 'Senior Full-Stack Engineer',
-      budget: info?.budget || '$120.00 / hr',
-      timezone: info?.timezone || 'GMT+1 (Lagos)',
-      commitmentLevel: info?.commitmentLevel || 'Remote / Full-time'
+      clientName: info?.clientName || info?.companyName || '—',
+      role: info?.roleDescription || info?.title || '—',
+      budget: info?.budget || '—',
+      timezone: info?.timezone || '—',
+      commitmentLevel: info?.commitmentLevel || '—'
     };
   };
 
@@ -3619,7 +3572,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
             <span>Uploading to Supabase Storage...</span><span>{uploadProgress}%</span>
           </div>
           <div style={{ height: '6px', background: '#EEF3FF', borderRadius: '3px' }}>
-            <div style={{ height: '100%', width: `${uploadProgress}%`, background: 'linear-gradient(90deg, #0047CC, #3B82F6)', borderRadius: '3px', transition: 'width 0.3s ease' }} />
+            <div style={{ height: '100%', width: `${uploadProgress}%`, background: '#0758B8', borderRadius: '3px', transition: 'width 0.3s ease' }} />
           </div>
         </Card>
       )}
@@ -4375,7 +4328,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
   const proficiencyColors: Record<string, string> = { 'Native / Bilingual': '#0047CC', 'Native': '#0047CC', 'Professional Working Proficiency': '#00A389', 'Full Professional Proficiency': '#6366F1', 'Elementary': '#F59E0B', 'Limited Working Proficiency': '#F59E0B' };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
+    <div className="talent-profile-page" style={{ display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
 
       {/* Toast */}
       {toastMsg && (
@@ -4386,12 +4339,12 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
       )}
 
       {/* Profile Header */}
-      <Card style={{ padding: '36px', background: 'linear-gradient(135deg, #0F172A 0%, #1E3A5F 50%, #002B7F 100%)', color: '#FFFFFF', position: 'relative', overflow: 'hidden' }}>
+      <Card className="talent-profile-identity" style={{ padding: '36px', background: '#14213D', color: '#FFFFFF', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '220px', height: '220px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)' }} />
         <div style={{ position: 'absolute', bottom: '-40px', left: '30%', width: '160px', height: '160px', borderRadius: '50%', background: 'rgba(0,71,204,0.15)' }} />
         {!isEditingHeader ? (
           <div className="profile-header-row" style={{ display: 'flex', alignItems: 'center', gap: '28px', position: 'relative' }}>
-            <div className="profile-avatar" style={{ width: '96px', height: '96px', borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #0047CC, #38BDF8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '36px', fontWeight: 900, flexShrink: 0, border: '3px solid rgba(255,255,255,0.2)' }}>
+            <div className="profile-avatar" style={{ width: '96px', height: '96px', borderRadius: '50%', overflow: 'hidden', background: '#243C5A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '36px', fontWeight: 900, flexShrink: 0, border: '3px solid rgba(255,255,255,0.2)' }}>
               {profilePhotoUrl ? (
                 <img src={profilePhotoUrl} alt={`${fullName} profile`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
@@ -4488,7 +4441,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
             {!isEditingPersonal ? (
               <InfoGrid items={[
                 { label: 'Full Name', value: fullName },
-                { label: 'Email Address', value: profile?.email || user?.email || 'chidi.anya@kongila.dev' },
+                { label: 'Email Address', value: profile?.email || user?.email || '—' },
                 { label: 'Phone Number', value: phone },
                 { label: 'Date of Birth', value: dateOfBirth },
                 { label: 'Gender', value: gender },
@@ -4868,7 +4821,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {Array.isArray(profile?.certificationFiles) && profile.certificationFiles.length > 0 && profile.certificationFiles.map((file: any, index: number) => (
                 <div key={file?.id || file?.url || index} style={{ display: 'flex', gap: '16px', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '12px', alignItems: 'center' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'linear-gradient(135deg, #EEF3FF, #E0E7FF)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: '#EDF4FC', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0047CC" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -4880,7 +4833,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
               ))}
               {certsList.map(cert => (
                 <div key={cert.id} style={{ display: 'flex', gap: '16px', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '12px', alignItems: 'center' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'linear-gradient(135deg, #EEF3FF, #E0E7FF)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: '#EDF4FC', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0047CC" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.45 1-1 1H4v2h16v-2h-5c-.55 0-1-.45-1-1v-2.34" /></svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -4903,10 +4856,10 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
         <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
 
           {/* Vetting Framework */}
-          <Card style={{ background: 'linear-gradient(135deg, #1A2340, #0F172A)', color: '#FFFFFF' }}>
+          <Card style={{ background: '#14213D', color: '#FFFFFF' }}>
             <h3 style={{ fontSize: '13px', fontWeight: 800, margin: '0 0 20px 0', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.6)' }}>Vetting Framework</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
-              <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: hasCompletedVetting ? 'linear-gradient(135deg, #10B981, #38BDF8)' : 'linear-gradient(135deg, #334155, #64748B)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900, textAlign: 'center', lineHeight: 1.1, flexShrink: 0, border: '3px solid rgba(255,255,255,0.15)', padding: '8px' }}>
+              <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: hasCompletedVetting ? '#0F766E' : '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 900, textAlign: 'center', lineHeight: 1.1, flexShrink: 0, border: '3px solid rgba(255,255,255,0.15)', padding: '8px' }}>
                 {vettingBadgeText}
               </div>
               <div>
@@ -4922,7 +4875,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
                     <span style={{ fontSize: '11px', fontWeight: 800, color: '#38BDF8' }}>{val}/100</span>
                   </div>
                   <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px' }}>
-                    <div style={{ width: `${val}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #38BDF8)', borderRadius: '3px' }} />
+                    <div style={{ width: `${val}%`, height: '100%', background: '#0758B8', borderRadius: '3px' }} />
                   </div>
                 </div>
               ))}
@@ -4935,7 +4888,7 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
             {profile?.assignedManager?.name ? (
               <>
                 <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginBottom: '16px' }}>
-                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', flexShrink: 0 }}>
+                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', flexShrink: 0 }}>
                     {profile.assignedManager.name[0]}
                   </div>
                   <div>
@@ -5108,8 +5061,8 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
 // ─── Section 7.5: Settings Section ───────────────────────────────────────────
 const SettingsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdateProfile?: (p: any) => void }) => {
   const [activeTab, setActiveTab] = useState<'account' | 'notifications' | 'privacy'>('account');
-  const [email, setEmail] = useState(profile?.user?.email || 'chidi.anya@example.com');
-  const [phone, setPhone] = useState(profile?.phone || '+234 809 123 4567');
+  const [email, setEmail] = useState(profile?.user?.email || profile?.email || '');
+  const [phone, setPhone] = useState(profile?.phone || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -5288,8 +5241,8 @@ const SettingsSection = ({ profile, onUpdateProfile }: { profile: any; onUpdateP
                   <button
                     type="button"
                     onClick={() => {
-                      setEmail(profile?.user?.email || 'chidi.anya@example.com');
-                      setPhone(profile?.phone || '+234 809 123 4567');
+                      setEmail(profile?.user?.email || profile?.email || '');
+                      setPhone(profile?.phone || '');
                       setCurrentPassword('');
                       setNewPassword('');
                     }}
@@ -5396,7 +5349,7 @@ const EngagementSection = () => {
           <Card key={i} style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
             <div style={{
               width: '56px', height: '56px', borderRadius: '50%', flexShrink: 0,
-              background: 'linear-gradient(135deg, #002B7F, #0047CC)',
+              background: '#14213D',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#fff', fontWeight: 800, fontSize: '20px'
             }}>{member.avatar}</div>
@@ -5439,7 +5392,7 @@ const OnboardingSection = ({ profile }: { profile: any }) => {
         {/* Welcome video placeholder */}
         <Card style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{
-            background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)',
+            background: '#14213D',
             height: '200px', display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: '16px'
           }}>
@@ -5469,7 +5422,7 @@ const OnboardingSection = ({ profile }: { profile: any }) => {
           <h3 style={{ fontWeight: 700, fontSize: '15px', color: '#1A2340', marginBottom: '8px' }}>Onboarding Progress</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
             <div style={{ flex: 1, height: '8px', background: '#F5F7FA', borderRadius: '4px', overflow: 'hidden' }}>
-              <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #0047CC, #3D7FFF)', borderRadius: '4px', transition: 'width 0.5s ease' }} />
+              <div style={{ width: `${progress}%`, height: '100%', background: '#0758B8', borderRadius: '4px', transition: 'width 0.5s ease' }} />
             </div>
             <span style={{ fontWeight: 800, fontSize: '16px', color: '#0047CC', flexShrink: 0 }}>{progress}%</span>
           </div>
@@ -5964,7 +5917,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
       
       {/* Search Header Banner Section */}
       <div style={{
-        background: 'linear-gradient(135deg, #002B7F 0%, #0047CC 100%)',
+        background: '#14213D',
         borderRadius: '16px', padding: '40px', color: '#FFFFFF', textAlign: 'center',
         position: 'relative', overflow: 'hidden'
       }}>
@@ -6154,7 +6107,7 @@ const SupportSection = ({ profile, onUpdateProfile }: { profile: any; onUpdatePr
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
           {/* Live Support */}
-          <Card style={{ padding: '24px', background: 'linear-gradient(135deg, #1A2340 0%, #0D1326 100%)', color: '#FFFFFF' }}>
+          <Card style={{ padding: '24px', background: '#14213D', color: '#FFFFFF' }}>
             <div style={{ fontSize: '24px', marginBottom: '12px' }}>💬</div>
             <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF', margin: '0 0 4px 0' }}>Live Support</h3>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: '0 0 20px 0' }}>
@@ -6717,7 +6670,7 @@ const SkillAssessmentEngine = ({
 
         {/* ── PROGRESS BAR */}
         <div style={{ height: '3px', background: '#0A1120' }}>
-          <div style={{ height: '100%', background: `linear-gradient(90deg, #0047CC, #38BDF8)`, width: `${timerPct}%`, transition: 'width 1s linear' }} />
+          <div style={{ height: '100%', background: '#0758B8', width: `${timerPct}%`, transition: 'width 1s linear' }} />
         </div>
 
         {/* ── MAIN CONTENT */}
@@ -6802,7 +6755,7 @@ const SkillAssessmentEngine = ({
             <button
               onClick={() => handleSubmit(false)}
               disabled={submitting}
-              style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: submitting ? '#334155' : 'linear-gradient(135deg, #10B981, #059669)', color: '#fff', fontSize: '13px', fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: submitting ? 'none' : '0 4px 12px rgba(16,185,129,0.4)' }}
+              style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: submitting ? '#334155' : '#0F766E', color: '#fff', fontSize: '13px', fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: 'none' }}
             >
               {submitting ? '⏳ Submitting...' : '✅ Submit Assessment'}
             </button>
@@ -6880,7 +6833,7 @@ const SkillAssessmentEngine = ({
 
         <button
           onClick={onClose}
-          style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #0047CC, #38BDF8)', color: '#fff', fontSize: '14px', fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 16px rgba(56,189,248,0.3)' }}
+          style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: '#0758B8', color: '#fff', fontSize: '14px', fontWeight: 800, cursor: 'pointer', boxShadow: 'none' }}
         >
           Back to Dashboard
         </button>
@@ -7286,7 +7239,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
           <span style={{color:'#0047CC',fontWeight:800}}>{overallProgress}%</span>
         </div>
         <div style={{height:'10px',background:'#F1F5F9',borderRadius:'6px',overflow:'hidden'}}>
-          <div style={{height:'100%',width:`${overallProgress}%`,background:'linear-gradient(90deg,#0047CC,#10B981)',borderRadius:'6px',transition:'width 0.6s ease'}}/>
+          <div style={{height:'100%',width:`${overallProgress}%`,background:'#0758B8',borderRadius:'6px',transition:'width 0.6s ease'}}/>
         </div>
       </Card>
 
@@ -7392,7 +7345,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                     <div style={{marginTop:'12px',padding:'14px',background:'#F0F7FF',borderRadius:'10px',border:'1px solid #BFDBFE'}}>
                       <div style={{fontSize:'12px',fontWeight:700,color:'#1D4ED8',marginBottom:'6px'}}>📋 Skill Assessment Ready</div>
                       <p style={{fontSize:'11px',color:'#6B7A99',margin:'0 0 12px 0'}}>Complete all sections. If disconnected, you have a 15-minute grace period to resume.</p>
-                      <button onClick={()=>onOpenAssessment&&onOpenAssessment(tsa?.id||sr.assessmentId)} style={{background:'linear-gradient(135deg,#0047CC,#3B82F6)',color:'#fff',border:'none',padding:'8px 18px',borderRadius:'8px',fontSize:'12px',fontWeight:800,cursor:'pointer',boxShadow:'0 2px 8px rgba(0,71,204,0.3)'}}>Start Assessment →</button>
+                      <button onClick={()=>onOpenAssessment&&onOpenAssessment(tsa?.id||sr.assessmentId)} style={{background:'#0758B8',color:'#fff',border:'none',padding:'8px 18px',borderRadius:'8px',fontSize:'12px',fontWeight:800,cursor:'pointer',boxShadow:'none'}}>Start Assessment →</button>
                     </div>
                   )}
 
@@ -7614,7 +7567,7 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
       <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:'24px',alignItems:'start'}}>
         <div style={{display:'flex',flexDirection:'column',gap:'24px'}}>
           {/* Grade Hero Card */}
-          <Card style={{background:'linear-gradient(135deg,#1A2340 0%,#0047CC 100%)',padding:'32px',borderRadius:'16px',display:'flex',alignItems:'center',gap:'32px',color:'white',border:'none'}}>
+          <Card style={{background:'#14213D',padding:'32px',borderRadius:'16px',display:'flex',alignItems:'center',gap:'32px',color:'white',border:'none'}}>
             <div style={{textAlign:'center',flexShrink:0}}>
               <div style={{fontSize: grade ? '72px' : '34px',fontWeight:900,color:gradeColor,lineHeight:1,textShadow:'0 2px 16px rgba(0,0,0,0.3)'}}>
                 {grade || 'Not yet graded'}
@@ -7632,7 +7585,7 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
                   </div>
                   <div style={{fontSize:'40px',fontWeight:900,color:'white',lineHeight:1}}>{compositeScore}<span style={{fontSize:'20px',color:'rgba(255,255,255,0.5)'}}>/100</span></div>
                   <div style={{marginTop:'14px',height:'8px',background:'rgba(255,255,255,0.15)',borderRadius:'4px',overflow:'hidden'}}>
-                    <div style={{height:'100%',width:`${compositeScore}%`,background:'linear-gradient(90deg,#3B82F6,#10B981)',borderRadius:'4px',transition:'width 0.8s ease'}}/>
+                    <div style={{height:'100%',width:`${compositeScore}%`,background:'#2F80D8',borderRadius:'4px',transition:'width 0.8s ease'}}/>
                   </div>
                   <div style={{fontSize:'12px',color:'rgba(255,255,255,0.5)',marginTop:'8px'}}>
                     {scoreState.isFullyScored
@@ -7737,7 +7690,7 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
           {/* Personality Snapshot. Hidden until the assessment that produces
               it has actually been scored. */}
           {personality && (
-          <Card style={{padding:'24px',background:'linear-gradient(180deg,#F0FDF4 0%,#FFF 100%)',border:'1px solid #BBF7D0'}}>
+          <Card style={{padding:'24px',background:'#F0FDF4',border:'1px solid #BBF7D0'}}>
             <h3 style={{fontSize:'15px',fontWeight:800,color:'#15803D',margin:'0 0 16px 0'}}>🧠 Personality Snapshot</h3>
             <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
               <div>
@@ -7778,7 +7731,7 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
                         </div>
                       </div>
                       <div style={{height:'6px',background:'#F1F5F9',borderRadius:'3px',overflow:'hidden'}}>
-                        <div style={{height:'100%',width:`${pct}%`,background:`linear-gradient(90deg,${cat.color}88,${cat.color})`,borderRadius:'3px',transition:'width 0.6s ease'}}/>
+                        <div style={{height:'100%',width:`${pct}%`,background:cat.color,borderRadius:'3px',transition:'width 0.6s ease'}}/>
                       </div>
                     </div>
                   );
@@ -7858,53 +7811,26 @@ const EarningsSection = ({ profile, contracts = [] }: { profile: any; contracts?
 
 // ─── Section: Tasks ───────────────────────────────────────────────────────────
 const TasksSection = ({ profile }: { profile: any }) => {
-  const sampleTasks = [
-    {id:1,title:'Complete Onboarding Documents',desc:'Upload your NDA and background check forms to proceed.',priority:'High',due:'2024-07-15',status:'pending',tag:'Compliance'},
-    {id:2,title:'Skill Assessment — Node.js',desc:'Complete your technical evaluation before the deadline.',priority:'High',due:'2024-07-20',status:'in_progress',tag:'Assessment'},
-    {id:3,title:'Update Portfolio URL',desc:'Add your latest project links to your profile.',priority:'Medium',due:'2024-07-30',status:'pending',tag:'Profile'},
-  ];
-  const priorityColor: Record<string,string> = {High:'#EF4444',Medium:'#F59E0B',Low:'#10B981'};
-  const statusColor: Record<string,string> = {pending:'#94A3B8',in_progress:'#0047CC',completed:'#10B981'};
-  const statusLabel: Record<string,string> = {pending:'Pending',in_progress:'In Progress',completed:'Completed'};
-
+  const assignedTasks = Array.isArray(profile?.tasks) ? profile.tasks : [];
   return (
-    <div style={{display:'flex',flexDirection:'column',gap:'24px'}}>
-      <div>
-        <h2 style={{fontSize:'22px',fontWeight:800,color:'#1A2340',margin:'0 0 4px 0'}}>✅ Tasks</h2>
-        <p style={{fontSize:'13px',color:'#6B7A99',margin:0}}>Action items and milestones assigned to you by the Kongila team.</p>
-      </div>
-
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'12px'}}>
-        {[
-          {label:'Total Tasks',val:sampleTasks.length,color:'#0047CC'},
-          {label:'In Progress',val:sampleTasks.filter(t=>t.status==='in_progress').length,color:'#F59E0B'},
-          {label:'Pending',val:sampleTasks.filter(t=>t.status==='pending').length,color:'#EF4444'},
-        ].map((m,i)=>(
-          <Card key={i} style={{padding:'16px',textAlign:'center',borderTop:`3px solid ${m.color}`}}>
-            <div style={{fontSize:'28px',fontWeight:900,color:m.color}}>{m.val}</div>
-            <div style={{fontSize:'11px',fontWeight:700,color:'#6B7A99',marginTop:'4px'}}>{m.label}</div>
-          </Card>
-        ))}
-      </div>
-
-      <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-        {sampleTasks.map(task=>(
-          <Card key={task.id} style={{padding:'20px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:'8px'}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'6px',flexWrap:'wrap'}}>
-                  <span style={{fontSize:'14px',fontWeight:800,color:'#1A2340'}}>{task.title}</span>
-                  <span style={{fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:'20px',background:`${priorityColor[task.priority]}15`,color:priorityColor[task.priority],border:`1px solid ${priorityColor[task.priority]}40`}}>{task.priority}</span>
-                  <span style={{fontSize:'10px',fontWeight:700,padding:'2px 8px',borderRadius:'20px',background:'#EEF3FF',color:'#0047CC'}}>{task.tag}</span>
-                </div>
-                <p style={{fontSize:'13px',color:'#6B7A99',margin:'0 0 10px 0',lineHeight:'1.5'}}>{task.desc}</p>
-                <div style={{fontSize:'11px',color:'#94A3B8',fontWeight:600}}>⏰ Due: {new Date(task.due).toLocaleDateString()}</div>
-              </div>
-              <span style={{fontSize:'11px',fontWeight:800,padding:'4px 12px',borderRadius:'20px',background:`${statusColor[task.status]}15`,color:statusColor[task.status],border:`1px solid ${statusColor[task.status]}30`,flexShrink:0}}>{statusLabel[task.status]}</span>
+    <div className="talent-tasks-page" style={{display:'flex',flexDirection:'column',gap:'18px'}}>
+      <header>
+        <h2 style={{fontSize:'22px',fontWeight:800,color:'#1A2340',margin:'0 0 4px 0'}}>Tasks</h2>
+        <p style={{fontSize:'13px',color:'#6B7A99',margin:0}}>Action items assigned to you by the Kongila team.</p>
+      </header>
+      {assignedTasks.length ? (
+        <div className="talent-task-list">
+          {assignedTasks.map((task: any, index: number) => (
+            <div className="talent-task-row" key={task.id || index}>
+              <div><strong>{task.title || task.name}</strong>{task.description && <p>{task.description}</p>}</div>
+              <span>{task.status || 'Assigned'}</span>
+              {task.dueDate && <time dateTime={task.dueDate}>{new Date(task.dueDate).toLocaleDateString()}</time>}
             </div>
-          </Card>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="talent-empty-inline"><span aria-hidden="true">✓</span><div><strong>No assigned tasks</strong><p>When an action is assigned to you, it will appear here.</p></div></div>
+      )}
     </div>
   );
 };
@@ -8016,11 +7942,7 @@ export default function TalentDashboard({
   } | null>(null);
 
   // Notifications and messages state
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: 'Contract Signed', message: 'Nexus Health signed your agreement.', time: '2h ago', read: false },
-    { id: 2, title: 'Compliance Action', message: 'You have a document requiring review.', time: '5h ago', read: false },
-    { id: 3, title: 'Radar Match', message: 'Successfully matched to Horizon Fintech.', time: '1d ago', read: true }
-  ]);
+  const [notifications, setNotifications] = useState<any[]>(dashboardNotifications || []);
   const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   
@@ -8330,27 +8252,31 @@ export default function TalentDashboard({
         onClose={() => setActiveAssessmentSession(null)}
       />
     )}
-    <div className="dashboard-shell" style={{ display: 'flex', minHeight: '100vh', background: '#F5F7FA', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
+    <div className="dashboard-shell talent-portal-shell" style={{ display: 'flex', minHeight: '100vh', background: '#F5F7FA', fontFamily: 'var(--font-display, Inter, sans-serif)' }}>
 
       {/* ── Mobile Top Nav ── */}
       <div className="mobile-nav-bar">
-        <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)} style={{ padding: '8px 0' }}>
+        <button className="mobile-hamburger" aria-label={mobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)} style={{ padding: '8px 0' }}>
           <span></span><span></span><span></span>
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#0047CC', fontSize: '18px' }}>
           <div style={{ width: '24px', height: '24px', background: '#0047CC', color: 'white', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>K</div>
           Kongila
         </div>
-        <div 
-          style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', border: '1px solid #DDE2EC', cursor: 'pointer', flexShrink: 0 }}
+        <button
+          type="button"
+          aria-label="Open My Profile"
+          style={{ width: '34px', height: '34px', borderRadius: '50%', overflow: 'hidden', border: '1px solid #DDE2EC', cursor: 'pointer', flexShrink: 0, padding: 0, background: '#fff' }}
           onClick={() => { setActiveSection('profile'); setMobileSidebarOpen(false); }}
         >
-          <img 
-            src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80"}
-            alt="Profile"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        </div>
+          {(talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar) ? (
+            <img src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <span aria-hidden="true" style={{ display: 'grid', width: '100%', height: '100%', placeItems: 'center', background: '#eaf1fa', color: '#0758b8', fontSize: '13px', fontWeight: 700 }}>
+              {(talentProfile?.name || currentUser?.name || 'T').trim().charAt(0).toUpperCase()}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ── Mobile Sidebar Drawer ── */}
@@ -8388,8 +8314,9 @@ export default function TalentDashboard({
                   : 0;
                 const unreadBadgeCount = item.id === 'notifications' ? unreadNotifsCount : (item.id === 'messages' ? unreadMessagesCount : (unreadByModule[item.id] || 0));
                 return (
+                  <React.Fragment key={item.id}>
+                  {NAV_GROUP_STARTS[item.id] && <div className="talent-nav-group-label">{NAV_GROUP_STARTS[item.id]}</div>}
                   <button
-                    key={item.id}
                     title={isLocked ? 'Complete Stage 7 Vetting to unlock' : ''}
                     disabled={isLocked}
                     onClick={() => {
@@ -8422,6 +8349,7 @@ export default function TalentDashboard({
                       </span>
                     )}
                   </button>
+                  </React.Fragment>
                 );
               })}
             </nav>
@@ -8451,9 +8379,9 @@ export default function TalentDashboard({
         position: 'sticky', top: 0, height: '100vh', overflowY: 'auto'
       }}>
         {/* User badge */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
+        <div className="talent-sidebar-brand" style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
           <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
-          <div style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Portal</div>
+          <div className="talent-sidebar-caption" style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Workspace</div>
         </div>
 
         {/* Nav */}
@@ -8469,9 +8397,10 @@ export default function TalentDashboard({
               : 0;
             const unreadBadgeCount = item.id === 'notifications' ? unreadNotifsCount : (item.id === 'messages' ? unreadMessagesCount : (unreadByModule[item.id] || 0));
             return (
+              <React.Fragment key={item.id}>
+              {NAV_GROUP_STARTS[item.id] && <div className="talent-nav-group-label">{NAV_GROUP_STARTS[item.id]}</div>}
               <button
-                key={item.id}
-                title={isLocked ? 'Complete Stage 7 Vetting to unlock' : ''}
+                title={isLocked ? 'Complete Stage 7 Vetting to unlock' : item.label}
                 disabled={isLocked}
                 onClick={() => {
                   if (!isLocked) setActiveSection(item.id);
@@ -8489,7 +8418,7 @@ export default function TalentDashboard({
                 }}
               >
                 <SidebarIcon id={item.id} color={isActive ? '#0047CC' : '#6B7A99'} size={15} />
-                {item.label}
+                <span className="talent-nav-item-label">{item.label}</span>
                 {isLocked && <span style={{marginLeft:'auto',fontSize:'12px'}}>🔒</span>}
                 {complianceCount > 0 && !isLocked && (
                   <span style={{ marginLeft: 'auto', background: '#EF4444', color: '#fff', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '10px' }}>
@@ -8502,6 +8431,7 @@ export default function TalentDashboard({
                   </span>
                 )}
               </button>
+              </React.Fragment>
             );
           })}
         </nav>
@@ -8670,11 +8600,13 @@ export default function TalentDashboard({
               onClick={() => setActiveSection('profile')}
             >
               <div style={{ position: 'relative' }}>
-                <img
-                  src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=80"}
-                  alt="Profile"
-                  style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }}
-                />
+                {(talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar) ? (
+                  <img src={talentProfile?.profilePhotoUrl || talentProfile?.avatar || currentUser?.avatar} alt="Profile" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  <span aria-hidden="true" style={{ display: 'grid', width: '36px', height: '36px', placeItems: 'center', borderRadius: '50%', background: '#eaf1fa', color: '#0758b8', fontSize: '13px', fontWeight: 700 }}>
+                    {(talentProfile?.name || currentUser?.name || 'T').trim().charAt(0).toUpperCase()}
+                  </span>
+                )}
                 <span style={{
                   position: 'absolute', bottom: '0', right: '0',
                   width: '10px', height: '10px', borderRadius: '50%',
@@ -8706,7 +8638,9 @@ export default function TalentDashboard({
 
         {/* ── Main Scroll View ── */}
         <main className="dashboard-main-content" style={{ background: '#F5F7FA' }}>
-          {renderSection()}
+          <div className={`talent-section-page talent-section-page--${activeSection}`}>
+            {renderSection()}
+          </div>
         </main>
 
       </div>

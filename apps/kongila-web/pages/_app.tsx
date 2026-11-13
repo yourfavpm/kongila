@@ -3,6 +3,13 @@ import Head from 'next/head';
 import { useEffect } from 'react';
 import '../styles/globals.css';
 import '../styles/brand.css';
+import '../styles/workforce-platform.css';
+import '../styles/navigation.css';
+import '../styles/auth.css';
+import '../styles/client-intake.css';
+import '../styles/talent-signup.css';
+import '../styles/talent-portal.css';
+import '../styles/talent-onboarding.css';
 
 /**
  * Two things every page needs, in the one place that wraps all of them.
