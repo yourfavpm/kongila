@@ -88,7 +88,7 @@ const PLATFORM_MENU: MenuColumn = {
   items: PLATFORM_PAGES.map(p => ({ href: `/platform/${p.slug}`, name: p.name, summary: p.summary }))
 };
 
-export function SiteHeader() {
+export function SiteHeader({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
   const router = useRouter();
   const [open, setOpen] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -137,22 +137,23 @@ export function SiteHeader() {
   return (
     <header
       ref={navRef as any}
+      className={`mk-site-header${tone === 'dark' ? ' mk-site-header--dark' : ''}`}
       style={{
         position: 'sticky',
         top: 0,
         zIndex: 60,
-        background: 'rgba(255,255,255,0.94)',
+        background: tone === 'dark' ? 'rgba(7, 19, 40, 0.96)' : 'rgba(255,255,255,0.94)',
         backdropFilter: 'saturate(180%) blur(12px)',
-        borderBottom: `1px solid ${lifted ? '#E4E9F2' : 'transparent'}`,
+        borderBottom: `1px solid ${tone === 'dark' ? 'rgba(255,255,255,0.10)' : lifted ? '#E4E9F2' : 'transparent'}`,
         transition: 'border-color 200ms ease'
       }}
     >
       <div
         className="mk-wrap"
-        style={{ display: 'flex', alignItems: 'center', gap: 30, height: 78 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 30, height: tone === 'dark' ? 118 : 78 }}
       >
         <Link href="/" aria-label="Kongila home" style={{ display: 'flex', alignItems: 'center' }}>
-          <KongilaWordmark height={34} />
+          <KongilaWordmark height={tone === 'dark' ? 102 : 34} inverted={tone === 'dark'} />
         </Link>
 
         {/* Desktop navigation */}
@@ -161,6 +162,7 @@ export function SiteHeader() {
             <div key={menu.label} style={{ position: 'relative' }}>
               <button
                 type="button"
+                className="mk-nav-menu-trigger"
                 onClick={() => setOpen(open === menu.label ? null : menu.label)}
                 aria-expanded={open === menu.label}
                 style={{
@@ -192,12 +194,13 @@ export function SiteHeader() {
 
               {open === menu.label && (
                 <div
+                  className="mk-dropdown"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 12px)',
                     left: -16,
                     width: menu.label === 'Solutions' ? 460 : 480,
-                    background: '#fff',
+                  background: '#fff',
                     border: '1px solid #E4E9F2',
                     borderRadius: 16,
                     boxShadow: '0 18px 48px rgba(14,23,38,0.12)',
@@ -211,6 +214,7 @@ export function SiteHeader() {
                     <Link
                       key={item.href}
                       href={item.href}
+                      className="mk-dropdown-link"
                       style={{
                         display: 'block',
                         padding: '12px 14px',
@@ -338,7 +342,7 @@ function MobileGroup({ label, items }: { label: string; items: MenuColumn['items
 
 export function SiteFooter() {
   return (
-    <footer style={{ background: '#0B1222', color: '#9FB0CC', paddingTop: 64, paddingBottom: 40, marginTop: 0 }}>
+    <footer className="mk-site-footer" style={{ background: '#08152D', color: '#9FB0CC', paddingTop: 68, paddingBottom: 30, marginTop: 0 }}>
       <div className="mk-wrap">
         <div
           style={{
@@ -348,8 +352,11 @@ export function SiteFooter() {
           }}
           className="mk-footer-grid"
         >
-          <div>
-            <KongilaWordmark height={34} inverted />
+          <div className="mk-footer-brand">
+            <KongilaWordmark height={102} inverted />
+            <div style={{ marginTop: 22, color: '#F4F7FC', fontSize: 18, lineHeight: 1.35, fontWeight: 600, letterSpacing: '-.02em', maxWidth: 250 }}>
+              Build globally.<br />Hire intelligently.
+            </div>
             <p style={{ margin: '16px 0 0', fontSize: 13.5, lineHeight: 1.65, color: '#8395B5', maxWidth: 260 }}>
               Global workforce infrastructure. Hiring, compliance and payroll in one place, so you can
               build a team without building the operation behind it.
@@ -410,7 +417,8 @@ export function SiteFooter() {
           :global(.mk-footer-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
         }
         @media (max-width: 560px) {
-          :global(.mk-footer-grid) { grid-template-columns: minmax(0, 1fr) !important; }
+          :global(.mk-footer-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          :global(.mk-footer-brand) { grid-column: 1 / -1; }
         }
       `}</style>
     </footer>
@@ -419,7 +427,7 @@ export function SiteFooter() {
 
 function FooterColumn({ title, links }: { title: string; links: { href: string; name: string }[] }) {
   return (
-    <div>
+    <div className="mk-footer-column">
       <div style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64789B', marginBottom: 14 }}>
         {title}
       </div>

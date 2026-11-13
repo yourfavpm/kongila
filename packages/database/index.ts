@@ -209,7 +209,7 @@ function normalizeRoleValue(role: any): string {
  */
 export async function getAuthenticatedUserId(
   req: { headers?: any }
-): Promise<{ userId: string; email: string | null } | null> {
+): Promise<{ userId: string; email: string | null; emailConfirmed: boolean } | null> {
   const header = req?.headers?.authorization || req?.headers?.Authorization;
   const token =
     typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : null;
@@ -219,7 +219,11 @@ export async function getAuthenticatedUserId(
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) return null;
 
-  return { userId: data.user.id, email: data.user.email ?? null };
+  return {
+    userId: data.user.id,
+    email: data.user.email ?? null,
+    emailConfirmed: Boolean(data.user.email_confirmed_at)
+  };
 }
 
 export async function getRequestUser(req: { headers?: any }): Promise<Actor | null> {

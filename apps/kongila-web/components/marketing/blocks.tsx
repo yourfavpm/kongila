@@ -91,7 +91,7 @@ export function Hero({
 }) {
   return (
     <section
-      className="mk-hero"
+      className={`mk-hero${aside ? ' mk-hero--with-aside' : ' mk-hero--solo'}`}
       style={{
         padding: 'clamp(52px, 7vw, 92px) 0 clamp(44px, 6vw, 76px)',
         background: 'radial-gradient(1000px 440px at 12% -12%, rgba(0,71,204,0.07), transparent 68%)'
@@ -148,6 +148,9 @@ export function IndicatorCard({
 }) {
   const inner = (
     <>
+      <span className="mk-card-mark" style={{ color: colour, background: `${colour}12` }} aria-hidden="true">
+        <CardIcon title={title} />
+      </span>
       <span className="mk-indicator" style={{ background: colour, display: 'block' }} />
       <h3 className="mk-h3" style={{ marginBottom: 8 }}>{title}</h3>
       <p className="mk-body">{body}</p>
@@ -171,22 +174,22 @@ export function IndicatorCard({
 export function CapabilityCard({ title, body, colour = '#0047CC' }: { title: string; body: string; colour?: string }) {
   return (
     <div className="mk-card">
-      <span
-        aria-hidden
-        style={{
-          display: 'block',
-          width: 28,
-          height: 28,
-          borderRadius: 8,
-          background: `${colour}14`,
-          border: `1px solid ${colour}33`,
-          marginBottom: 14
-        }}
-      />
+      <span className="mk-card-mark" style={{ color: colour, background: `${colour}12` }} aria-hidden="true"><CardIcon title={title} /></span>
       <h3 className="mk-h3" style={{ fontSize: 15.5, marginBottom: 6 }}>{title}</h3>
       <p className="mk-small">{body}</p>
     </div>
   );
+}
+
+function CardIcon({ title }: { title: string }) {
+  const label = title.toLowerCase();
+  if (/pay|finance|invoice/.test(label)) return <svg viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="3"/><path d="M4 10h16M8 14h3"/></svg>;
+  if (/compliance|security|contract|legal/.test(label)) return <svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.5-2.9 7.8-7 10-4.1-2.2-7-5.5-7-10V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg>;
+  if (/project|service|operate|process/.test(label)) return <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h9M5 17h11"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/></svg>;
+  if (/scale|global|market|network/.test(label)) return <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5c2.3 2.3 3.4 5.1 3.4 8.5s-1.1 6.2-3.4 8.5c-2.3-2.3-3.4-5.1-3.4-8.5s1.1-6.2 3.4-8.5Z"/></svg>;
+  if (/talent|hire|acquisition|professional/.test(label)) return <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.5-3 2.4-4.6 5.5-4.6s5 1.6 5.5 4.6M16 6.5a3 3 0 0 1 0 5.8M17 15c2.1.4 3.3 1.7 3.6 4"/></svg>;
+  if (/visibility|data|intelligence|assessment/.test(label)) return <svg viewBox="0 0 24 24"><path d="M3 18h18M6 15V9M12 15V5M18 15v-3"/><circle cx="6" cy="7" r="1.5"/><circle cx="12" cy="3" r="1.5"/><circle cx="18" cy="10" r="1.5"/></svg>;
+  return <svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/><circle cx="5" cy="12" r="2"/></svg>;
 }
 
 /* ─── Process strip ───────────────────────────────────────────────────── */
@@ -446,7 +449,7 @@ export function ClosingCta({
                 </p>
               )}
 
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 32 }}>
+              <div className="mk-closing-actions" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 32 }}>
                 <Link
                   href={p.href}
                   className="mk-btn"

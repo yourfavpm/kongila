@@ -2172,7 +2172,7 @@ export default function KongilaWeb() {
              /talent and the rest, so the homepage and every page it links to
              cannot disagree about what Kongila offers or what it is called. */
           <>
-            <SiteHeader />
+            <SiteHeader tone="dark" />
             <HomePage />
             <SiteFooter />
           </>

@@ -13,7 +13,6 @@
 
 import React from 'react';
 import MarketingPage from '../components/marketing/SiteChrome';
-import Mascot from '../components/brand/Mascot';
 import { Hero, Section, SectionHead, CapabilityCard, ClosingCta } from '../components/marketing/blocks';
 import { startRequestHref, JOIN_TALENT_HREF } from '../components/marketing/siteMap';
 
@@ -60,19 +59,29 @@ export default function AboutPage() {
         </div>
       </Section>
 
-      {/* The honest gap. Better an empty shelf than a fabricated one. */}
       <Section>
-        <div
-          className="mk-card mk-reveal"
-          style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', padding: 30 }}
-        >
-          <Mascot state="thinking" size={62} label="" />
-          <div style={{ flex: 1, minWidth: 280 }}>
-            <h3 className="mk-h3" style={{ marginBottom: 7 }}>More about us, shortly</h3>
-            <p className="mk-body">
-              Our story, the people behind Kongila and photographs of the team are being put together.
-              We would rather leave this space empty than fill it with something that is not ours.
+        <div className="mk-about-feature mk-reveal">
+          <div className="mk-about-feature__copy">
+            <div className="mk-eyebrow" style={{ marginBottom: 14 }}>A connected workforce</div>
+            <h2 className="mk-h2">Opportunity should travel both ways.</h2>
+            <p className="mk-lede" style={{ marginTop: 16 }}>
+              Businesses need capable people across markets. Professionals deserve access to work beyond the places they live. Kongila brings the infrastructure for both sides together.
             </p>
+          </div>
+          <div className="mk-about-feature__graphic" aria-hidden="true">
+            <svg viewBox="0 0 420 250" role="presentation">
+              <path d="M55 178C107 67 290 45 365 112" fill="none" stroke="#8EB2F2" strokeWidth="2" strokeDasharray="5 8" />
+              <circle cx="55" cy="178" r="7" fill="#0ABFBC"/><circle cx="365" cy="112" r="7" fill="#0047CC"/>
+              <circle cx="205" cy="77" r="5" fill="#7CCFC5"/>
+              <rect x="27" y="139" width="112" height="70" rx="14" fill="#fff"/>
+              <circle cx="57" cy="174" r="15" fill="#D9F2ED"/><path d="M50 174h14M57 167v14" stroke="#087E78" strokeWidth="2" strokeLinecap="round"/>
+              <rect x="82" y="166" width="42" height="5" rx="2.5" fill="#8292AD"/><rect x="82" y="178" width="31" height="4" rx="2" fill="#C5D0E0"/>
+              <rect x="277" y="71" width="116" height="70" rx="14" fill="#fff"/>
+              <circle cx="308" cy="106" r="15" fill="#E3ECFF"/><path d="M301 106h14M308 99v14" stroke="#0047CC" strokeWidth="2" strokeLinecap="round"/>
+              <rect x="333" y="98" width="43" height="5" rx="2.5" fill="#8292AD"/><rect x="333" y="110" width="32" height="4" rx="2" fill="#C5D0E0"/>
+              <rect x="143" y="154" width="138" height="60" rx="15" fill="#0B2B69"/><text x="212" y="180" textAnchor="middle" fill="#fff" fontSize="13" fontFamily="Inter, sans-serif" fontWeight="600">Kongila</text><text x="212" y="197" textAnchor="middle" fill="#C3D8FF" fontSize="10" fontFamily="Inter, sans-serif">workforce infrastructure</text>
+            </svg>
+            <span>People first. Operations built around them.</span>
           </div>
         </div>
       </Section>
