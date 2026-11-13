@@ -24,7 +24,7 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers } from './notify';
+import { notifyUsers, resolveNotificationRecipients } from './notify';
 import {
   findSchedulingConflicts,
   describeConflict,
@@ -217,35 +217,48 @@ async function notifyParties(
   }
 
   // In-app first: it does not depend on an email provider being configured.
-  const rows = [...parties, ...watchers].map(p => ({
-    id: (globalThis.crypto?.randomUUID?.() || `notif_${Date.now()}_${Math.random().toString(36).slice(2)}`),
-    user_id: p.id,
-    title: SUBJECTS[kind],
-    message:
-      `${interview.title || 'Your interview'}` +
-      (startsAt ? ` — ${formatInstantInZone(startsAt, p.zone || 'UTC')}` : '') +
-      (p.zone || !startsAt ? '' : ' (UTC; set your timezone to see your own time)') +
-      (extra ? ` ${extra}` : ''),
-    module_type: 'interviews',
-    read: false,
-    created_at: new Date().toISOString()
-  }));
+  const { recipients, warnings: recipientWarnings } = await resolveNotificationRecipients(
+    [...parties, ...watchers].map(p => String(p.id))
+  );
+  warnings.push(...recipientWarnings);
 
-  const { error: notifError } = await supabase.from('notifications').insert(rows);
+  const notificationRows = recipients.map(recipient => {
+    const party = [...parties, ...watchers].find(p =>
+      recipient.requestedIds.includes(String(p.id))
+    );
+    return {
+      id: (globalThis.crypto?.randomUUID?.() || `notif_${Date.now()}_${Math.random().toString(36).slice(2)}`),
+      user_id: recipient.userId,
+      title: SUBJECTS[kind],
+      message:
+        `${interview.title || 'Your interview'}` +
+        (startsAt ? ` — ${formatInstantInZone(startsAt, party?.zone || 'UTC')}` : '') +
+        (party?.zone || !startsAt ? '' : ' (UTC; set your timezone to see your own time)') +
+        (extra ? ` ${extra}` : ''),
+      module_type: 'interviews',
+      read: false,
+      created_at: new Date().toISOString()
+    };
+  });
+
+  const { error: notifError } = notificationRows.length > 0
+    ? await supabase.from('notifications').insert(notificationRows)
+    : { error: null };
   if (notifError) warnings.push(`In-app notification failed: ${notifError.message}`);
 
   if (!emailIsConfigured()) {
     warnings.push('Email is not configured, so no message was emailed.');
+    for (const warning of warnings) console.warn(`[interviews] ${warning}`);
     return warnings;
   }
 
-  const { data: users } = await supabase
-    .from('users')
-    .select('id, email, name')
-    .in('id', parties.map(p => p.id));
+  const emailRecipients = recipients.filter(recipient =>
+    parties.some(p => recipient.requestedIds.includes(String(p.id)))
+  );
 
   for (const party of parties) {
-    const user = (users || []).find((u: any) => String(u.id) === String(party.id));
+    const recipient = recipients.find(row => row.requestedIds.includes(String(party.id)));
+    const user = emailRecipients.find(row => row.userId === recipient?.userId);
     if (!user?.email) {
       warnings.push(`No email address on file for ${party.name || party.id}.`);
       continue;
@@ -308,6 +321,7 @@ async function notifyParties(
     }
   }
 
+  for (const warning of warnings) console.warn(`[interviews] ${warning}`);
   return warnings;
 }
 

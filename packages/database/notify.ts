@@ -78,10 +78,11 @@ export interface NotifyResult {
   warnings: string[];
 }
 
-interface Recipient {
+export interface Recipient {
   userId: string;
   email?: string | null;
   name?: string | null;
+  requestedIds: string[];
 }
 
 function newId(): string {
@@ -89,35 +90,112 @@ function newId(): string {
     || `notif_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Resolve user IDs and talent profile IDs to real user records. */
+export function mapNotificationRecipients(
+  userIds: string[],
+  users: any[],
+  talentProfiles: any[]
+): { recipients: Recipient[]; warnings: string[] } {
+  const wanted = Array.from(new Set(userIds.filter(Boolean).map(String)));
+  const recipientByUserId = new Map<string, Recipient>();
+  const recipientByRequestedId = new Map<string, Recipient>();
+
+  const addRecipient = (user: any, requestedId: string) => {
+    const userId = String(user?.id || '');
+    if (!userId) return;
+    let recipient = recipientByUserId.get(userId);
+    if (!recipient) {
+      recipient = {
+        userId,
+        email: user.email,
+        name: user.name,
+        requestedIds: []
+      };
+      recipientByUserId.set(userId, recipient);
+    }
+    if (!recipient.requestedIds.includes(requestedId)) recipient.requestedIds.push(requestedId);
+    recipientByRequestedId.set(requestedId, recipient);
+  };
+
+  const wantedIds = new Set(wanted);
+  for (const user of users || []) {
+    const id = String(user?.id || '');
+    if (wantedIds.has(id)) addRecipient(user, id);
+  }
+
+  for (const profile of talentProfiles || []) {
+    const profileId = String(profile?.id || '');
+    const user = (users || []).find((row: any) => String(row?.id) === String(profile?.user_id));
+    if (wantedIds.has(profileId) && user) addRecipient(user, profileId);
+  }
+
+  const warnings = wanted
+    .filter(id => !recipientByRequestedId.has(id))
+    .map(id => `"${id}" is not a user or linked talent profile, so nothing was sent to it.`);
+
+  return { recipients: Array.from(recipientByUserId.values()), warnings };
+}
+
 /** Looks up email and name, and drops anyone who is not a real user. */
-async function resolveRecipients(userIds: string[]): Promise<{
+export async function resolveNotificationRecipients(userIds: string[]): Promise<{
   recipients: Recipient[];
   warnings: string[];
 }> {
-  const warnings: string[] = [];
   const wanted = Array.from(new Set(userIds.filter(Boolean).map(String)));
   if (wanted.length === 0) return { recipients: [], warnings: ['No recipient was given.'] };
 
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
+  const { data: directUsers, error } = await supabase
     .from('users')
     .select('id, email, name')
     .in('id', wanted);
 
-  if (error) return { recipients: [], warnings: [`Could not resolve recipients: ${error.message}`] };
+  if (error) {
+    return { recipients: [], warnings: [`Could not resolve recipients: ${error.message}`] };
+  }
 
-  const found = new Set((data || []).map((u: any) => String(u.id)));
-  for (const id of wanted) {
-    if (!found.has(id)) {
-      // This is where 'admin_team' used to end up, silently.
-      warnings.push(`"${id}" is not a user, so nothing was sent to it.`);
+  const found = new Set((directUsers || []).map((user: any) => String(user.id)));
+  const missingIds = wanted.filter(id => !found.has(id));
+  let talentProfiles: any[] = [];
+  let linkedUsers: any[] = [];
+  const warnings: string[] = [];
+
+  if (missingIds.length > 0) {
+    const { data, error: profileError } = await supabase
+      .from('talent_profiles')
+      .select('id, user_id')
+      .in('id', missingIds);
+    if (profileError) {
+      warnings.push(`Could not resolve talent profile recipients: ${profileError.message}`);
+    } else {
+      talentProfiles = data || [];
+      const linkedUserIds = Array.from(new Set(
+        talentProfiles.map((profile: any) => String(profile.user_id || '')).filter(Boolean)
+      )).filter(id => !found.has(id));
+      if (linkedUserIds.length > 0) {
+        const { data: linked, error: linkedError } = await supabase
+          .from('users')
+          .select('id, email, name')
+          .in('id', linkedUserIds);
+        if (linkedError) warnings.push(`Could not load linked recipient accounts: ${linkedError.message}`);
+        else linkedUsers = linked || [];
+      }
     }
   }
 
-  return {
-    recipients: (data || []).map((u: any) => ({ userId: String(u.id), email: u.email, name: u.name })),
-    warnings
-  };
+  const resolved = mapNotificationRecipients(
+    wanted,
+    [...(directUsers || []), ...linkedUsers],
+    talentProfiles
+  );
+  warnings.push(...resolved.warnings);
+  return { recipients: resolved.recipients, warnings };
+}
+
+function logNotificationWarnings(event: NotificationEvent, warnings: string[]) {
+  for (const warning of warnings) {
+    console.warn(`[notifications] ${event}: ${warning}`);
+  }
 }
 
 export interface NotifyOptions {
@@ -147,8 +225,11 @@ export async function notifyUsers(
   options: NotifyOptions = {}
 ): Promise<NotifyResult> {
   const ids = Array.isArray(userIds) ? userIds : [userIds];
-  const { recipients, warnings } = await resolveRecipients(ids);
-  if (recipients.length === 0) return { delivered: 0, warnings };
+  const { recipients, warnings } = await resolveNotificationRecipients(ids);
+  if (recipients.length === 0) {
+    logNotificationWarnings(event, warnings);
+    return { delivered: 0, warnings };
+  }
 
   const supabase = getSupabaseClient();
   let delivered = 0;
@@ -179,10 +260,14 @@ export async function notifyUsers(
   }
 
   // ── Email ─────────────────────────────────────────────────────────────────
-  if (options.inAppOnly) return { delivered, warnings };
+  if (options.inAppOnly) {
+    logNotificationWarnings(event, warnings);
+    return { delivered, warnings };
+  }
 
   if (!emailIsConfigured()) {
     warnings.push('Email is not configured, so nothing was emailed.');
+    logNotificationWarnings(event, warnings);
     return { delivered, warnings };
   }
 
@@ -208,6 +293,7 @@ export async function notifyUsers(
     else warnings.push(`Email to ${recipient.name || recipient.email} failed: ${result.error}`);
   }
 
+  logNotificationWarnings(event, warnings);
   return { delivered, warnings };
 }
 
