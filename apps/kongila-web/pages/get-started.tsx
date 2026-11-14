@@ -9,33 +9,14 @@
  * instead of asking a question the visitor just answered by clicking.
  */
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/router';
-import Head from 'next/head';
-import Mascot from '../components/brand/Mascot';
 import { SOLUTIONS } from '../components/marketing/siteMap';
 
-export default function GetStarted() {
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!router.isReady) return;
-    const raw = router.query.model;
-    const slug = Array.isArray(raw) ? raw[0] : raw;
-    const known = SOLUTIONS.find(s => s.slug === slug);
-    const query = known ? `&model=${known.slug}` : '';
-    router.replace(`/?intake=1${query}`);
-  }, [router.isReady, router.query.model, router]);
-
-  return (
-    <>
-      <Head>
-        <title>Get started · Kongila</title>
-        <meta name="robots" content="noindex" />
-      </Head>
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#fff' }}>
-        <Mascot state="loading" size={72} label="Opening your request" />
-      </div>
-    </>
-  );
+export async function getServerSideProps(context: { query: Record<string, string | string[] | undefined> }) {
+  const raw = context.query.model;
+  const slug = Array.isArray(raw) ? raw[0] : raw;
+  const known = SOLUTIONS.find(solution => solution.slug === slug);
+  const query = known ? `&model=${encodeURIComponent(known.slug)}` : '';
+  return { redirect: { destination: `/?intake=1${query}`, permanent: false } };
 }
+
+export default function GetStarted() { return null; }

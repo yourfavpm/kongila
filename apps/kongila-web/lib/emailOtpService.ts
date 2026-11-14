@@ -12,7 +12,7 @@ import {
   type EmailOtpPurpose
 } from '@kongila/database';
 import { getSupabaseClient } from '@kongila/database';
-import { emailIsConfigured, sendEmail } from '@kongila/notifications';
+import { emailConfigurationMissing, emailIsConfigured, sendEmail } from '@kongila/notifications';
 
 type ServiceResult = {
   ok: boolean;
@@ -65,7 +65,9 @@ export async function sendEmailOtp(input: {
   if (!isValidEmail(email)) return fail(400, 'Enter a valid email address.');
   if (!validPurpose(input.purpose)) return fail(400, 'Unsupported verification request.');
   if (!emailIsConfigured()) {
-    return fail(503, 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM.');
+    const missing = emailConfigurationMissing();
+    console.error(`[auth-email-otp] email sender is missing ${missing.join(', ')} on this web deployment.`);
+    return fail(503, `Email verification is unavailable on this web deployment. Missing: ${missing.join(', ')}. Check this app's /api/config-check and redeploy after correcting its server environment.`);
   }
 
   let secret: string;

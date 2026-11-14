@@ -3,7 +3,7 @@ import { readTalentVetting, writeTalentVetting, getRequestUser } from '@kongila/
 import { VettingStageRecord } from '@kongila/shared-types';
 
 /**
- * Marks SLA breaches and auto-advances the personality stage after 48 hours.
+ * Marks SLA breaches for active vetting stages.
  *
  * This is fired from the talent dashboard on mount, which means a candidate
  * opening their own page is what drives the clock. It belongs in a scheduled
@@ -40,28 +40,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const pipeline: VettingStageRecord[] = [...snapshot.pipeline];
     let updated = false;
     const now = new Date();
-
-    // Check Stage 4 (Index 3) for 48h auto-advance
-    const stage4 = pipeline[3];
-    if (stage4 && stage4.status === 'in_progress' && stage4.startedAt) {
-      const startedAt = new Date(stage4.startedAt);
-      const hoursDiff = (now.getTime() - startedAt.getTime()) / (1000 * 60 * 60);
-
-      if (hoursDiff >= 48) {
-        // Auto-advance. Note this leaves the personality score unset, which
-        // the composite grade then treats as zero.
-        stage4.status = 'skipped';
-        stage4.notes = 'Auto-advanced after 48h non-completion.';
-        stage4.completedAt = now.toISOString();
-
-        pipeline[4] = {
-          ...pipeline[4],
-          status: 'in_progress',
-          startedAt: now.toISOString(),
-        };
-        updated = true;
-      }
-    }
 
     // Check SLAs for active stages (just marking them breached for UI/Admin)
     for (const stage of pipeline) {

@@ -10,6 +10,7 @@ import '../styles/client-intake.css';
 import '../styles/talent-signup.css';
 import '../styles/talent-portal.css';
 import '../styles/talent-onboarding.css';
+import '../../../packages/ui/dashboard-theme.css';
 
 /**
  * Two things every page needs, in the one place that wraps all of them.

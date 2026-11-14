@@ -81,6 +81,8 @@ type AdminTab =
   | 'remotan-talent'
   | 'remotan-payroll';
 
+const ADMIN_TABS: AdminTab[] = ['overview', 'talent-pipeline', 'client-pipeline', 'hiring-requests', 'interviews', 'vetting', 'matching', 'offers', 'contracts', 'compliance', 'assessments', 'support', 'audit', 'notifications', 'users', 'messages', 'settings', 'finance', 'payroll', 'remotan-overview', 'remotan-clients', 'remotan-talent', 'remotan-payroll'];
+
 interface SupportTicket {
   id: string;
   talentId?: string;
@@ -346,7 +348,12 @@ export default function AdminPanel() {
 
 
   // ── Navigation
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const initialTab = typeof router.query.tab === 'string' && ADMIN_TABS.includes(router.query.tab as AdminTab) ? router.query.tab as AdminTab : 'overview';
+  const [activeTab, setActiveTabState] = useState<AdminTab>(initialTab);
+  const setActiveTab = (tab: AdminTab) => {
+    setActiveTabState(tab);
+    void router.push({ pathname: '/', query: { tab } }, undefined, { shallow: true, scroll: false });
+  };
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // ── Selection
@@ -381,7 +388,6 @@ export default function AdminPanel() {
   const [stageInterviewDate, setStageInterviewDate] = useState<string>('');
   const [stageInterviewTime, setStageInterviewTime] = useState<string>('');
   const [stageInterviewLink, setStageInterviewLink] = useState<string>('');
-  const [stagePersonalityLink, setStagePersonalityLink] = useState<string>('');
   const [stageTaskTitle, setStageTaskTitle] = useState<string>('');
   // 'text', not 'essay': the server accepts file | link | text and rejects
   // anything else with a 422, so the picker wrote a value that could not be
@@ -391,8 +397,6 @@ export default function AdminPanel() {
   const [editScoresMode, setEditScoresMode] = useState(false);
   const [pendingRejection, setPendingRejection] = useState<{ stageIdx: number; score?: number } | null>(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState('');
-  const [showPrivateNoteModal, setShowPrivateNoteModal] = useState(false);
-  const [privateNoteInput, setPrivateNoteInput] = useState('');
 
   // ── Filter states
   const [talentFilter, setTalentFilter] = useState('All');
@@ -744,10 +748,27 @@ export default function AdminPanel() {
   }, [selectedTalent]);
 
   useEffect(() => {
-    if (router.query.tab) {
-      setActiveTab(router.query.tab as AdminTab);
-    }
+    if (!router.isReady) return;
+    const requested = Array.isArray(router.query.tab) ? router.query.tab[0] : router.query.tab;
+    if (requested && ADMIN_TABS.includes(requested as AdminTab)) setActiveTabState(requested as AdminTab);
+    else if (requested) {
+      setActiveTabState('overview');
+      void router.replace({ pathname: '/', query: { tab: 'overview' } }, undefined, { shallow: true, scroll: false });
+    } else setActiveTabState('overview');
   }, [router.query.tab]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentRole || canAccessTab(currentRole, activeTab)) return;
+    const firstAllowed = ADMIN_TABS.find(tab => canAccessTab(currentRole, tab));
+    if (firstAllowed) setActiveTab(firstAllowed);
+  }, [isAuthenticated, currentRole, activeTab]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !router.isReady) return;
+    const raw = Array.isArray(router.query.next) ? router.query.next[0] : router.query.next;
+    if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw === '/') return;
+    void router.replace(raw);
+  }, [isAuthenticated, router.isReady, router.query.next, router]);
 
   // ── Messaging ───────────────────────────────────────────────────────────
   // The admin portal had none, so a candidate or client writing to support
@@ -857,6 +878,7 @@ export default function AdminPanel() {
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState<string>('ops_manager');
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [operatorInviteLink, setOperatorInviteLink] = useState('');
 
   const loadOperators = async () => {
     setOperatorsLoading(true);
@@ -882,7 +904,9 @@ export default function AdminPanel() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `That did not work (${response.status}).`);
-      alert(successMessage);
+      if (payload.setupLink) setOperatorInviteLink(payload.setupLink);
+      if (payload.warnings?.length) alert(payload.warnings.join('\n'));
+      else alert(successMessage);
       await loadOperators();
       return true;
     } catch (err: any) {
@@ -896,7 +920,7 @@ export default function AdminPanel() {
     setInviteBusy(true);
     const sent = await callUsersApi(
       { action: 'invite', email: inviteEmail.trim(), name: inviteName.trim(), role: inviteRole },
-      `Invitation sent to ${inviteEmail.trim()}. They set their own password from the link.`
+      `Operator account created and invitation sent to ${inviteEmail.trim()}. They set their own password from the link.`
     );
     if (sent) { setInviteEmail(''); setInviteName(''); }
     setInviteBusy(false);
@@ -1138,9 +1162,39 @@ export default function AdminPanel() {
       alert(scoreProblem);
       return;
     }
+    if (stageIdx === 2 && decision === 'Proceed') {
+      const rubricKeys = ['communication', 'behavioral', 'cultural', 'technical'];
+      const complete = rubricKeys.every(key => Number.isInteger(stageRubricScores[key]) && stageRubricScores[key] >= 0 && stageRubricScores[key] <= 25);
+      const rubricTotal = rubricKeys.reduce((sum, key) => sum + (stageRubricScores[key] || 0), 0);
+      if (!complete || rubricTotal !== Number(score)) {
+        alert('Enter all four interview rubric scores from 0 to 25. The total must match the interview score out of 100.');
+        return;
+      }
+    }
 
     setSaving(true);
     const currentPipeline: VettingStageRecord[] = normalizeVettingPipeline(selectedTalent.vettingPipeline);
+    if (stageIdx === 2 && !currentPipeline[stageIdx]?.interviewId) {
+      const priorVettingInterview = interviews
+        .filter((iv: any) =>
+          String(iv.talentId) === String(selectedTalent.id) &&
+          !iv.matchId && !iv.requestId &&
+          (String(iv.title || '').toLowerCase().includes('behavioural interview') ||
+            String(iv.clientName || '').toLowerCase() === 'kongila vetting panel')
+        )
+        .sort((a: any, b: any) =>
+          new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
+        )[0];
+      if (priorVettingInterview) {
+        currentPipeline[stageIdx] = {
+          ...currentPipeline[stageIdx],
+          interviewId: priorVettingInterview.id,
+          interviewDate: priorVettingInterview.date,
+          interviewTime: priorVettingInterview.time,
+          meetingLink: priorVettingInterview.meetingLink
+        } as any;
+      }
+    }
     let updatedPipeline: VettingStageRecord[];
     try {
       updatedPipeline = advanceTalentStage(currentPipeline, stageIdx, decision, score, notes);
@@ -1156,6 +1210,10 @@ export default function AdminPanel() {
     // AC-T-012: Store rejection reason securely
     if (decision === 'Reject') {
       (updatedPipeline[stageIdx] as any).rejectionReason = notes;
+    }
+
+    if (stageIdx === 2 && (decision === 'Proceed' || decision === 'Reject')) {
+      (updatedPipeline[stageIdx] as any).interviewRubricScores = { ...stageRubricScores };
     }
 
     // Apply stage-specific deadline if set
@@ -1228,7 +1286,13 @@ export default function AdminPanel() {
         // show their own party the right time.
         const adminZone = viewerTimeZone();
         const newInstant = wallClockToUtc(stageInterviewDate, stageInterviewTime, adminZone);
-        const existingId = currentPipeline[stageIdx]?.interviewId;
+        const matchingVettingInterview = interviews.find((iv: any) =>
+          String(iv.talentId) === String(selectedTalent.id) &&
+          !iv.matchId && !iv.requestId &&
+          (String(iv.title || '').toLowerCase().includes('behavioural interview') ||
+            String(iv.clientName || '').toLowerCase() === 'kongila vetting panel')
+        );
+        const existingId = currentPipeline[stageIdx]?.interviewId || matchingVettingInterview?.id;
         const existing = existingId
           ? interviews.find((i: any) => i.id === existingId)
           : null;
@@ -1360,10 +1424,6 @@ export default function AdminPanel() {
           return;
         }
         }
-      }
-      if (stageIdx === 3 && stagePersonalityLink) {
-        // Stage 4: Personality Test Link
-        updatedPipeline[stageIdx].personalityLink = stagePersonalityLink;
       }
       if (stageIdx === 5 && stageTaskTitle) {
         // Assign the work simulation on the server.
@@ -1520,23 +1580,51 @@ export default function AdminPanel() {
       grade: calculation.grade,
     };
 
-    // AC-T-012 & AC-T-014: tell the candidate.
-    //
-    // The body sent here was { talentId, type, stage, isRejection, subject,
-    // message }, and the route reads { event, userIds, context }. Nothing
-    // matched, so `event is required` came back and every stage transition
-    // notification was dropped.
-    apiFetch('/api/notifications', {
-      method: 'POST',
-      body: JSON.stringify({
-        event: decision === 'Reject' ? 'application_rejected' : 'stage_advanced',
-        userIds: [selectedTalent.id],
-        context: {
-          stageName: VETTING_STAGES[stageIdx]?.name,
-          reason: decision === 'Reject' ? notes : undefined
-        }
-      })
-    }).catch(e => console.error("Notification failed:", e));
+    // Persist the decision before changing the visible admin state. Previously
+    // the panel optimistically moved to the next stage and only saved at the
+    // end; a rejected API request left the screen claiming the interview was
+    // complete even though the database still held the old pipeline.
+    try {
+      const res = await apiFetch('/api/vetting', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'pipeline',
+          talentId: selectedTalent.id,
+          pipeline: updatedPipeline,
+          vettingStage: newVettingStage,
+          vettingStatus: newVettingStatus,
+          scores: updatedVettingScores,
+          auditAction: `Stage Decision: ${VETTING_STAGES[stageIdx]?.name}`,
+          auditDetails: `Decision: ${decision}. Score: ${score ?? 'none'}. Notes: ${notes || 'none'}.`
+        })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(result?.error || 'That decision was not saved. Your interview scores are still here; try again.');
+        setSaving(false);
+        return;
+      }
+    } catch (e: any) {
+      console.error('Failed to save stage decision', e);
+      alert(e?.message || 'That decision was not saved. Your interview scores are still here; try again.');
+      setSaving(false);
+      return;
+    }
+
+    // Successful advancement notifications are emitted by the server only
+    // after it confirms a real stage transition. Sending one here as well
+    // caused duplicate emails, and this client only knew the stage just passed.
+    // Rejections do not use the advancement path, so retain their notification.
+    if (decision === 'Reject') {
+      apiFetch('/api/notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          event: 'application_rejected',
+          userIds: [selectedTalent.id],
+          context: { stageName: VETTING_STAGES[stageIdx]?.name, reason: notes }
+        })
+      }).catch(e => console.error('Notification failed:', e));
+    }
 
     const updatedTalents = talents.map(t => t.id === selectedTalent.id ? updatedTalent : t);
     const newAuditLog: AuditLog = {
@@ -1588,45 +1676,12 @@ export default function AdminPanel() {
     setStageInterviewDate('');
     setStageInterviewTime('');
     setStageInterviewLink('');
-    setStagePersonalityLink('');
     setStageTaskTitle('');
     setStageSubmissionType('link');
     setStageTaskDescription('');
     setStageDeadlineInput('');
     setPendingRejection(null);
     setRejectionReasonInput('');
-
-    // Through the server. This used to post the whole talents array, every
-    // request, every match, the interviews and the assessments back through
-    // /api/db, which upserts all of them. One stage decision rewrote the
-    // entire database from browser state, repacking every candidate's bio
-    // envelope on the way.
-    try {
-      const res = await apiFetch('/api/vetting', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'pipeline',
-          talentId: selectedTalent.id,
-          pipeline: updatedPipeline,
-          vettingStage: newVettingStage,
-          vettingStatus: newVettingStatus,
-          scores: updatedVettingScores,
-          auditAction: `Stage Decision: ${VETTING_STAGES[stageIdx]?.name}`,
-          auditDetails: `Decision: ${decision}. Score: ${score ?? 'none'}. Notes: ${notes || 'none'}.`
-        })
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(result?.error || 'That decision was not saved.');
-        setSaving(false);
-        return;
-      }
-    } catch (e: any) {
-      console.error('Failed to save stage decision', e);
-      alert(e?.message || 'That decision was not saved.');
-      setSaving(false);
-      return;
-    }
 
     setSaving(false);
   };
@@ -1662,20 +1717,47 @@ export default function AdminPanel() {
       }
 
       const updated = payload.interview;
-      setInterviews(interviews.map((i: any) => (i.id === iv.id ? { ...i, ...updated } : i)));
+      setInterviews(interviews.map((i: any) => i.id === iv.id ? {
+        ...i,
+        status: approve ? 'Rescheduled' : i.status,
+        date: updated?.date || (approve ? iv.proposedNewDate : i.date),
+        time: updated?.time || (approve ? iv.proposedNewTime : i.time),
+        scheduledTime: updated?.scheduled_time || (approve ? iv.proposedTime : i.scheduledTime),
+        scheduledTimezone: updated?.scheduled_timezone || (approve ? iv.proposedTimezone : i.scheduledTimezone),
+        meetingLink: updated?.meeting_link || i.meetingLink,
+        rescheduledFrom: updated?.rescheduled_from || i.rescheduledFrom,
+        rescheduleRequested: updated?.reschedule_requested ?? false,
+        rescheduleReason: updated?.reschedule_reason ?? undefined,
+        proposedNewDate: updated?.proposed_new_date ?? undefined,
+        proposedNewTime: updated?.proposed_new_time ?? undefined,
+        proposedTime: updated?.proposed_time ?? undefined,
+        proposedTimezone: updated?.proposed_timezone ?? undefined
+      } : i));
 
       if (payload.warnings?.length) {
         console.warn('[admin] reschedule decision warnings:', payload.warnings);
       }
 
-      // The pipeline stage holds a pointer, so clearing the flag there keeps
-      // the vetting drawer in step. The time itself lives on the interview.
+      // The interview row is the source of truth. Keep the pipeline's legacy
+      // display fields in sync as well so older talent overview panels do not
+      // continue showing the first invitation after this one is moved.
       if (iv.talentId) {
         const talent = talents.find((t: any) => t.id === iv.talentId);
         if (talent?.vettingPipeline) {
           const newPipeline = talent.vettingPipeline.map((stage: any) =>
             stage.interviewId === iv.id
-              ? { ...stage, rescheduleRequested: false, rescheduleReason: undefined }
+              ? {
+                  ...stage,
+                  ...(approve ? {
+                    interviewDate: updated?.date || iv.proposedNewDate || stage.interviewDate,
+                    interviewTime: updated?.time || iv.proposedNewTime || stage.interviewTime,
+                    interviewScheduledTime: updated?.scheduled_time || iv.proposedTime || stage.interviewScheduledTime,
+                    interviewTimezone: updated?.scheduled_timezone || iv.proposedTimezone || iv.scheduledTimezone || stage.interviewTimezone,
+                    meetingLink: updated?.meeting_link || iv.meetingLink || stage.meetingLink
+                  } : {}),
+                  rescheduleRequested: false,
+                  rescheduleReason: undefined
+                }
               : stage
           );
           const updatedTalent = { ...talent, vettingPipeline: newPipeline };
@@ -3152,6 +3234,43 @@ export default function AdminPanel() {
                   </div>
                 </GlassCard>
 
+                {(() => {
+                  const savedStages: any[] = Array.isArray(selectedTalent.vettingPipeline) ? selectedTalent.vettingPipeline : [];
+                  const savedInterview = savedStages[2];
+                  const savedPersonality = savedStages[3]?.personalityAssessment;
+                  const showInterview = savedInterview?.status === 'passed' && savedInterview?.interviewRubricScores;
+                  const showPersonality = savedStages[3]?.status === 'passed' && Boolean(savedPersonality?.completedAt);
+                  if (!showInterview && !showPersonality) return null;
+                  return (
+                    <GlassCard style={{ padding: '18px 22px', display: 'grid', gridTemplateColumns: showInterview && showPersonality ? 'repeat(auto-fit, minmax(280px, 1fr))' : '1fr', gap: '20px' }}>
+                      {showInterview && (
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '10px' }}>Completed interview rubric · {savedInterview.score}/100</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '7px' }}>
+                            {[
+                              ['Communication', savedInterview.interviewRubricScores.communication],
+                              ['Behavioural', savedInterview.interviewRubricScores.behavioral],
+                              ['Cultural', savedInterview.interviewRubricScores.cultural],
+                              ['Domain knowledge', savedInterview.interviewRubricScores.technical],
+                            ].map(([label, value]) => <div key={label} style={{ padding: '8px 10px', border: '1px solid var(--border-glass)', borderRadius: '7px', fontSize: '12px', color: 'var(--text-secondary)' }}>{label}<strong style={{ float: 'right', color: 'var(--text-primary)' }}>{value}/25</strong></div>)}
+                          </div>
+                        </div>
+                      )}
+                      {showPersonality && (
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '5px' }}>Completed Big Five self-reflection</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>Descriptive normalized response scores. This is not a selection score or percentile.</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
+                            {[
+                              ['Extraversion', 'extraversion'], ['Agreeableness', 'agreeableness'], ['Conscientiousness', 'conscientiousness'], ['Emotional sensitivity', 'emotionalSensitivity'], ['Openness', 'openness']
+                            ].map(([label, key]) => <span key={key} style={{ padding: '7px 9px', borderRadius: '7px', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', fontSize: '11px' }}>{label}: <strong>{savedPersonality.scores?.[key]?.score ?? '—'}</strong></span>)}
+                          </div>
+                        </div>
+                      )}
+                    </GlassCard>
+                  );
+                })()}
+
                 {/* ── MIDDLE: ACTIVE VETTING STEP ── */}
                 <div>
                   {(() => {
@@ -3170,9 +3289,28 @@ export default function AdminPanel() {
                     }
 
                     const stageMeta = VETTING_STAGES[activeIdx];
-                    const stageRecord: any = pipeline[activeIdx] || { status: 'in_progress' };
                     const actType = stageMeta.activityType;
-
+                    const rawStageRecord: any = pipeline[activeIdx] || { status: 'in_progress' };
+                    const stageInterviewCandidates = actType === 'schedule_interview'
+                      ? interviews.filter((iv: any) =>
+                          String(iv.talentId) === String(selectedTalent.id) &&
+                          !iv.matchId && !iv.requestId &&
+                          (String(iv.title || '').toLowerCase().includes('behavioural interview') ||
+                            String(iv.clientName || '').toLowerCase() === 'kongila vetting panel')
+                        )
+                      : [];
+                    const stageInterview = stageInterviewCandidates.find((iv: any) => String(iv.id) === String(rawStageRecord.interviewId))
+                      || [...stageInterviewCandidates].sort((a: any, b: any) =>
+                        new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime()
+                      )[0];
+                    const stageRecord: any = stageInterview ? {
+                      ...rawStageRecord,
+                      interviewId: rawStageRecord.interviewId || stageInterview.id,
+                      interviewDate: stageInterview.date || rawStageRecord.interviewDate,
+                      interviewTime: stageInterview.time || rawStageRecord.interviewTime,
+                      meetingLink: stageInterview.meetingLink || rawStageRecord.meetingLink,
+                      rescheduleRequested: Boolean(stageInterview.rescheduleRequested || rawStageRecord.rescheduleRequested)
+                    } : rawStageRecord;
                     // Determine sub-state within stage
                     //
                     // The stage holding an assessmentId is NOT proof that an
@@ -3226,9 +3364,7 @@ export default function AdminPanel() {
                     }
                     const assessmentResultReceived =
                       assessmentAssigned && !awaitingMarking && stageRecord.assessmentScore != null;
-                    const interviewScheduled = actType === 'schedule_interview' && !!stageRecord.interviewId;
-                    const personalitySent = actType === 'send_personality' && !!stageRecord.personalityLink;
-                    const personalityResultReceived = personalitySent && stageRecord.personalityScore != null;
+                    const interviewScheduled = actType === 'schedule_interview' && Boolean(stageInterview || stageRecord.interviewId);
                     const uploadedDocs = getTalentUploadedDocuments(selectedTalent);
 
                     return (
@@ -3615,12 +3751,13 @@ export default function AdminPanel() {
                                     <div style={{ fontSize: '28px' }}>📅</div>
                                     <div>
                                       <div style={{ fontSize: '12px', fontWeight: 700, color: '#8B5CF6', marginBottom: '4px' }}>Interview Scheduled</div>
-                                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{stageRecord.interviewDate} at {stageRecord.interviewTime}</div>
-                                      {stageRecord.meetingLink && <a href={stageRecord.meetingLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#8B5CF6', textDecoration: 'none', fontWeight: 600 }}>🔗 Join Meeting</a>}
+                                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{stageInterview?.date || stageRecord.interviewDate} at {stageInterview?.time || stageRecord.interviewTime}</div>
+                                      {(stageInterview?.meetingLink || stageRecord.meetingLink) && <a href={stageInterview?.meetingLink || stageRecord.meetingLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#8B5CF6', textDecoration: 'none', fontWeight: 600 }}>🔗 Join Meeting</a>}
                                     </div>
                                   </div>
                                   <div>
-                                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '12px' }}>Interview Rubric Scores (enter after interview)</div>
+                                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '12px' }}>Interview Rubric Scores</div>
+                                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '0 0 12px' }}>Score each rubric from 0 to 25. The four scores add up to the interview percentage out of 100.</p>
                                     {[
                                       { key: 'communication', label: 'Communication & Clarity', hint: 'Fluency, articulation, listening' },
                                       { key: 'behavioral', label: 'Behavioural Competencies', hint: 'STAR responses, problem-solving' },
@@ -3631,40 +3768,30 @@ export default function AdminPanel() {
                                         <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                                           <span>{rubric.label} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— {rubric.hint}</span></span>
                                         </label>
-                                        <input type="number" min="0" max="100" value={stageRubricScores[rubric.key] !== undefined ? stageRubricScores[rubric.key] : ''} onChange={e => {
-                                          let val = parseInt(e.target.value);
-                                          if (isNaN(val)) val = 0;
-                                          if (val > 100) val = 100;
-                                          if (val < 0) val = 0;
-                                          const newScores = { ...stageRubricScores, [rubric.key]: val };
+                                        <input type="number" min="0" max="25" value={stageRubricScores[rubric.key] !== undefined ? stageRubricScores[rubric.key] : ''} onChange={e => {
+                                          const raw = e.target.value;
+                                          const parsed = raw === '' ? undefined : Math.min(25, Math.max(0, parseInt(raw, 10) || 0));
+                                          const newScores = { ...stageRubricScores };
+                                          if (parsed === undefined) delete newScores[rubric.key];
+                                          else newScores[rubric.key] = parsed;
                                           setStageRubricScores(newScores);
-                                          
-                                          // Auto-calculate average for the overall stage score
                                           const keys = ['communication', 'behavioral', 'cultural', 'technical'];
-                                          let total = 0;
-                                          let count = 0;
-                                          keys.forEach(k => {
-                                            if (newScores[k] !== undefined) {
-                                              total += newScores[k];
-                                              count++;
-                                            }
-                                          });
-                                          if (count > 0) setStageScoreInput(Math.round(total / count));
-                                        }} className="form-input" style={{ width: '100%', fontSize: '14px' }} placeholder="0-100" />
+                                          const complete = keys.every(k => newScores[k] !== undefined);
+                                          const total = keys.reduce((sum, key) => sum + (newScores[key] || 0), 0);
+                                          setStageScoreInput(complete ? total : undefined);
+                                        }} className="form-input" style={{ width: '100%', fontSize: '14px' }} placeholder="0-25" />
                                       </div>
                                     ))}
-                                    {stageScoreInput !== undefined && (
-                                      <div style={{ fontSize: '13px', color: '#10B981', fontWeight: 700, padding: '12px', background: '#10B98115', borderRadius: '8px', border: '1px solid #10B98140' }}>
-                                        Stage Average: {stageScoreInput}% — (This contributes {Math.round(stageScoreInput * 0.3)}% to the final composite score)
-                                      </div>
-                                    )}
+                                    <div style={{ fontSize: '13px', color: stageScoreInput !== undefined ? '#10B981' : 'var(--text-muted)', fontWeight: 700, padding: '12px', background: stageScoreInput !== undefined ? '#10B98115' : 'var(--bg-tertiary)', borderRadius: '8px', border: `1px solid ${stageScoreInput !== undefined ? '#10B98140' : 'var(--border-glass)'}` }}>
+                                      Interview score: {Object.values(stageRubricScores).reduce((sum, value) => sum + value, 0)}/100{stageScoreInput !== undefined ? ` (${stageScoreInput}%) · contributes ${Math.round(stageScoreInput * 0.3)} points to the final composite score` : ' · complete all four rubrics to calculate the percentage'}
+                                    </div>
                                   </div>
                                   <div>
                                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Interview Notes & Feedback</label>
                                     <textarea value={stageNotesInput} onChange={e => setStageNotesInput(e.target.value)} placeholder="Summarise interview performance, strengths, concerns..." rows={3} className="form-input" style={{ width: '100%', resize: 'none', fontSize: '14px', padding: '12px' }} />
                                   </div>
                                   <div style={{ display: 'flex', gap: '12px' }}>
-                                    <button disabled={saving} onClick={() => setShowPrivateNoteModal(true)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Interview Done — Move to Personality Test</button>
+                                    <button disabled={saving || stageScoreInput === undefined} onClick={() => handleStageDecision(2, 'Proceed', stageScoreInput, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: saving || stageScoreInput === undefined ? 'not-allowed' : 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800, opacity: saving || stageScoreInput === undefined ? 0.6 : 1 }}>{saving ? 'Saving interview scores…' : 'Submit scores & move to Personality Test'}</button>
                                     <button disabled={saving} onClick={() => handleStageDecision(2, 'Reject', stageScoreInput, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
                                   </div>
                                 </>
@@ -3672,73 +3799,52 @@ export default function AdminPanel() {
                             </div>
                           )}
 
-                          {/* ── STAGE 3: Personality Test ── Send link → Waiting for system result */}
+                          {/* Stage 3: Integrated Big Five assessment and human review */}
                           {actType === 'send_personality' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                              {!personalitySent ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                              {stageRecord.personalityAssessment?.completedAt ? (
                                 <>
-                                  <div>
-                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px', display: 'block' }}>Personality Test Link</label>
-                                    <input type="url" value={stagePersonalityLink} onChange={e => setStagePersonalityLink(e.target.value)} placeholder="https://personality-provider.com/test?ref=..." className="form-input" style={{ width: '100%', fontSize: '14px', padding: '12px' }} />
-                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>The candidate will see this link in their dashboard and receive an email notification.</div>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: '12px' }}>
-                                    <button disabled={saving || !stagePersonalityLink} onClick={() => handleStageDecision(3, 'Assign', undefined, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: !stagePersonalityLink ? 'not-allowed' : 'pointer', background: !stagePersonalityLink ? '#94A3B8' : '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800, opacity: saving ? 0.6 : 1 }}>
-                                      🔗 Send Personality Test Link to Candidate
-                                    </button>
-                                    <button disabled={saving} onClick={() => handleStageDecision(3, 'Reject', undefined, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
-                                  </div>
-                                </>
-                              ) : !personalityResultReceived ? (
-                                <div style={{ textAlign: 'center', padding: '32px 24px', background: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px dashed var(--border-glass)' }}>
-                                  <div style={{ fontSize: '36px', marginBottom: '12px' }}>⏳</div>
-                                  <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>Test Link Sent — Awaiting Candidate Completion</div>
-                                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '20px' }}>The candidate can see this test in their dashboard. This stage will auto-advance when the provider sends results.</div>
-                                  <a href={stageRecord.personalityLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', background: '#10B981', color: '#fff', padding: '10px 20px', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 700, marginBottom: '20px' }}>
-                                    🔗 View Test Link
-                                  </a>
-
-                                  {/* The personality test is administered outside Kongila, so
-                                      somebody has to type the result in. There was no field:
-                                      "Mark Result Received" submitted whatever stageScoreInput
-                                      happened to hold, which used to be a default 80 and is
-                                      now undefined, so the stage guard refuses it. */}
-                                  <div style={{ maxWidth: '320px', margin: '0 auto 16px', textAlign: 'left' }}>
-                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '6px', display: 'block' }}>
-                                      Personality score from the provider (0–100)
-                                    </label>
-                                    <input
-                                      type="number" min="0" max="100"
-                                      value={stageScoreInput ?? ''}
-                                      onChange={e => setStageScoreInput(e.target.value === '' ? undefined : (parseInt(e.target.value) || 0))}
-                                      placeholder="Enter the score from the provider's report"
-                                      className="form-input"
-                                      style={{ width: '100%', fontSize: '14px', padding: '10px' }}
-                                    />
-                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                                      This is 10% of the composite grade. The stage cannot be passed without it.
+                                  <div style={{ padding: '16px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '12px' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 800, color: '#166534' }}>IPIP-50 profile submitted</div>
+                                    <div style={{ fontSize: '11px', color: '#52647A', marginTop: '4px' }}>Completed {new Date(stageRecord.personalityAssessment.completedAt).toLocaleString()}. Trait values are descriptive self-report results, not a selection score or population percentile.</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(145px,1fr))', gap: '8px', marginTop: '14px' }}>
+                                      {[
+                                        ['Extraversion', 'extraversion'], ['Agreeableness', 'agreeableness'], ['Conscientiousness', 'conscientiousness'], ['Emotional sensitivity', 'emotionalSensitivity'], ['Openness', 'openness']
+                                      ].map(([label, key]) => {
+                                        const value = Number(stageRecord.personalityAssessment?.scores?.[key]?.score);
+                                        return <div key={key} style={{ background: '#fff', border: '1px solid #DCE7DF', borderRadius: '8px', padding: '10px' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}><span>{label}</span><span>{Number.isFinite(value) ? value : '?'}</span></div>
+                                          <div style={{ height: '5px', background: '#E2E8F0', borderRadius: '5px', marginTop: '7px', overflow: 'hidden' }}><div style={{ width: `${Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0}%`, height: '100%', background: '#16A34A' }} /></div>
+                                        </div>;
+                                      })}
                                     </div>
                                   </div>
-
-                                  <button
-                                    disabled={saving || stageScoreInput === undefined}
-                                    onClick={() => handleStageDecision(3, 'Proceed', stageScoreInput, stageNotesInput || 'Result entered from the provider report.')}
-                                    style={{
-                                      padding: '10px 20px', borderRadius: '8px',
-                                      border: `1px solid ${stageScoreInput === undefined ? 'var(--border-glass)' : '#10B981'}`,
-                                      cursor: stageScoreInput === undefined ? 'not-allowed' : 'pointer',
-                                      background: 'transparent',
-                                      color: stageScoreInput === undefined ? 'var(--text-muted)' : '#10B981',
-                                      fontSize: '13px', fontWeight: 700
-                                    }}
-                                  >
-                                    ✅ Record result and move on
-                                  </button>
+                                  <div style={{ maxWidth: '420px' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '6px', display: 'block' }}>Stage review rating (0-100)</label>
+                                    <input type="number" min="0" max="100" value={stageScoreInput ?? ''} onChange={e => setStageScoreInput(e.target.value === '' ? undefined : Number(e.target.value))} className="form-input" style={{ width: '100%', fontSize: '14px', padding: '10px' }} placeholder="Enter the rating from your approved review rubric" />
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>This stage rating contributes to the composite vetting grade. Apply your review criteria; do not derive it by averaging personality traits.</div>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button disabled={saving || stageScoreInput === undefined} onClick={() => handleStageDecision(3, 'Proceed', stageScoreInput, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: saving || stageScoreInput === undefined ? 'not-allowed' : 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800, opacity: stageScoreInput === undefined ? .55 : 1 }}>Record review and continue</button>
+                                    <button disabled={saving} onClick={() => handleStageDecision(3, 'Reject', undefined, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>Reject</button>
+                                  </div>
+                                </>
+                              ) : stageRecord.personalityLink ? (
+                                <div style={{ textAlign: 'center', padding: '28px 22px', background: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px dashed var(--border-glass)' }}>
+                                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>Legacy external assessment link</div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>This candidate was assigned an external assessment before the integrated IPIP-50 flow.</div>
+                                  <a href={stageRecord.personalityLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', background: '#10B981', color: '#fff', padding: '10px 20px', borderRadius: '8px', textDecoration: 'none', fontSize: '13px', fontWeight: 700 }}>View assessment link</a>
+                                  <div style={{ maxWidth: '320px', margin: '18px auto 12px', textAlign: 'left' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '6px', display: 'block' }}>Stage review rating (0-100)</label>
+                                    <input type="number" min="0" max="100" value={stageScoreInput ?? ''} onChange={e => setStageScoreInput(e.target.value === '' ? undefined : Number(e.target.value))} className="form-input" style={{ width: '100%', fontSize: '14px', padding: '10px' }} />
+                                  </div>
+                                  <button disabled={saving || stageScoreInput === undefined} onClick={() => handleStageDecision(3, 'Proceed', stageScoreInput, stageNotesInput)} style={{ padding: '10px 20px', border: '1px solid #10B981', borderRadius: '8px', background: 'transparent', color: '#10B981', fontSize: '13px', fontWeight: 700 }}>Record review and continue</button>
                                 </div>
                               ) : (
-                                <div style={{ display: 'flex', gap: '12px' }}>
-                                  <button disabled={saving} onClick={() => handleStageDecision(3, 'Proceed', stageRecord.personalityScore, stageNotesInput)} style={{ flex: 2, padding: '14px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: '#10B981', color: '#fff', fontSize: '14px', fontWeight: 800 }}>✅ Results Received — Move to Remote Readiness</button>
-                                  <button disabled={saving} onClick={() => handleStageDecision(3, 'Reject', undefined, stageNotesInput)} style={{ flex: 1, padding: '14px', borderRadius: '10px', border: '1px solid #EF4444', cursor: 'pointer', background: '#EF444415', color: '#EF4444', fontSize: '14px', fontWeight: 800 }}>❌ Reject</button>
+                                <div style={{ textAlign: 'center', padding: '28px 22px', background: 'var(--bg-tertiary)', borderRadius: '12px', border: '1px dashed var(--border-glass)' }}>
+                                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>Waiting for candidate assessment</div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '18px' }}>The candidate can complete the integrated IPIP-50 from Vetting Progress. The profile will appear here after submission.</div>
+                                  <button disabled={saving} onClick={() => handleStageDecision(3, 'Reject', undefined, stageNotesInput)} style={{ padding: '10px 18px', borderRadius: '8px', border: '1px solid #EF4444', background: '#EF444415', color: '#EF4444', fontSize: '13px', fontWeight: 800 }}>Reject</button>
                                 </div>
                               )}
                             </div>
@@ -3747,6 +3853,21 @@ export default function AdminPanel() {
                           {/* ── STAGE 4: Remote Readiness ── Checklist + score */}
                           {actType === 'remote_readiness' && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                              {stageRecord.remoteReadiness && (
+                                <div style={{ border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px', background: 'var(--surface)' }}>
+                                  <div style={{ fontSize: '12px', fontWeight: 750, color: 'var(--text-primary)', marginBottom: '10px' }}>Candidate connection and device report</div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: '8px' }}>
+                                    {[
+                                      ['Download', stageRecord.remoteReadiness.downloadMbps == null ? 'Not provided' : `${stageRecord.remoteReadiness.downloadMbps} Mbps`],
+                                      ['Upload', stageRecord.remoteReadiness.uploadMbps == null ? 'Not measured' : `${stageRecord.remoteReadiness.uploadMbps} Mbps`],
+                                      ['Latency', stageRecord.remoteReadiness.latencyMs == null ? 'Not measured' : `${stageRecord.remoteReadiness.latencyMs} ms`],
+                                      ['Jitter', stageRecord.remoteReadiness.jitterMs == null ? 'Not measured' : `${stageRecord.remoteReadiness.jitterMs} ms`],
+                                    ].map(([label, value]) => <div key={label} style={{ padding: '9px', background: 'var(--surface-muted)', borderRadius: '7px' }}><div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{label}</div><div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '3px' }}>{value}</div></div>)}
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '9px' }}>{stageRecord.remoteReadiness.deviceType} · {stageRecord.remoteReadiness.operatingSystem} · {stageRecord.remoteReadiness.browser} · {stageRecord.remoteReadiness.viewport}px · {stageRecord.remoteReadiness.provider === 'LibreSpeed' ? 'Measured with LibreSpeed' : 'Self-reported speed'} · {new Date(stageRecord.remoteReadiness.testedAt).toLocaleString()}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>Candidate confirmation: backup power and suitable hardware {stageRecord.remoteReadiness.hasBackupPowerAndSuitableHardware ? 'confirmed' : 'not confirmed'}; quiet workspace {stageRecord.remoteReadiness.hasQuietWorkspace ? 'confirmed' : 'not confirmed'}.</div>
+                                </div>
+                              )}
                               <div>
                                 <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '12px' }}>Remote Readiness Checklist</div>
                                 {[
@@ -5133,6 +5254,16 @@ export default function AdminPanel() {
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '10px' }}>
               {ROLE_DESCRIPTIONS[inviteRole as keyof typeof ROLE_DESCRIPTIONS]}
             </div>
+            {operatorInviteLink && (
+              <div style={{ marginTop: '14px', padding: '12px 14px', border: '1px solid #F0D28A', borderRadius: '10px', background: '#FFFAEB', color: '#704B0E', fontSize: '12px' }}>
+                <strong>Email could not be delivered.</strong> The operator account exists. Share this single-use setup link securely so they can set their password.
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                  <a href={operatorInviteLink} target="_blank" rel="noreferrer" style={{ color: '#1455C0', overflowWrap: 'anywhere', flex: '1 1 280px' }}>{operatorInviteLink}</a>
+                  <button type="button" onClick={() => { void navigator.clipboard?.writeText(operatorInviteLink); }} className="btn-secondary" style={{ padding: '7px 10px', fontSize: '12px' }}>Copy link</button>
+                  <button type="button" onClick={() => setOperatorInviteLink('')} aria-label="Dismiss setup link" className="btn-secondary" style={{ padding: '7px 10px', fontSize: '12px' }}>Dismiss</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* The list */}
@@ -5726,8 +5857,8 @@ export default function AdminPanel() {
 
   const SidebarContent = () => (
     <>
-      <div className="sidebar-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-        <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+        <div className="sidebar-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '1px' }}>
+          <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '140px', height: 'auto', objectFit: 'contain', display: 'block' }} />
         <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Admin Portal</span>
       </div>
 
@@ -5800,6 +5931,14 @@ export default function AdminPanel() {
   );
 
   // Render check
+  if (isAuthenticated && currentRole && !canAccessTab(currentRole, activeTab)) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
+        <KongilaLoader text="Checking module access..." />
+      </div>
+    );
+  }
+
   if (authChecking) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
@@ -5830,7 +5969,7 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell admin-dashboard-shell">
       <Head>
         <title>Kongila Admin — Dashboard</title>
         <meta name="description" content="Full admin powerhouse managing Kongila and Remotan — vetting, matching, contracts, compliance, support, and payroll." />
@@ -5839,7 +5978,7 @@ export default function AdminPanel() {
       {/* Mobile Top Bar */}
       <div className="mobile-nav-bar" style={{ display: 'none' }}>
         <div className="sidebar-logo" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '110px', height: 'auto', objectFit: 'contain' }} />
+          <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain', display: 'block' }} />
           <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Admin Portal</span>
         </div>
         <button className="mobile-hamburger" onClick={() => setMobileSidebarOpen(true)}>
@@ -5850,7 +5989,7 @@ export default function AdminPanel() {
       {/* Mobile Sidebar Overlay */}
       {mobileSidebarOpen && (
         <div className="mobile-sidebar-overlay" style={{ display: 'block' }} onClick={() => setMobileSidebarOpen(false)}>
-          <div className="mobile-sidebar-drawer open" onClick={e => e.stopPropagation()} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div className="mobile-sidebar-drawer open" onClick={e => e.stopPropagation()} style={{ padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <SidebarContent />
           </div>
         </div>
@@ -5905,55 +6044,17 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {showPrivateNoteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.72)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-          <div style={{ width: '100%', maxWidth: '520px', background: 'var(--bg-card)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '24px', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}>
-            <div style={{ fontSize: '12px', color: '#8B5CF6', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>Internal Talent Note</div>
-            <h3 style={{ fontSize: '20px', fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 8px 0' }}>
-              Add a private note (Talent Management Only)
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 16px 0' }}>
-              This note will only be visible to internal admins and talent managers. It will not be shared with the talent or external clients.
-            </p>
-            <textarea
-              value={privateNoteInput}
-              onChange={e => setPrivateNoteInput(e.target.value)}
-              rows={4}
-              placeholder="Private observations, flags, or notes..."
-              className="form-input"
-              style={{ width: '100%', resize: 'vertical', fontSize: '14px', padding: '12px', marginBottom: '16px' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                onClick={() => {
-                  setShowPrivateNoteModal(false);
-                  setPrivateNoteInput('');
-                  handleStageDecision(2, 'Proceed', stageScoreInput, stageNotesInput);
-                }}
-                style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-glass)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
-              >
-                Skip
-              </button>
-              <button
-                disabled={saving}
-                onClick={() => {
-                  const finalNotes = privateNoteInput.trim() ? stageNotesInput + '\n\n--- Private Note (Talent Management Only) ---\n' + privateNoteInput : stageNotesInput;
-                  handleStageDecision(2, 'Proceed', stageScoreInput, finalNotes);
-                  setShowPrivateNoteModal(false);
-                  setPrivateNoteInput('');
-                }}
-                style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: '#10B981', color: '#fff', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
-              >
-                Submit & Proceed
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Main Content */}
       <div className="main-content">
         {renderTab()}
       </div>
     </div>
   );
+}
+
+// Keep the requested admin tab available during server rendering. The data
+// and access decision remain client-session based; SSR only restores the URL
+// state so a refresh does not briefly select the overview tab.
+export async function getServerSideProps() {
+  return { props: {} };
 }

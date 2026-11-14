@@ -54,6 +54,21 @@ function redactTalentForClient(t: any) {
   if (!t) return t;
   const copy = { ...t };
   for (const f of TALENT_PRIVATE_FIELDS) delete copy[f];
+  // A self-reported personality profile is for the talent and Kongila's
+  // vetting team. It is not part of the professional profile shared with a
+  // prospective client.
+  delete copy.personalitySnapshot;
+  if (Array.isArray(copy.vettingPipeline)) {
+    copy.vettingPipeline = copy.vettingPipeline.map((stage: any) => {
+      if (!stage || typeof stage !== 'object') return stage;
+      const safeStage = { ...stage };
+      delete safeStage.personalityAssessment;
+      // Remote readiness includes device and network diagnostics used by
+      // Kongila's vetting team, not information for prospective clients.
+      delete safeStage.remoteReadiness;
+      return safeStage;
+    });
+  }
   return copy;
 }
 
@@ -231,11 +246,30 @@ function scopeForTalent(db: any, actor: RequestActor) {
   const ownConversationIds = idsOf(ownConversations);
   const ownTicketIds = idsOf(ownTickets);
 
+  const talentManagerId = ownTalents[0]?.talentManagerId
+    ? String(ownTalents[0].talentManagerId)
+    : null;
+  const assignedManager = talentManagerId
+    ? arr(db.users).find((u: any) => String(u.id) === talentManagerId)
+    : null;
+  const visibleUsers = arr(db.users).filter((u: any) => String(u.id) === String(uid));
+  if (assignedManager && String(assignedManager.id) !== String(uid)) {
+    // Talent users need the contact details of their assigned manager, but
+    // must not receive a directory of Kongila operator accounts.
+    visibleUsers.push({
+      id: assignedManager.id,
+      name: assignedManager.name || '',
+      email: assignedManager.email || null,
+      role: assignedManager.role || 'talent_manager',
+      isKongilaContact: true
+    });
+  }
+
   return {
     ...emptyShape(db),
 
     talents: ownTalents,
-    users: arr(db.users).filter((u: any) => String(u.id) === String(uid)),
+    users: visibleUsers,
     documents: arr(db.documents).filter((d: any) => String(d.userId) === String(uid)),
 
     matches: ownMatches,

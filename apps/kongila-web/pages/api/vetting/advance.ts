@@ -12,7 +12,6 @@ import { VettingStageRecord } from '@kongila/shared-types';
  * belongs to. Anything not in this map is rejected.
  */
 const TALENT_ACTIONS: Record<string, number> = {
-  COMPLETE_STAGE_4: 3, // Personality Test
   SUBMIT_STAGE_5: 4, // Remote Readiness
   START_STAGE_6: 5 // Work Simulation, begin
 };
@@ -124,14 +123,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const telemetry = { ...snapshot.telemetry };
 
     if (action === 'SUBMIT_STAGE_5') {
-      // Remote readiness answers live in the telemetry envelope alongside the
-      // pipeline, so they go back in the same single-row write.
-      if (payload?.internetSpeedMbps) {
-        telemetry.internetQuality = `${payload.internetSpeedMbps} Mbps`;
+      const report = payload?.remoteReadiness;
+      const finiteInRange = (value: unknown, max: number) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
+      if (!report || !['LibreSpeed', 'browser-only'].includes(report.provider) || typeof report.testedAt !== 'string' || Number.isNaN(Date.parse(report.testedAt)) ||
+          !finiteInRange(report.downloadMbps, 10000) || typeof report.browser !== 'string' || typeof report.operatingSystem !== 'string' ||
+          typeof report.deviceType !== 'string' || typeof report.viewport !== 'string' ||
+          typeof payload?.hasBackupPowerAndSuitableHardware !== 'boolean' || typeof payload?.hasQuietWorkspace !== 'boolean') {
+        return res.status(400).json({ error: 'Complete the connection and workspace checks before submitting.' });
       }
-      if (payload?.hasQuietWorkspace) {
-        telemetry.workSetup = 'Quiet Workspace Verified';
+      if (report.provider === 'LibreSpeed' && (!finiteInRange(report.uploadMbps, 10000) || !finiteInRange(report.latencyMs, 60000) || !finiteInRange(report.jitterMs, 60000))) {
+        return res.status(400).json({ error: 'The connection test results are incomplete. Run the test again.' });
       }
+
+      // Keep a typed, coarse report with the stage. Deliberately exclude IP,
+      // raw user-agent strings, and any LibreSpeed telemetry/test identifier.
+      currentStage.remoteReadiness = {
+        provider: report.provider,
+        testedAt: report.testedAt,
+        downloadMbps: report.downloadMbps,
+        uploadMbps: report.uploadMbps,
+        latencyMs: report.latencyMs,
+        jitterMs: report.jitterMs,
+        browser: report.browser.slice(0, 40),
+        operatingSystem: report.operatingSystem.slice(0, 40),
+        deviceType: report.deviceType.slice(0, 20),
+        viewport: report.viewport.slice(0, 24),
+        networkEstimate: report.networkEstimate && {
+          effectiveType: typeof report.networkEstimate.effectiveType === 'string' ? report.networkEstimate.effectiveType.slice(0, 16) : undefined,
+          downlinkMbps: finiteInRange(report.networkEstimate.downlinkMbps, 10000) ? report.networkEstimate.downlinkMbps : undefined,
+          rttMs: finiteInRange(report.networkEstimate.rttMs, 60000) ? report.networkEstimate.rttMs : undefined,
+          saveData: typeof report.networkEstimate.saveData === 'boolean' ? report.networkEstimate.saveData : undefined,
+        },
+        hasBackupPowerAndSuitableHardware: payload.hasBackupPowerAndSuitableHardware,
+        hasQuietWorkspace: payload.hasQuietWorkspace,
+      };
+      telemetry.internetQuality = `${report.downloadMbps} Mbps${report.provider === 'LibreSpeed' ? ` down / ${report.uploadMbps} up` : ' (self-reported)'}`;
+      telemetry.workSetup = payload.hasQuietWorkspace ? 'Quiet Workspace Verified' : 'Quiet Workspace Not Confirmed';
+      telemetry.remoteReadiness = currentStage.remoteReadiness;
 
       currentStage.status = 'passed';
       currentStage.completedAt = now;
@@ -142,12 +170,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } else if (action === 'START_STAGE_6') {
       // Talent explicitly started the simulation
       currentStage.startedAt = now;
-    } else if (action === 'COMPLETE_STAGE_4') {
-      currentStage.status = 'passed';
-      currentStage.completedAt = now;
-
-      // Advance to Stage 5
-      pipeline[4] = { ...pipeline[4], status: 'in_progress', startedAt: now };
     }
 
     // Save the one row. A failure here is reported, not swallowed.

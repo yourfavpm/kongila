@@ -181,8 +181,9 @@ export const LEGAL_PAGES = [
 
 /** Where a visitor goes to start a request for a given model. */
 export function startRequestHref(slug?: string): string {
-  return slug ? `/get-started?model=${slug}` : '/get-started';
+  const model = slug ? `&model=${encodeURIComponent(slug)}` : '';
+  return `/?intake=1${model}`;
 }
 
-export const JOIN_TALENT_HREF = '/join';
+export const JOIN_TALENT_HREF = '/?view=signup&role=talent';
 export const SIGN_IN_HREF = '/login';

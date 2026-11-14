@@ -57,27 +57,49 @@ export interface SendEmailOptions {
 }
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const BRAND_BLUE = '#0047CC';
-const BRAND_NAVY = '#002B7F';
-const BRAND_INK = '#1A2340';
+export const EMAIL_DESIGN_TOKENS = {
+  canvas: '#F3F6FA',
+  surface: '#FFFFFF',
+  surfaceSoft: '#F8FAFC',
+  navy: '#182B49',
+  body: '#334155',
+  muted: '#718096',
+  border: '#E5EAF1',
+  blue: '#1455C0',
+  success: '#13866F',
+  pending: '#A56408',
+  scheduled: '#7259B8',
+  danger: '#BD4D58'
+} as const;
+
+const BRAND_NAVY = EMAIL_DESIGN_TOKENS.navy;
+const BRAND_INK = EMAIL_DESIGN_TOKENS.navy;
 
 function resendConfig(): { key: string; from: string } | null {
-  const key = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM;
+  const key = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.RESEND_FROM?.trim();
   if (!key || !from) return null;
   return { key, from };
 }
 
+/** Names only; safe to include in server-side configuration diagnostics. */
+export function emailConfigurationMissing(): string[] {
+  return (['RESEND_API_KEY', 'RESEND_FROM'] as const)
+    .filter(name => !process.env[name]?.trim());
+}
+
 /** True when email can actually be sent. Check before promising anything. */
 export function emailIsConfigured(): boolean {
-  return resendConfig() !== null;
+  return emailConfigurationMissing().length === 0;
 }
 
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function safeWebUrl(value: string | undefined): string | null {
@@ -102,38 +124,86 @@ function actionFromBody(body: string): { text: string; label?: string; url?: str
   return { text: lines.join('\n'), label: match[1].trim(), url };
 }
 
-function textToHtml(body: string): string {
-  const paragraphs = escapeHtml(body)
-    .split(/\n{2,}/)
-    .map(p => `<p style="margin:0 0 16px 0">${p.replace(/\n/g, '<br>')}</p>`)
-    .join('');
-  return paragraphs;
+function emailTone(subject: string, body: string): { label: string; color: string; tint: string } {
+  const text = `${subject} ${body}`.toLowerCase();
+  if (/\b(rejected|rejection|failed|failure|suspended|overdue|declined|cancelled|canceled|voided|terminated)\b/.test(text)
+    || /not taking it further|not selected|unsuccessful|not moving forward/.test(text)) {
+    return { label: 'Attention', color: EMAIL_DESIGN_TOKENS.danger, tint: '#FFF3F4' };
+  }
+  if (/\b(interview|rescheduled|schedule|reminder|calendar)\b/.test(text)) {
+    return { label: 'Scheduled update', color: EMAIL_DESIGN_TOKENS.scheduled, tint: '#F5F2FC' };
+  }
+  if (/\b(pending|awaiting|required|expires|expiring|verify|verification|reset)\b/.test(text)) {
+    return { label: 'Action or review', color: EMAIL_DESIGN_TOKENS.pending, tint: '#FFF8EB' };
+  }
+  if (/\b(approved|complete|completed|signed|paid|accepted|advanced|welcome|confirmed|restored)\b/.test(text)) {
+    return { label: 'Progress update', color: EMAIL_DESIGN_TOKENS.success, tint: '#EDF8F4' };
+  }
+  return { label: 'Kongila update', color: EMAIL_DESIGN_TOKENS.blue, tint: '#EFF5FD' };
 }
 
-/** Renders every outbound email inside the Kongila brand shell. */
-export function renderBrandedEmail(body: string, customHtml?: string, replyTo?: string): string {
+function messageSections(body: string, isScheduling: boolean): { greeting: string; paragraphs: string[]; details: string[] } {
+  const lines = String(body).replace(/\r/g, '').split('\n');
+  while (lines.length && !lines[0].trim()) lines.shift();
+  let greeting = '';
+  if (/^(hi|hello|dear)\b/i.test(lines[0] || '')) greeting = lines.shift()!.trim();
+  let text = lines.join('\n').trim();
+  text = text.replace(/(?:\n\s*)?(?:The Kongila team|Kongila team)\s*$/i, '').trim();
+  const paragraphs = text.split(/\n\s*\n/).map(part => part.trim()).filter(Boolean);
+  const intro = paragraphs.shift() || '';
+  const isLabeled = (paragraph: string) => paragraph.split('\n').some(line =>
+    /^.{2,48}:\s+\S/.test(line) || /^https?:\/\/\S+$/i.test(line)
+  );
+  const details = paragraphs.filter(part => isLabeled(part) || isScheduling);
+  const prose = paragraphs.filter(part => !details.includes(part));
+  return { greeting, paragraphs: [intro, ...prose].filter(Boolean), details };
+}
+
+function renderDetailsPanel(details: string[], tone: { color: string; tint: string }): string {
+  if (!details.length) return '';
+  const rows = details.flatMap(section => section.split('\n')).map(line => {
+    const match = line.match(/^([^:]{2,48}):\s+(.+)$/);
+    if (!match) {
+      return `<tr><td colspan="2" style="padding:7px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:${EMAIL_DESIGN_TOKENS.body}">${escapeHtml(line)}</td></tr>`;
+    }
+    return `<tr><td valign="top" style="width:34%;padding:7px 12px 7px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;font-weight:700;color:${EMAIL_DESIGN_TOKENS.muted}">${escapeHtml(match[1])}</td><td valign="top" style="padding:7px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:${EMAIL_DESIGN_TOKENS.navy};word-break:break-word">${escapeHtml(match[2])}</td></tr>`;
+  }).join('');
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:18px 0 8px;background:${tone.tint};border-left:3px solid ${tone.color}"><tr><td style="padding:13px 16px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${rows}</table></td></tr></table>`;
+}
+
+/** Renders transactional emails in Kongila's table-based email design system. */
+export function renderBrandedEmail(body: string, customHtml?: string, replyTo?: string, subject = ''): string {
   const { text, label, url } = actionFromBody(body);
   const siteUrl = safeWebUrl(process.env.NEXT_PUBLIC_SITE_URL);
   const logoUrl = safeWebUrl(process.env.EMAIL_LOGO_URL)
     || (siteUrl ? `${siteUrl.replace(/\/$/, '')}/images/kongilalogo.png` : null);
-  const supportEmail = process.env.EMAIL_SUPPORT_EMAIL
-    || replyTo
-    || process.env.EMAIL_REPLY_TO
-    || '';
+  const supportEmail = process.env.EMAIL_SUPPORT_EMAIL || replyTo || process.env.EMAIL_REPLY_TO || 'support@kongila.com';
   const safeSupportEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail) ? supportEmail : '';
-  const emailBody = customHtml || textToHtml(text);
-  const preheader = escapeHtml(text.replace(/\s+/g, ' ').trim().slice(0, 140));
+  const title = subject.trim() || text.split(/\r?\n/).find(line => line.trim()) || 'A Kongila update';
+  const tone = emailTone(title, text);
+  const sections = messageSections(text, /\b(interview|rescheduled|schedule|reminder|calendar)\b/i.test(`${title} ${text}`));
+  const emailBody = customHtml || sections.paragraphs.map((paragraph, index) =>
+    `<p style="margin:${index === 0 ? '0 0 16px' : '0 0 13px'};font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:${EMAIL_DESIGN_TOKENS.body}">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`
+  ).join('') + renderDetailsPanel(sections.details, tone);
+  const preheader = escapeHtml(text.replace(/\s+/g, ' ').trim().slice(0, 140) || title);
   const logo = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="Kongila" width="156" style="display:block;width:156px;max-width:100%;height:auto;border:0">`
-    : `<span style="font-size:25px;font-weight:800;letter-spacing:-.7px;color:${BRAND_BLUE}">Kongila</span>`;
+    ? `<img src="${escapeHtml(logoUrl)}" alt="Kongila" width="126" style="display:block;width:126px;max-width:100%;height:auto;border:0">`
+    : '';
+  const greeting = sections.greeting
+    ? `<tr><td style="padding:0 0 11px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:${EMAIL_DESIGN_TOKENS.muted}">${escapeHtml(sections.greeting)}</td></tr>`
+    : '';
+  const status = `<tr><td style="padding:0 0 13px"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding:5px 9px;background:${tone.tint};font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.2;font-weight:700;letter-spacing:.03em;color:${tone.color}">${escapeHtml(tone.label)}</td></tr></table></td></tr>`;
   const actionButton = label && url
-    ? `<tr><td align="left" style="padding:8px 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;background:${BRAND_BLUE};border-radius:8px;color:#ffffff;font-family:Arial,sans-serif;font-size:14px;font-weight:700;line-height:20px;padding:13px 22px;text-decoration:none">${escapeHtml(label)}</a></td></tr>`
+    ? `<tr><td align="left" class="email-panel-pad" style="background:#ffffff;padding:8px 34px 24px"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" bgcolor="${BRAND_NAVY}" style="background:${BRAND_NAVY}"><a href="${escapeHtml(url)}" style="display:inline-block;background:${BRAND_NAVY};border:1px solid ${BRAND_NAVY};color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;line-height:20px;padding:12px 20px;text-decoration:none">${escapeHtml(label)}</a></td></tr></table></td></tr>`
     : '';
   const support = safeSupportEmail
-    ? `Questions? <a href="mailto:${escapeHtml(safeSupportEmail)}" style="color:#ffffff;text-decoration:underline">${escapeHtml(safeSupportEmail)}</a>`
+    ? `Questions? <a href="mailto:${escapeHtml(safeSupportEmail)}" style="color:${EMAIL_DESIGN_TOKENS.blue};text-decoration:underline">${escapeHtml(safeSupportEmail)}</a>`
     : 'Questions? Reply to this email and our team will be glad to help.';
+  const privacyLink = siteUrl
+    ? `<a href="${escapeHtml(`${siteUrl.replace(/\/$/, '')}/legal/privacy`)}" style="color:${EMAIL_DESIGN_TOKENS.muted};text-decoration:underline">Privacy policy</a><span style="color:${EMAIL_DESIGN_TOKENS.border}"> &nbsp;|&nbsp; </span>`
+    : '';
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Kongila</title></head><body style="margin:0;padding:0;background:#F3F6FB;color:${BRAND_INK};font-family:Arial,Helvetica,sans-serif"><div style="display:none!important;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden;mso-hide:all">${preheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F3F6FB"><tr><td align="center" style="padding:36px 16px"><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px"><tr><td style="background:#ffffff;border-radius:16px 16px 0 0;padding:26px 36px;border-bottom:4px solid ${BRAND_BLUE}">${logo}</td></tr><tr><td style="background:#ffffff;padding:34px 36px 14px;font-size:15px;line-height:1.75;color:${BRAND_INK}">${emailBody}</td></tr>${actionButton}<tr><td style="background:${BRAND_NAVY};border-radius:0 0 16px 16px;padding:24px 36px;color:#EAF1FF;font-size:12px;line-height:1.7"><div style="font-size:14px;font-weight:700;color:#ffffff;margin-bottom:5px">Kongila</div><div>Africa's talent. The world's teams.</div><div style="margin-top:12px">${support}</div><div style="margin-top:14px;color:#B9C9E8">© ${new Date().getFullYear()} Kongila. All rights reserved.</div></td></tr></table></td></tr></table></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${escapeHtml(title)}</title><style>@media only screen and (max-width:620px){.email-outer-pad{padding:18px 10px!important}.email-panel-pad{padding-left:22px!important;padding-right:22px!important}.email-title{font-size:24px!important;line-height:1.25!important}}@media (prefers-color-scheme:dark){.email-canvas{background:#e9eef5!important}.email-surface{background:#ffffff!important}.email-copy{color:#334155!important}}</style></head><body style="margin:0;padding:0;background:${EMAIL_DESIGN_TOKENS.canvas};color:${BRAND_INK};font-family:Arial,Helvetica,sans-serif"><div style="display:none!important;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden;mso-hide:all">${preheader}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="email-canvas" style="background:${EMAIL_DESIGN_TOKENS.canvas}"><tr><td class="email-outer-pad" align="center" style="padding:30px 16px"><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border:1px solid ${EMAIL_DESIGN_TOKENS.border}"><tr><td class="email-surface email-panel-pad" style="background:#ffffff;padding:20px 34px;border-bottom:1px solid ${EMAIL_DESIGN_TOKENS.border}">${logo}</td></tr><tr><td class="email-surface email-panel-pad" style="background:#ffffff;padding:29px 34px 25px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${status}${greeting}<tr><td class="email-title" style="padding:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:27px;line-height:1.25;letter-spacing:-.4px;font-weight:700;color:${EMAIL_DESIGN_TOKENS.navy}">${escapeHtml(title)}</td></tr></table><div class="email-copy" style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:${EMAIL_DESIGN_TOKENS.body}">${emailBody}</div></td></tr>${actionButton}<tr><td class="email-panel-pad" style="background:${EMAIL_DESIGN_TOKENS.surfaceSoft};border-top:1px solid ${EMAIL_DESIGN_TOKENS.border};padding:20px 34px;color:${EMAIL_DESIGN_TOKENS.muted};font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.7"><div style="font-size:13px;font-weight:700;color:${EMAIL_DESIGN_TOKENS.navy};margin-bottom:2px">Kongila</div><div style="margin-bottom:11px">Global workforce infrastructure</div><div style="margin-bottom:10px">${support}</div><div>${privacyLink}<span>Automated notification from the Kongila platform.</span></div><div style="margin-top:10px">&copy; ${new Date().getFullYear()} Kongila. All rights reserved.</div></td></tr></table></td></tr></table></body></html>`;
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<DispatchResult> {
@@ -160,7 +230,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<DispatchResu
         to: Array.isArray(options.to) ? options.to : [options.to],
         subject: options.subject,
         text: options.body,
-        html: renderBrandedEmail(options.body, options.html, options.replyTo),
+        html: renderBrandedEmail(options.body, options.html, options.replyTo, options.subject),
         reply_to: options.replyTo || process.env.EMAIL_REPLY_TO,
         attachments: options.attachments?.map(a => ({
           filename: a.filename,

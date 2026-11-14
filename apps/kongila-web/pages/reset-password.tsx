@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import Head from 'next/head';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { requestEmailOtp, resetPasswordWithEmailOtp } from '../lib/emailOtpClient';
 import { supabase } from '../lib/supabaseClient';
 
 export default function ResetPassword() {
+  const router = useRouter();
   const [stage, setStage] = useState<'request' | 'verify'>('request');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -60,7 +63,7 @@ export default function ResetPassword() {
       await resetPasswordWithEmailOtp({ email: email.trim(), code, password });
       await supabase.auth.signOut();
       setMessage({ kind: 'ok', text: 'Your password is set. Taking you to sign in.' });
-      setTimeout(() => { window.location.href = '/login'; }, 1500);
+      setTimeout(() => { void router.replace('/login'); }, 1500);
     } catch (error: any) {
       setMessage({ kind: 'error', text: error?.message || 'Could not reset the password.' });
     } finally {
@@ -218,9 +221,9 @@ export default function ResetPassword() {
           )}
 
           <p style={{ fontSize: '13px', color: '#94A3B8', marginTop: '20px', textAlign: 'center' }}>
-            <a href="/login" style={{ color: '#0047CC', textDecoration: 'none', fontWeight: 600 }}>
+            <Link href="/login" style={{ color: '#0047CC', textDecoration: 'none', fontWeight: 600 }}>
               Back to sign in
-            </a>
+            </Link>
           </p>
         </div>
       </div>

@@ -8,6 +8,8 @@ import { supabase } from '../lib/supabaseClient';
 
 interface TalentMessagesPanelProps {
   currentUser: any;
+  assignedManager?: any;
+  openConversationId?: string | null;
   conversations: Conversation[];
   messages: Message[];
   setMessages: (messages: Message[]) => void;
@@ -15,6 +17,8 @@ interface TalentMessagesPanelProps {
 
 export default function TalentMessagesPanel({
   currentUser,
+  assignedManager,
+  openConversationId,
   conversations,
   messages,
   setMessages
@@ -29,6 +33,12 @@ export default function TalentMessagesPanel({
   const myConversations = conversations.filter(c => 
     c.type === 'talent_admin' && c.participantIds.includes(currentUser?.id)
   ).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  useEffect(() => {
+    if (!activeConversationId && openConversationId && myConversations.some(c => c.id === openConversationId)) {
+      setActiveConversationId(openConversationId);
+    }
+  }, [openConversationId, activeConversationId, myConversations]);
 
   const activeConversation = myConversations.find(c => c.id === activeConversationId);
   const activeMessages = messages
@@ -167,7 +177,7 @@ export default function TalentMessagesPanel({
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <div style={{ fontWeight: unreadCount > 0 ? 800 : 600, fontSize: '14px', color: '#0F172A' }}>
-                      Kongila Admin
+                      {assignedManager?.name || 'Kongila team'}
                     </div>
                     {lastMessage && (
                       <div style={{ fontSize: '11px', color: '#94A3B8' }}>
@@ -198,8 +208,8 @@ export default function TalentMessagesPanel({
           <>
             {/* Header / Context Banner */}
             <div style={{ padding: '20px', borderBottom: '1px solid #E2E8F0' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 4px 0', color: '#0F172A' }}>Kongila Admin</h3>
-              <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>Replies typically within 1-2 hours</p>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 4px 0', color: '#0F172A' }}>{assignedManager?.name || 'Kongila team'}</h3>
+              {assignedManager?.email && <a href={`mailto:${assignedManager.email}`} style={{ fontSize: '13px', color: '#1455C0', textDecoration: 'none' }}>{assignedManager.email}</a>}
               
               {/* REQ-KT-1101: Context-Linked Conversations */}
               {activeConversation.contextType && (

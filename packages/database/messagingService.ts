@@ -73,7 +73,7 @@ function rowToMessage(row: any) {
 /** Everyone who should be in a thread, operations included. */
 async function resolveParticipants(
   type: ConversationType,
-  starterId: string,
+  actor: Actor,
   otherPartyId?: string | null
 ): Promise<{ ids: string[]; error?: string }> {
   const supabase = getSupabaseClient();
@@ -91,7 +91,31 @@ async function resolveParticipants(
     return { ids: [], error: 'There are no operations users to include in the conversation.' };
   }
 
-  const ids = new Set<string>([starterId, ...admins.map((a: any) => String(a.id))]);
+  const ids = new Set<string>([actor.userId, ...admins.map((a: any) => String(a.id))]);
+  if (type === 'talent_admin' && actor.kind === 'talent') {
+    // Operations are included in talent support threads, and explicitly
+    // resolve the assigned manager so their inbox always receives the thread.
+    const profileId = String(actor.talentProfileId || actor.userId);
+    let profile = await supabase
+      .from('talent_profiles')
+      .select('talent_manager_id')
+      .eq('id', profileId)
+      .maybeSingle();
+    if (profile.error) {
+      // Older deployments may still keep assignments in the profile envelope.
+      const legacy = await supabase.from('talent_profiles').select('bio').eq('id', profileId).maybeSingle();
+      if (legacy.data?.bio) {
+        try {
+          const parsed = JSON.parse(legacy.data.bio);
+          if (parsed?.__kongila && parsed?.telemetry?.talentManagerId) {
+            ids.add(String(parsed.telemetry.talentManagerId));
+          }
+        } catch { /* Plain-text bios do not contain assignment metadata. */ }
+      }
+    } else if (profile.data?.talent_manager_id) {
+      ids.add(String(profile.data.talent_manager_id));
+    }
+  }
   if (type === 'placement' && otherPartyId) ids.add(String(otherPartyId));
 
   return { ids: Array.from(ids) };
@@ -286,9 +310,7 @@ export async function startConversation(
       return { ok: true, status: 200, data: rowToConversation(existing) };
     }
   } else {
-    const { ids, error: participantError } = await resolveParticipants(
-      type, actor.userId, input.otherPartyId
-    );
+    const { ids, error: participantError } = await resolveParticipants(type, actor, input.otherPartyId);
     if (participantError) return fail(500, participantError);
     participantIds = ids;
   }

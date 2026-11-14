@@ -1,6 +1,7 @@
 import { apiFetch } from '../lib/apiFetch';
 import { uploadFile } from '../lib/uploadFile';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/router';
 import { supabase } from '../lib/supabaseClient';
 import { formatCurrency, interviewInstant, formatForBothParties, viewerTimeZone, wallClockToUtc, countUnreadMessages, countUnreadNotifications, countUnreadByModule, TIMEZONE_OPTIONS } from '@kongila/utils';
 import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
@@ -21,7 +22,7 @@ function whenForTalent(interview: any, fallbackZone?: string | null) {
   return formatForBothParties(iso, talentZone, clientZone, "client's time");
 }
 import type { Interview, Contract } from '@kongila/shared-types';
-import { isPastInterviewStatus, isUpcomingInterviewStatus } from '@kongila/workflows';
+import { isPastInterviewStatus, isUpcomingInterviewStatus, interviewForMatch, resolveInterview } from '@kongila/workflows';
 import {
   calculateCompositeVettingGrade,
   vettingScoreState,
@@ -34,6 +35,8 @@ import TalentMessagesPanel from './TalentMessagesPanel';
 import TalentNotificationsPanel from './TalentNotificationsPanel';
 import TalentSettingsPanel from './TalentSettingsPanel';
 import TalentSupportPanel from './TalentSupportPanel';
+import PersonalityAssessment from './PersonalityAssessment';
+import RemoteReadinessTest, { type RemoteReadinessReport } from './RemoteReadinessTest';
 
 /**
  * Platform policy for what a candidate may see of their own assessment.
@@ -123,6 +126,8 @@ type Section =
   | 'notifications'
   | 'settings'
   | 'support';
+
+const TALENT_SECTIONS: Section[] = ['dashboard', 'profile', 'compliance', 'vetting_progress', 'scores_grades', 'opportunities', 'interviews', 'contracts', 'earnings', 'tasks', 'messages', 'notifications', 'settings', 'support'];
 
 // ─── SVG Navigation Icons Component ──────────────────────────────────────────
 const SidebarIcon = ({ id, color = 'currentColor', size = 18 }: { id: string; color?: string; size?: number }) => {
@@ -275,7 +280,7 @@ const NAV_GROUP_STARTS: Record<string, string> = {
 // ─── Shared Sub-Components ────────────────────────────────────────────────────
 const Card = ({ children, style = {}, onClick, className = '' }: { children: React.ReactNode; style?: React.CSSProperties; onClick?: () => void; className?: string }) => (
   <div 
-    className={`talent-portal-surface ${className}`.trim()}
+    className={`talent-portal-surface${onClick ? ' talent-portal-surface--interactive' : ''} ${className}`.trim()}
     onClick={onClick}
     style={{
       background: '#FFFFFF',
@@ -579,6 +584,7 @@ const ProfileSection = ({
   user,
   profile,
   contracts,
+  interviews = [],
   matches = [],
   pendingDocs = [],
   skillAssessmentResults = [],
@@ -589,11 +595,13 @@ const ProfileSection = ({
   setActiveSection,
   onOpenAssessment,
   onUpdateProfile,
+  onContactManager,
   onRequestReschedule
 }: {
   user: any;
   profile: any;
   contracts: any[];
+  interviews?: any[];
   matches?: any[];
   pendingDocs?: any[];
   skillAssessmentResults?: any[];
@@ -604,6 +612,7 @@ const ProfileSection = ({
   setActiveSection: (sec: Section) => void;
   onOpenAssessment?: (tsaId: string) => void;
   onUpdateProfile?: (updatedProfile: any) => void;
+  onContactManager?: (managerId: string) => void;
   onRequestReschedule?: (interview: any) => void;
 }) => {
   const vettingStatus = profile?.vettingStatus || 'Applied';
@@ -614,20 +623,45 @@ const ProfileSection = ({
   
   const pipeline = Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : [];
   const vettingInterviews = pipeline
-    .filter((s: any) => s.interviewDate && s.status !== 'passed' && s.status !== 'skipped' && s.status !== 'failed')
-    .map((s: any) => ({
-      id: `vetting-int-${s.stageIndex}`,
-      title: s.stageName === 'Behavioural Interview' ? 'Live Interview' : s.stageName,
-      status: s.rescheduleRequested ? 'Reschedule Requested' : 'Interview Scheduled',
-      requestedDate: s.interviewDate,
-      requestedTime: s.interviewTime,
-      meetingLink: s.meetingLink,
-      isVetting: true,
-      stageIndex: s.stageIndex,
-    }));
+    .filter((s: any) => (s.interviewId || s.interviewDate) && s.status !== 'passed' && s.status !== 'skipped' && s.status !== 'failed')
+    .map((stage: any) => {
+      // Interview rows are the source of truth. The pipeline's date/time are
+      // legacy copies and can lag after an admin approves a reschedule.
+      const interview = resolveInterview(stage, interviews);
+      const date = interview?.date || interview?.scheduledTime?.slice?.(0, 10) || stage.interviewDate;
+      const time = interview?.time || stage.interviewTime;
+      const rescheduleRequested = interview?.rescheduleRequested ?? stage.rescheduleRequested;
+      return {
+        ...stage,
+        ...(interview || {}),
+        id: interview?.id || `vetting-int-${stage.stageIndex}`,
+        interviewId: interview?.id || stage.interviewId,
+        title: stage.stageName === 'Behavioural Interview' ? 'Live Interview' : stage.stageName,
+        status: rescheduleRequested ? 'Reschedule Requested' : 'Interview Scheduled',
+        requestedDate: date,
+        requestedTime: time,
+        meetingLink: interview?.meetingLink || stage.meetingLink,
+        isVetting: true,
+        stageIndex: stage.stageIndex,
+      };
+    });
 
   const matchInterviews = talentMatches
-    .filter((m: any) => (m.status === 'Interview Scheduled' || m.status === 'Reschedule Requested') && m.requestedDate);
+    .filter((m: any) => m.status === 'Interview Scheduled' || m.status === 'Reschedule Requested')
+    .map((match: any) => {
+      const interview = interviewForMatch(match, interviews);
+      if (!interview) return match;
+      return {
+        ...match,
+        id: match.id,
+        interviewId: interview.id || match.interviewId,
+        requestedDate: interview.date || interview.scheduledTime?.slice?.(0, 10) || match.requestedDate,
+        requestedTime: interview.time || match.requestedTime,
+        meetingLink: interview.meetingLink || match.meetingLink,
+        status: interview.rescheduleRequested ? 'Reschedule Requested' : 'Interview Scheduled'
+      };
+    })
+    .filter((match: any) => Boolean(match.requestedDate));
 
   const scheduledInterviews = [...matchInterviews, ...vettingInterviews]
     .sort((a: any, b: any) => String(a.requestedDate).localeCompare(String(b.requestedDate)));
@@ -635,6 +669,8 @@ const ProfileSection = ({
   const recentNotifications = (dashboardNotifications ?? []).slice(0, 5);
   const unreadNotifications = recentNotifications.filter((n: any) => !n.read).length;
   const activeVettingStage = getActiveVettingStage(profile);
+  const activeStageInterview = resolveInterview(activeVettingStage, interviews);
+  const activeStageRescheduleRequested = activeStageInterview?.rescheduleRequested ?? activeVettingStage?.rescheduleRequested;
   const activeStageIndex = Number(activeVettingStage?.stageIndex ?? 0);
   const totalStages = profile?.vettingPipeline?.length || 7;
   // Passed or deliberately skipped. A skipped stage is settled, and counting
@@ -993,17 +1029,18 @@ const ProfileSection = ({
                 </div>
                 <div style={{ fontSize: '13px', color: '#6B7A99', display: 'flex', gap: '16px' }}>
                   <span>🕒 {whenForTalent({
-                    date: activeVettingStage.interviewDate,
-                    time: activeVettingStage.interviewTime,
-                    scheduled_time: activeVettingStage.interviewScheduledTime,
-                    scheduled_timezone: activeVettingStage.interviewTimezone,
+                    ...(activeStageInterview || {}),
+                    date: activeStageInterview?.date || activeVettingStage.interviewDate,
+                    time: activeStageInterview?.time || activeVettingStage.interviewTime,
+                    scheduled_time: activeStageInterview?.scheduledTime || activeVettingStage.interviewScheduledTime,
+                    scheduled_timezone: activeStageInterview?.scheduledTimezone || activeVettingStage.interviewTimezone,
                     talent_timezone: profile?.timezone
                   }, profile?.timezone).viewer}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                {activeVettingStage.meetingLink ? (
-                  <a href={activeVettingStage.meetingLink} target="_blank" rel="noopener noreferrer" style={{
+                {(activeStageInterview?.meetingLink || activeVettingStage.meetingLink) ? (
+                  <a href={activeStageInterview?.meetingLink || activeVettingStage.meetingLink} target="_blank" rel="noopener noreferrer" style={{
                     padding: '10px 16px', background: '#0047CC', color: '#fff', textDecoration: 'none', borderRadius: '8px', fontWeight: 700, display: 'inline-block', fontSize: '12px'
                   }}>
                     Join Video Call
@@ -1011,8 +1048,8 @@ const ProfileSection = ({
                 ) : (
                   <span style={{ color: '#6B7A99', fontSize: '12px' }}>Link will be provided soon</span>
                 )}
-                {!activeVettingStage.rescheduleRequested ? (
-                  <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: activeStageIndex, ...activeVettingStage })} style={{ padding: '10px 16px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
+                {!activeStageRescheduleRequested ? (
+                  <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: activeStageIndex, ...activeVettingStage, ...(activeStageInterview || {}), interviewId: activeStageInterview?.id || activeVettingStage.interviewId })} style={{ padding: '10px 16px', background: '#EEF2FF', color: '#0047CC', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
                     Request Reschedule
                   </button>
                 ) : (
@@ -1057,6 +1094,24 @@ const ProfileSection = ({
           </div>
           <button type="button" onClick={() => setActiveSection('profile')}>Continue profile <span aria-hidden="true">→</span></button>
         </section>
+      )}
+
+      {profile?.assignedManager?.name && (
+        <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', padding: '18px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+            <div aria-hidden="true" style={{ width: '44px', height: '44px', borderRadius: '50%', background: '#EAF1FA', color: '#1455C0', display: 'grid', placeItems: 'center', fontWeight: 800, flexShrink: 0 }}>
+              {String(profile.assignedManager.name).trim().charAt(0).toUpperCase()}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '11px', color: '#718096', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em' }}>Your assigned manager</div>
+              <div style={{ marginTop: '3px', fontSize: '15px', color: '#182B49', fontWeight: 800 }}>{profile.assignedManager.name}</div>
+              {profile.assignedManager.email && <a href={`mailto:${profile.assignedManager.email}`} style={{ display: 'inline-block', marginTop: '2px', color: '#1455C0', fontSize: '12px', textDecoration: 'none' }}>{profile.assignedManager.email}</a>}
+            </div>
+          </div>
+          <button type="button" onClick={() => onContactManager?.(String(profile.assignedManager.id))} style={{ border: 0, borderRadius: '999px', padding: '10px 16px', background: '#1455C0', color: '#fff', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}>
+            Message manager
+          </button>
+        </Card>
       )}
 
 
@@ -3880,7 +3935,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
 };
 
 // ─── Section 7: Profile Detail Section ───────────────────────────────────────
-const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { user: any; profile: any; contracts: any[]; onUpdateProfile?: (updatedProfile: any) => void }) => {
+const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile, onContactManager }: { user: any; profile: any; contracts: any[]; onUpdateProfile?: (updatedProfile: any) => void; onContactManager?: (managerId: string) => void }) => {
   const vettingStatus = profile?.vettingStatus || 'Pending';
   const vettingStage = profile?.vettingStage || 'Application';
   const vettingScores = profile?.vettingScores || { technical: 0, behavioral: 0, personality: 0, remoteReadiness: 0, workSimulation: 0 };
@@ -4894,18 +4949,16 @@ const ProfileDetailSection = ({ user, profile, contracts, onUpdateProfile }: { u
                   <div>
                     <div style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340' }}>{profile.assignedManager.name}</div>
                     <div style={{ fontSize: '12px', color: '#6B7A99' }}>{profile.assignedManager.role || 'Talent Success Manager'}</div>
-                    <div style={{ fontSize: '11px', color: '#10B981', marginTop: '3px', fontWeight: 600 }}>● Online — Avg. response &lt;2h</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', color: '#6B7A99', borderTop: '1px solid #F1F5F9', paddingTop: '14px' }}>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
-                    {profile.assignedManager.email}
+                    {profile.assignedManager.email
+                      ? <a href={`mailto:${profile.assignedManager.email}`} style={{ color: '#1455C0', textDecoration: 'none' }}>{profile.assignedManager.email}</a>
+                      : <span>Email unavailable</span>}
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.56 1.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.73a16 16 0 0 0 5.99 6l.92-.93a2 2 0 0 1 2.11-.45c.906.338 1.85.573 2.81.7A2 2 0 0 1 21.73 16z" /></svg>
-                    {profile.assignedManager.phone || 'N/A'}
-                  </div>
+                  <button type="button" onClick={() => onContactManager?.(String(profile.assignedManager.id))} style={{ marginTop: '8px', padding: '10px 14px', border: 0, borderRadius: '999px', background: '#1455C0', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>Message manager</button>
                 </div>
               </>
             ) : (
@@ -7003,7 +7056,7 @@ const QuestionCard = ({
 };
 
 // ─── Section: Vetting Progress (Dedicated Full View) ─────────────────────────
-const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAssessmentResults = [], workSimulationTasks = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; workSimulationTasks?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
+const VettingProgressSection = ({ profile, interviews = [], talentSkillAssessments = [], skillAssessmentResults = [], workSimulationTasks = [], onOpenAssessment, onUpdateProfile, onRequestReschedule }: { profile: any; interviews?: any[]; talentSkillAssessments?: any[]; skillAssessmentResults?: any[]; workSimulationTasks?: any[]; onOpenAssessment?: (tsaId: string) => void; onUpdateProfile?: (p: any) => void; onRequestReschedule?: (interview: any) => void; }) => {
   // Built from the shared stage list rather than copied. This was a local
   // array of seven, and it had already drifted: it called stage 2 "Live
   // Interview" while the engine and the vetting_stage column both say
@@ -7035,11 +7088,14 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
   const [pipeline, setPipeline] = useState<any[]>(Array.isArray(profile?.vettingPipeline) ? profile.vettingPipeline : []);
   const [loading, setLoading] = useState(false);
   const [stage5ModalOpen, setStage5ModalOpen] = useState(false);
-  const [form5, setForm5] = useState({ speed: '', hardware: false, quiet: false });
+  const [form5, setForm5] = useState<{ report: RemoteReadinessReport | null; hardware: boolean; quiet: boolean }>({ report: null, hardware: false, quiet: false });
+  const [readinessSubmitting, setReadinessSubmitting] = useState(false);
+  const [readinessSubmitError, setReadinessSubmitError] = useState('');
   const [submissionText, setSubmissionText] = useState('');
   const [submissionFile, setSubmissionFile] = useState<File | null>(null);
   const [submissionLink, setSubmissionLink] = useState('');
   const [submittingWS, setSubmittingWS] = useState(false);
+  const [personalityModalOpen, setPersonalityModalOpen] = useState(false);
 
   // Initialize and run SLA check on mount
   useEffect(() => {
@@ -7091,8 +7147,10 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
         onUpdateProfile({ ...profile, vettingPipeline: data.pipeline });
         setPipeline(data.pipeline);
       }
+      return Boolean(data.success);
     } catch (e) {
       console.error('Action failed', e);
+      return false;
     }
   };
   const submitWorkSimulation = async () => {
@@ -7262,7 +7320,14 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
       <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
         {STAGE_META.map((meta,idx)=>{
           const sr=pipeline[idx]||{};
+          // The interview row is authoritative; stage fields are a legacy snapshot.
+          const interview = idx === 2 ? resolveInterview(sr, interviews) : null;
           const stat=sr.status||'pending';
+          // Older admin interview notes were incorrectly appended with a
+          // private-note marker. Hide that legacy internal tail from talent.
+          const visibleStageNotes = typeof sr.notes === 'string'
+            ? sr.notes.split('\n--- Private Note (Talent Management Only) ---')[0].trim()
+            : '';
           const isCurrent = stat === 'in_progress' || stat === 'needs_clarification';
           const ss=getStageUI(idx,stat,meta.color,sr.slaBreached);
           const tsa=resolveTalentSkillAssessment(sr.assessmentId, profile?.id, talentSkillAssessments);
@@ -7276,7 +7341,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
           // as either silence or a demand with no instruction.
           const hasOwnActionBlock =
             (idx===1 && Boolean(sr.assessmentId) && canStartAssessment) ||
-            (idx===2 && Boolean(sr.interviewDate || sr.interviewTime)) ||
+            (idx===2 && Boolean(interview)) ||
             idx===3 || idx===4 || idx===5;
           
           return(
@@ -7299,7 +7364,7 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                     </div>
                   </div>
                   
-                  {sr.notes&&stat!=='pending'&&<p style={{fontSize:'12px',color:'#6B7A99',margin:'10px 0 0 0',fontStyle:'italic',lineHeight:'1.5'}}>"{sr.notes}"</p>}
+                  {visibleStageNotes&&stat!=='pending'&&<p style={{fontSize:'12px',color:'#6B7A99',margin:'10px 0 0 0',fontStyle:'italic',lineHeight:'1.5'}}>&quot;{visibleStageNotes}&quot;</p>}
 
                   {/* What is happening, when this stage is open and there is
                       nothing for the candidate to press. Either their own
@@ -7350,17 +7415,17 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                   )}
 
                   {/* Stage 3 Interview action */}
-                  {idx===2&&stat==='in_progress'&&(sr.interviewDate||sr.interviewTime)&&(
+                  {idx===2&&stat==='in_progress'&&interview&&(
                     <div style={{marginTop:'12px',padding:'14px',background:'#F8FAFC',borderRadius:'10px',border:'1px solid #E2E8F0'}}>
                       <div style={{fontSize:'12px',fontWeight:700,color:'#1A2340',marginBottom:'8px'}}>📅 Interview Scheduled</div>
                       <div style={{display:'flex',gap:'16px',fontSize:'12px',color:'#6B7A99',marginBottom:'10px'}}>
-                        {sr.interviewDate&&<span>Date: <strong>{sr.interviewDate}</strong></span>}
-                        {sr.interviewTime&&<span>Time: <strong>{sr.interviewTime}</strong></span>}
+                        {interview.date&&<span>Date: <strong>{interview.date}</strong></span>}
+                        {interview.time&&<span>Time: <strong>{interview.time}</strong></span>}
                       </div>
                       <div style={{display:'flex',gap:'10px'}}>
-                        {sr.meetingLink&&<a href={sr.meetingLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'#8B5CF6',color:'#fff',textDecoration:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700}}>Join Meeting →</a>}
-                        {!sr.rescheduleRequested ? (
-                          <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: idx, ...sr })} style={{background:'#F1F5F9',color:'#475569',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Request Reschedule</button>
+                        {interview.meetingLink&&<a href={interview.meetingLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'#8B5CF6',color:'#fff',textDecoration:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700}}>Join Meeting →</a>}
+                        {!(interview.rescheduleRequested || sr.rescheduleRequested) ? (
+                          <button onClick={() => onRequestReschedule?.({ isVetting: true, stageIndex: idx, ...sr, ...interview })} style={{background:'#F1F5F9',color:'#475569',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Request Reschedule</button>
                         ) : (
                           <span style={{ padding: '8px 12px', background: '#FEF3C7', color: '#D97706', borderRadius: '8px', fontSize: '11px', fontWeight: 800 }}>Reschedule Requested</span>
                         )}
@@ -7369,10 +7434,37 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
                   )}
 
                   {/* Stage 4 Personality */}
-                  {idx===3&&stat==='in_progress'&&(
+                  {idx===3&&(stat==='in_progress'||stat==='passed')&&(
                     <div style={{marginTop:'12px',padding:'12px',background:'#F0FDF4',borderRadius:'8px',border:'1px solid #BBF7D0'}}>
-                      <button onClick={()=>handleAction('COMPLETE_STAGE_4', 3)} style={{background:'#10B981',color:'#fff',border:'none',padding:'8px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700,cursor:'pointer'}}>Take Personality Test</button>
-                      <span style={{fontSize:'11px',color:'#6B7A99',marginLeft:'12px'}}>Takes ~15 mins. Non-blocking (Auto-advances in 48h).</span>
+                      {sr.personalityAssessment?.completedAt ? (
+                        <>
+                          <div style={{fontSize:'12px',fontWeight:700,color:'#166534'}}>Assessment submitted and awaiting review. Your Big Five profile is descriptive, not a pass/fail result.</div>
+                          <div style={{fontSize:'10px',color:'#64748B',marginTop:'4px'}}>Trait values are normalized response scores, not percentiles or rankings.</div>
+                          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:'8px',marginTop:'10px'}}>
+                            {[
+                              ['Extraversion','extraversion'],['Agreeableness','agreeableness'],['Conscientiousness','conscientiousness'],['Emotional sensitivity','emotionalSensitivity'],['Openness','openness']
+                            ].map(([label,key])=>{
+                              const value=Number(sr.personalityAssessment?.scores?.[key]?.score);
+                              return <div key={key} style={{background:'#fff',border:'1px solid #DCF0E2',borderRadius:'8px',padding:'8px 9px'}}>
+                                <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',fontWeight:700,color:'#475569'}}><span>{label}</span><span>{Number.isFinite(value)?value:'—'}</span></div>
+                                <div style={{height:'4px',background:'#E2E8F0',borderRadius:'4px',marginTop:'6px',overflow:'hidden'}}><div style={{height:'100%',width:`${Number.isFinite(value)?Math.max(0,Math.min(100,value)):0}%`,background:'#16A34A'}} /></div>
+                              </div>;
+                            })}
+                          </div>
+                        </>
+                      ) : stat==='passed' ? (
+                        <div style={{fontSize:'12px',color:'#52647A',lineHeight:1.55}}>This stage has been reviewed. No in-portal personality profile is available for this assessment.</div>
+                      ) : sr.personalityLink ? (
+                        <>
+                          <a href={sr.personalityLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',background:'#15803D',color:'#fff',textDecoration:'none',padding:'9px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:700}}>Open Personality Assessment ↗</a>
+                          <span style={{display:'block',fontSize:'11px',color:'#52647A',marginTop:'8px'}}>Complete the assessment using this link. Kongila will update this stage after the result is reviewed.</span>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{fontSize:'12px',color:'#31543B',lineHeight:1.55,marginBottom:'10px'}}>Complete the 50-item Big Five self-reflection. Your raw answers are not stored. Trait results are reviewed separately from your stage rating.</div>
+                          <button type="button" onClick={()=>setPersonalityModalOpen(true)} style={{background:'#15803D',color:'#fff',border:'none',padding:'9px 16px',borderRadius:'8px',fontSize:'12px',fontWeight:800,cursor:'pointer'}}>Start personality assessment →</button>
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -7466,12 +7558,8 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(15,23,42,0.7)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
           <Card style={{width:'90%',maxWidth:'500px',padding:'24px',display:'flex',flexDirection:'column',gap:'16px'}}>
             <h3 style={{margin:0,fontSize:'18px',fontWeight:800,color:'#1A2340'}}>Remote Work Readiness</h3>
-            <p style={{margin:0,fontSize:'13px',color:'#6B7A99'}}>Complete this checklist to verify your infrastructure.</p>
-            
-            <div>
-              <label style={{display:'block',fontSize:'12px',fontWeight:700,color:'#1A2340',marginBottom:'6px'}}>Internet Speed (Mbps)</label>
-              <input type="number" value={form5.speed} onChange={e=>setForm5({...form5,speed:e.target.value})} style={{width:'100%',padding:'10px',borderRadius:'6px',border:'1px solid #E2E8F0'}} placeholder="e.g. 50" />
-            </div>
+            <p style={{margin:0,fontSize:'13px',color:'#6B7A99'}}>Check your connection and device, then confirm your working setup.</p>
+            <RemoteReadinessTest value={form5.report} onChange={report=>setForm5({...form5,report})} />
             <label style={{display:'flex',alignItems:'center',gap:'8px',fontSize:'13px',color:'#1A2340'}}>
               <input type="checkbox" checked={form5.hardware} onChange={e=>setForm5({...form5,hardware:e.target.checked})} />
               I have backup power and verified hardware specs.
@@ -7480,14 +7568,19 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
               <input type="checkbox" checked={form5.quiet} onChange={e=>setForm5({...form5,quiet:e.target.checked})} />
               I have a dedicated quiet workspace.
             </label>
-            
+            {readinessSubmitError && <div role="alert" style={{ color: '#B42318', fontSize: 12 }}>{readinessSubmitError}</div>}
             <div style={{display:'flex',justifyContent:'flex-end',gap:'12px',marginTop:'8px'}}>
               <button onClick={()=>setStage5ModalOpen(false)} style={{background:'transparent',border:'none',color:'#64748B',fontWeight:700,cursor:'pointer'}}>Cancel</button>
-              <button onClick={()=>{
-                handleAction('SUBMIT_STAGE_5', 4, { internetSpeedMbps: form5.speed, hasQuietWorkspace: form5.quiet });
-                setStage5ModalOpen(false);
-              }} disabled={!form5.speed || !form5.hardware || !form5.quiet} style={{background:'#F59E0B',color:'#fff',border:'none',padding:'8px 16px',borderRadius:'6px',fontWeight:700,cursor:(!form5.speed||!form5.hardware||!form5.quiet)?'not-allowed':'pointer',opacity:(!form5.speed||!form5.hardware||!form5.quiet)?0.5:1}}>
-                Submit Form
+              <button onClick={async()=>{
+                if (!form5.report || readinessSubmitting) return;
+                setReadinessSubmitting(true);
+                setReadinessSubmitError('');
+                const submitted = await handleAction('SUBMIT_STAGE_5', 4, { remoteReadiness: form5.report, hasBackupPowerAndSuitableHardware: form5.hardware, hasQuietWorkspace: form5.quiet });
+                setReadinessSubmitting(false);
+                if (submitted) setStage5ModalOpen(false);
+                else setReadinessSubmitError('We could not save this readiness report. Please try again.');
+              }} disabled={!form5.report || !form5.hardware || !form5.quiet || readinessSubmitting} style={{background:'#1455D9',color:'#fff',border:'none',padding:'9px 17px',borderRadius:'999px',fontWeight:700,cursor:(!form5.report||!form5.hardware||!form5.quiet||readinessSubmitting)?'not-allowed':'pointer',opacity:(!form5.report||!form5.hardware||!form5.quiet||readinessSubmitting)?0.5:1}}>
+                {readinessSubmitting ? 'Submitting…' : 'Submit readiness report'}
               </button>
             </div>
           </Card>
@@ -7502,6 +7595,14 @@ const VettingProgressSection = ({ profile, talentSkillAssessments = [], skillAss
           <div style={{fontSize:'12px',color:'#6B7A99',marginTop:'2px'}}>{passedCount>=7?'You have cleared all 7 stages. Our matching team will connect you with enterprise clients.':'Your assigned team will guide you through each stage. Check messages for updates.'}</div>
         </div>
       </Card>
+      {personalityModalOpen&&<PersonalityAssessment
+        onClose={()=>setPersonalityModalOpen(false)}
+        onComplete={(updatedPipeline)=>{
+          setPipeline(updatedPipeline);
+          onUpdateProfile?.({...profile,vettingPipeline:updatedPipeline});
+          setPersonalityModalOpen(false);
+        }}
+      />}
     </div>
   );
 };
@@ -7918,8 +8019,28 @@ export default function TalentDashboard({
   supportTickets = [],
   setSupportTickets
 }: TalentDashboardProps) {
+  const router = useRouter();
+  const routeSection = Array.isArray(router.query.section) ? router.query.section[0] : router.query.section;
+  const initialSection = router.query.portal === 'talent' && TALENT_SECTIONS.includes(routeSection as Section) ? routeSection as Section : 'dashboard';
+  const [activeSection, setActiveSectionState] = useState<Section>(initialSection);
+  const setActiveSection = (section: Section) => {
+    setActiveSectionState(section);
+    void router.push({ pathname: '/', query: { portal: 'talent', section } }, undefined, { shallow: true, scroll: false });
+  };
 
-  const [activeSection, setActiveSection] = useState<Section>('dashboard');
+  useEffect(() => {
+    if (!router.isReady) return;
+    const routePortal = Array.isArray(router.query.portal) ? router.query.portal[0] : router.query.portal;
+    const requested = Array.isArray(router.query.section) ? router.query.section[0] : router.query.section;
+    if (routePortal === 'talent' && TALENT_SECTIONS.includes(requested as Section)) {
+      setActiveSectionState(requested as Section);
+    } else if (routePortal === 'talent') {
+      setActiveSectionState('dashboard');
+      void router.replace({ pathname: '/', query: { portal: 'talent', section: 'dashboard' } }, undefined, { shallow: true, scroll: false });
+    } else {
+      void router.replace({ pathname: '/', query: { portal: 'talent', section: 'dashboard' } }, undefined, { shallow: true, scroll: false });
+    }
+  }, [router.isReady, router.query.portal, router.query.section, router]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const pipeline = Array.isArray(talentProfile?.vettingPipeline) ? talentProfile.vettingPipeline : [];
@@ -7945,6 +8066,43 @@ export default function TalentDashboard({
   const [notifications, setNotifications] = useState<any[]>(dashboardNotifications || []);
   const [conversations, setConversations] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  const [openConversationId, setOpenConversationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let active = true;
+    apiFetch('/api/messages')
+      .then(async response => {
+        if (!response.ok) return null;
+        return response.json().catch(() => null);
+      })
+      .then(payload => {
+        if (!active || !payload) return;
+        setConversations(Array.isArray(payload.conversations) ? payload.conversations : []);
+        setMessages(Array.isArray(payload.messages) ? payload.messages : []);
+      })
+      .catch(error => console.warn('[talent messages] inbox could not be loaded:', error));
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  const contactAssignedManager = async (managerId: string) => {
+    if (!managerId) return;
+    try {
+      const response = await apiFetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start', type: 'talent_admin' })
+      });
+      const payload = await response.json().catch(() => ({}));
+      const conversation = payload?.data;
+      if (!response.ok || !conversation?.id) throw new Error(payload?.error || 'The manager conversation could not be opened.');
+      setConversations(previous => previous.some(item => item.id === conversation.id) ? previous : [conversation, ...previous]);
+      setOpenConversationId(conversation.id);
+      setActiveSection('messages');
+    } catch (error: any) {
+      showGlobalToast(error?.message || 'Could not open a message to your manager.', 'error');
+    }
+  };
   
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const [showMsgDropdown, setShowMsgDropdown] = useState(false);
@@ -8182,6 +8340,10 @@ export default function TalentDashboard({
         user={currentUser}
         profile={talentProfile}
         contracts={talentContracts}
+        interviews={interviews.filter(iv =>
+          String(iv.talentId) === String(talentProfile?.id) ||
+          String(iv.talentId) === String(currentUser?.id)
+        )}
         matches={talentMatches}
         pendingDocs={pendingDocs}
         skillAssessmentResults={skillAssessmentResults}
@@ -8191,12 +8353,14 @@ export default function TalentDashboard({
         onRespondToOffer={onRespondToOffer}
         setActiveSection={setActiveSection}
         onOpenAssessment={openAssessmentSession}
+        onUpdateProfile={onUpdateProfile}
+        onContactManager={contactAssignedManager}
         onRequestReschedule={handleRequestReschedule}
       />;
-      case 'profile':          return <ProfileDetailSection user={currentUser} profile={talentProfile} contracts={talentContracts} onUpdateProfile={onUpdateProfile} />;
+      case 'profile':          return <ProfileDetailSection user={currentUser} profile={talentProfile} contracts={talentContracts} onUpdateProfile={onUpdateProfile} onContactManager={contactAssignedManager} />;
       case 'compliance':       return <ComplianceSection profile={talentProfile} allDocuments={allDocuments} onUpdateProfile={onUpdateProfile} onUpdateDocument={onUpdateDocument} />;
       case 'vetting_progress':
-        return <VettingProgressSection profile={talentProfile} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
+        return <VettingProgressSection profile={talentProfile} interviews={interviews.filter(iv => String(iv.talentId) === String(talentProfile?.id) || String(iv.talentId) === String(currentUser?.id))} talentSkillAssessments={talentSkillAssessments} skillAssessmentResults={skillAssessmentResults} workSimulationTasks={workSimulationTasks} onOpenAssessment={openAssessmentSession} onUpdateProfile={onUpdateProfile} onRequestReschedule={handleRequestReschedule} />;
       case 'scores_grades':    return <ScoresGradesSection profile={talentProfile} skillAssessmentResults={skillAssessmentResults} />;
       case 'opportunities':    return <PipelineSection profile={talentProfile} matches={matches} clientRequests={clientRequests || []} interviews={interviews} contracts={contracts} />;
       case 'interviews':       return <InterviewsSection
@@ -8215,6 +8379,8 @@ export default function TalentDashboard({
         return (
           <TalentMessagesPanel
             currentUser={currentUser}
+            assignedManager={talentProfile?.assignedManager}
+            openConversationId={openConversationId}
             conversations={conversations}
             messages={messages}
             setMessages={setMessages || (() => {})}
@@ -8291,12 +8457,12 @@ export default function TalentDashboard({
           <aside className="mobile-sidebar-drawer open" style={{
             position: 'fixed', top: 0, bottom: 0, left: 0, width: '280px',
             background: '#FFFFFF', borderRight: '1px solid #DDE2EC',
-            display: 'flex', flexDirection: 'column', padding: '24px 16px',
+            display: 'flex', flexDirection: 'column', padding: '12px 16px',
             zIndex: 300, overflowY: 'auto'
           }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #F5F7FA' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain' }} />
+                <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain' }} />
                 <div style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Portal</div>
               </div>
               <button onClick={() => setMobileSidebarOpen(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}>✕</button>
@@ -8379,8 +8545,8 @@ export default function TalentDashboard({
         position: 'sticky', top: 0, height: '100vh', overflowY: 'auto'
       }}>
         {/* User badge */}
-        <div className="talent-sidebar-brand" style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px 20px', borderBottom: '1px solid #F5F7FA', marginBottom: '12px' }}>
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+        <div className="talent-sidebar-brand" style={{ display: 'flex', flexDirection: 'column', gap: '1px', padding: '0 6px 6px', borderBottom: '1px solid #F5F7FA', marginBottom: '3px' }}>
+          <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '132px', height: 'auto', objectFit: 'contain', display: 'block' }} />
           <div className="talent-sidebar-caption" style={{ fontSize: '11px', fontWeight: 600, color: '#6B7A99', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Talent Workspace</div>
         </div>
 

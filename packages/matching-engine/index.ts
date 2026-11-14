@@ -1,4 +1,4 @@
-import { TalentProfile, ServiceRequest, MatchBreakdown, Match, VettingStage, VettingStageRecord, VettingDecision } from '@kongila/shared-types';
+import type { TalentProfile, ServiceRequest, MatchBreakdown, Match, VettingStage, VettingStageRecord, VettingDecision } from '@kongila/shared-types';
 
 // ─── Vetting Stage Metadata ───────────────────────────────────────────────────
 // Each stage defines WHAT ACTIVITY must be completed before it can be marked done.
@@ -10,7 +10,7 @@ export type VettingActivityType =
   | 'profile_review'       // Stage 0: review profile, pass or reject
   | 'assign_assessment'    // Stage 1: assign assessment, wait for result, admin can override per-category score
   | 'schedule_interview'   // Stage 2: schedule interview, fill rubric scores, mark done
-  | 'send_personality'     // Stage 3: send personality test link, wait for system result
+  | 'send_personality'     // Stage 3: candidate completes IPIP-50, talent manager reviews
   | 'remote_readiness'     // Stage 4: administer remote readiness check, enter result
   | 'assign_task'          // Stage 5: assign work simulation task, wait for submission
   | 'final_review';        // Stage 6: final compliance, references check
@@ -45,14 +45,14 @@ export const VETTING_STAGES: Array<{
   },
   {
     index: 3, name: 'Personality Test', color: '#10B981', icon: '🟢',
-    responsible: 'System (Auto)', activityType: 'send_personality',
-    description: "Send the candidate a link to the personality assessment. The candidate will see it in their dashboard and receive an email. This stage auto-advances when results are received from the provider.",
+    responsible: 'Talent + Talent Manager', activityType: 'send_personality',
+    description: "The candidate completes the IPIP-50 Big Five self-report in their portal. A talent manager reviews the descriptive profile and records the stage rating separately.",
     scoreKey: 'personality',
   },
   {
     index: 4, name: 'Remote Readiness', color: '#F59E0B', icon: '🟡',
     responsible: 'Ops Team', activityType: 'remote_readiness',
-    description: "Guide the candidate through the Remote Readiness checklist: internet quality, hardware, power backup, communication tools, and workspace setup. Enter results below.",
+    description: "Review the candidate's connection and device report alongside their hardware, power backup, and workspace confirmations.",
     scoreKey: 'remoteReadiness',
   },
   {
@@ -120,14 +120,14 @@ export const CANDIDATE_STAGE_VIEW: CandidateStageView[] = [
   },
   {
     index: 3, label: 'Personality Test', icon: '🧠',
-    summary: 'A short psychometric questionnaire.',
-    candidateAction: 'Complete the questionnaire. It takes about fifteen minutes.',
-    waitingOn: 'Your results are being processed.'
+    summary: 'A 50-item Big Five self-reflection profile.',
+    candidateAction: 'Complete the personality self-reflection in your portal.',
+    waitingOn: 'Your talent manager is reviewing the descriptive profile.'
   },
   {
     index: 4, label: 'Remote Readiness', icon: '🌐',
     summary: 'A check of your internet, hardware, power and workspace.',
-    candidateAction: 'Fill in the readiness checklist so we can confirm your setup.',
+    candidateAction: 'Check your connection and device, then confirm your remote-work setup.',
     waitingOn: 'The operations team is confirming your setup.'
   },
   {
@@ -487,7 +487,7 @@ export type {
   VettingScoresInput,
   VettingGrade,
   WeightedDimension
-} from './grading';
+} from './grading.ts';
 
 export {
   COMPOSITE_WEIGHTS,
@@ -497,9 +497,9 @@ export {
   gradeForScore,
   calculateCompositeVettingGrade,
   vettingScoreState
-} from './grading';
+} from './grading.ts';
 
-export type { VettingScoreState } from './grading';
+export type { VettingScoreState } from './grading.ts';
 
 // ─── Pipeline validation ──────────────────────────────────────────────────
 //
@@ -507,10 +507,10 @@ export type { VettingScoreState } from './grading';
 // its own. `validatePostedPipeline` is the wiring, so a caller does not have
 // to assemble the stage specs itself.
 
-export type { StageSpec, StageStatus } from './pipelineValidation';
-export { STAGE_STATUSES, validatePipelineShape } from './pipelineValidation';
+export type { StageSpec, StageStatus } from './pipelineValidation.ts';
+export { STAGE_STATUSES, validatePipelineShape } from './pipelineValidation.ts';
 
-import { validatePipelineShape as checkShape, type StageSpec } from './pipelineValidation';
+import { validatePipelineShape as checkShape, type StageSpec } from './pipelineValidation.ts';
 
 /** The stage specs the validator needs, derived from VETTING_STAGES. */
 export function pipelineStageSpecs(): StageSpec[] {

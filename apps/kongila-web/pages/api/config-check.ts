@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { emailConfigurationMissing } from '@kongila/notifications';
 
 /**
  * What configuration the running server can actually see.
@@ -70,7 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  const emailReady = groups.email.RESEND_API_KEY.set && groups.email.RESEND_FROM.set;
+  const emailReady = emailConfigurationMissing().length === 0;
 
   return res.status(200).json({
     // Which deployment answered. With several Vercel projects on one

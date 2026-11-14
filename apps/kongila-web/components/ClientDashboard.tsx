@@ -4,6 +4,7 @@ import { apiFetch } from '../lib/apiFetch';
 import { uploadFile } from '../lib/uploadFile';
 import { viewerTimeZone, wallClockToUtc, interviewInstant, formatForBothParties, formatInstantInZone, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
 import React, { useState, useEffect } from "react";
+import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton } from "@kongila/ui";
 import { supabase } from "../lib/supabaseClient";
 import SmartIntakeForm from "./SmartIntakeForm";
@@ -265,6 +266,8 @@ type ClientSection =
   | 'profile'
   | 'support';
 
+const CLIENT_SECTIONS: ClientSection[] = ['dashboard', 'company', 'requests', 'radar', 'scheduling', 'contracts', 'billing', 'remotan', 'messaging', 'notifications', 'profile', 'support'];
+
 const NAV_ITEMS: { id: ClientSection; label: string }[] = [
   { id: 'dashboard',     label: 'Home/Overview' },
   { id: 'company',       label: 'My company' },
@@ -343,6 +346,7 @@ const Card = ({
   onClick?: () => void;
 }) => (
   <div
+    className={`client-portal-surface${onClick ? ' client-portal-surface--interactive' : ''}`}
     onClick={onClick}
     style={{
       background: "#FFFFFF",
@@ -460,6 +464,7 @@ export default function ClientDashboard({
   supportTickets = [],
   setSupportTickets,
 }: ClientDashboardProps) {
+  const router = useRouter();
   // Billing States
   // Removed injected invoices state
   const [selectedInvoice, setSelectedInvoice] = React.useState<any>(null);
@@ -502,8 +507,27 @@ export default function ClientDashboard({
   // Scheduling State
   const [scheduleModalData, setScheduleModalData] = React.useState<{ talent: any, request: any, matchId?: string } | null>(null);
 
-  const [activeSection, setActiveSection] =
-    useState<ClientSection>("dashboard");
+  const routeSection = Array.isArray(router.query.section) ? router.query.section[0] : router.query.section;
+  const initialSection = router.query.portal === 'client' && CLIENT_SECTIONS.includes(routeSection as ClientSection) ? routeSection as ClientSection : 'dashboard';
+  const [activeSection, setActiveSectionState] = useState<ClientSection>(initialSection);
+  const setActiveSection = (section: ClientSection) => {
+    setActiveSectionState(section);
+    void router.push({ pathname: '/', query: { portal: 'client', section } }, undefined, { shallow: true, scroll: false });
+  };
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const routePortal = Array.isArray(router.query.portal) ? router.query.portal[0] : router.query.portal;
+    const requested = Array.isArray(router.query.section) ? router.query.section[0] : router.query.section;
+    if (routePortal === 'client' && CLIENT_SECTIONS.includes(requested as ClientSection)) {
+      setActiveSectionState(requested as ClientSection);
+    } else if (routePortal === 'client') {
+      setActiveSectionState('dashboard');
+      void router.replace({ pathname: '/', query: { portal: 'client', section: 'dashboard' } }, undefined, { shallow: true, scroll: false });
+    } else {
+      void router.replace({ pathname: '/', query: { portal: 'client', section: 'dashboard' } }, undefined, { shallow: true, scroll: false });
+    }
+  }, [router.isReady, router.query.portal, router.query.section, router]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
 
@@ -7127,7 +7151,7 @@ export default function ClientDashboard({
               borderRight: "1px solid #DDE2EC",
               display: "flex",
               flexDirection: "column",
-              padding: "24px 16px",
+              padding: "12px 16px",
               zIndex: 300,
               overflowY: "auto",
             }}
@@ -7137,15 +7161,15 @@ export default function ClientDashboard({
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
-                marginBottom: "24px",
-                paddingBottom: "16px",
+                marginBottom: "10px",
+                paddingBottom: "8px",
                 borderBottom: "1px solid #F5F7FA",
               }}
             >
               <div
-                style={{ display: "flex", flexDirection: "column", gap: "4px" }}
+                style={{ display: "flex", flexDirection: "column", gap: "1px" }}
               >
-                <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '120px', height: 'auto', objectFit: 'contain' }} />
+                <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '132px', height: 'auto', objectFit: 'contain', display: 'block' }} />
                 <div
                   style={{
                     fontSize: "11px",
@@ -7290,7 +7314,7 @@ export default function ClientDashboard({
           borderRight: "1px solid #DDE2EC",
           display: "flex",
           flexDirection: "column",
-          padding: "24px 12px",
+          padding: "12px 12px",
           position: "sticky",
           top: 0,
           height: "100vh",
@@ -7302,13 +7326,13 @@ export default function ClientDashboard({
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: "4px",
-            padding: "0 8px 20px",
+            gap: "1px",
+            padding: "0 6px 7px",
             borderBottom: "1px solid #F5F7FA",
-            marginBottom: "12px",
+            marginBottom: "5px",
           }}
         >
-          <img src="/images/kongilalogo.png" alt="Kongila" style={{ width: '130px', height: 'auto', objectFit: 'contain' }} />
+          <img src="/images/kongilalogo-cropped.png" alt="Kongila" style={{ width: '140px', height: 'auto', objectFit: 'contain', display: 'block' }} />
           <div
             style={{
               fontSize: "11px",

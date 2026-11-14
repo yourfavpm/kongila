@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/router';
 import { supabase } from '../lib/supabaseClient';
 
 export default function SetPasswordPage() {
+  const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [validLink, setValidLink] = useState(false);
   const [email, setEmail] = useState('');
@@ -60,7 +62,7 @@ export default function SetPasswordPage() {
     if (signOutError) {
       setError(`Your password was set, but the session could not be closed. Sign out before sharing this device. ${signOutError.message}`);
     } else {
-      window.setTimeout(() => window.location.replace('/'), 1200);
+      window.setTimeout(() => { void router.replace('/'); }, 1200);
     }
   };
 

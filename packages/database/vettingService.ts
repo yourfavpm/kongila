@@ -28,6 +28,8 @@ import { recordAudit } from './audit';
 import { notifyUsers, talentPortalUrl } from './notify';
 import { calculateCompositeVettingGrade, vettingScoreState, validatePostedPipeline } from '@kongila/matching-engine';
 import { canTransitionTalent } from '@kongila/workflows';
+import { getVettingStageAdvancement } from './vettingAdvancement';
+export { getVettingStageAdvancement } from './vettingAdvancement';
 
 export interface VettingResult<T = any> {
   ok: boolean;
@@ -305,6 +307,32 @@ export async function updateVettingPipeline(
   const talent = await loadTalent(talentId);
   if (!talent) return fail(404, 'That candidate does not exist.');
 
+  const postedStages = input.pipeline as Array<Record<string, any>>;
+  const postedInterview = postedStages[2];
+  const envelopeBeforeWrite = readEnvelope(talent.bio);
+  const databasePipeline = Array.isArray((talent as any).vetting_pipeline)
+    ? (talent as any).vetting_pipeline
+    : envelopeBeforeWrite.telemetry.vettingPipeline;
+  const advancement = getVettingStageAdvancement(databasePipeline, input.pipeline);
+  if (advancement && String(talent.vetting_stage || '') !== advancement.fromStage) {
+    return fail(409, 'The active vetting stage changed. Refresh the candidate record before approving it.');
+  }
+  if (advancement && input.vettingStage !== advancement.toStage) {
+    return fail(409, 'The requested next stage does not match the configured vetting pipeline. Refresh and try again.');
+  }
+  const priorInterview = Array.isArray(databasePipeline) ? databasePipeline[2] : null;
+  if (postedInterview?.status === 'passed' && priorInterview?.status !== 'passed') {
+    const rubric = postedInterview.interviewRubricScores;
+    const keys = ['communication', 'behavioral', 'cultural', 'technical'];
+    if (!rubric || !keys.every(key => Number.isInteger(rubric[key]) && rubric[key] >= 0 && rubric[key] <= 25)) {
+      return fail(422, 'Enter all four interview rubric scores from 0 to 25 before completing the interview stage.');
+    }
+    const total = keys.reduce((sum, key) => sum + rubric[key], 0);
+    if (total !== Number(postedInterview.score)) {
+      return fail(422, 'The interview stage score must equal the total of its four rubric scores.');
+    }
+  }
+
   const patch: Record<string, unknown> = {};
 
   if (input.vettingStatus) {
@@ -318,7 +346,7 @@ export async function updateVettingPipeline(
 
   if (input.vettingStage) patch.vetting_stage = String(input.vettingStage);
 
-  const envelope = readEnvelope(talent.bio);
+  const envelope = envelopeBeforeWrite;
   envelope.telemetry = { ...envelope.telemetry, vettingPipeline: input.pipeline };
 
   let grade: string | null = null;
@@ -353,8 +381,19 @@ export async function updateVettingPipeline(
   patch.bio = JSON.stringify(envelope);
 
   const supabase = getSupabaseClient();
-  let { error } = await supabase
-    .from('talent_profiles').update(patch).eq('id', talentId);
+  // Compare-and-swap against the pipeline we just read. Two administrators
+  // may submit the same approval concurrently; only the first write is allowed
+  // to replace that exact prior pipeline. The loser sees a conflict and does
+  // not send another notification or overwrite the winner's decision.
+  let write = supabase.from('talent_profiles').update(patch).eq('id', talentId);
+  if (Array.isArray((talent as any).vetting_pipeline)) {
+    write = write.filter('vetting_pipeline', 'eq', JSON.stringify(databasePipeline));
+  } else if (talent.bio === null || talent.bio === undefined) {
+    write = write.is('bio', null);
+  } else {
+    write = write.eq('bio', talent.bio);
+  }
+  let { data: saved, error } = await write.select('id').maybeSingle();
 
   // The three vetting columns arrive with the 2026-11-09c migration. Until it
   // runs they do not exist, and naming them failed the whole statement — so a
@@ -375,11 +414,14 @@ export async function updateVettingPipeline(
     delete withoutColumns.vetting_pipeline;
     delete withoutColumns.vetting_scores;
     delete withoutColumns.composite_score;
-    ({ error } = await supabase
-      .from('talent_profiles').update(withoutColumns).eq('id', talentId));
+    let fallback = supabase.from('talent_profiles').update(withoutColumns).eq('id', talentId);
+    if (talent.bio === null || talent.bio === undefined) fallback = fallback.is('bio', null);
+    else fallback = fallback.eq('bio', talent.bio);
+    ({ data: saved, error } = await fallback.select('id').maybeSingle());
   }
 
   if (error) return fail(500, `That decision was not saved: ${error.message}`);
+  if (!saved) return fail(409, 'This candidate was updated by another operator. Refresh the vetting record and review the latest stage before trying again.');
 
   await recordAudit(actor, {
     action: input.action || 'Update Vetting Pipeline',
@@ -391,9 +433,14 @@ export async function updateVettingPipeline(
   });
 
   const warnings: string[] = [];
-  if (input.vettingStage && talent.user_id && input.vettingStage !== talent.vetting_stage) {
+  if (
+    advancement
+    && input.vettingStage === advancement.toStage
+    && talent.user_id
+    && advancement.toStage !== talent.vetting_stage
+  ) {
     const notified = await notifyUsers(String(talent.user_id), 'stage_advanced', {
-      stageName: String(input.vettingStage),
+      stageName: advancement.toStage,
       actionUrl: talentPortalUrl('/?section=vetting')
     });
     warnings.push(...notified.warnings);

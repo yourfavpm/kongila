@@ -1,0 +1,219 @@
+/* Shared authenticated product interface for talent, client, and admin. */
+:root {
+  --dash-canvas: #f3f6fa;
+  --dash-surface: #ffffff;
+  --dash-surface-soft: #f8fafc;
+  --dash-border: #e5eaf1;
+  --dash-ink: #182b49;
+  --dash-muted: #718096;
+  --dash-subtle: #94a3b8;
+  --dash-blue: #1455c0;
+  --dash-teal: #13866f;
+  --dash-amber: #a56408;
+  --dash-violet: #7259b8;
+  --dash-red: #bd4d58;
+  --dash-radius: 16px;
+  --dash-shadow: 0 2px 8px rgba(24, 43, 73, .035), 0 12px 28px rgba(24, 43, 73, .035);
+}
+
+.dashboard-shell,
+.admin-dashboard-shell {
+  --bg-primary: var(--dash-canvas) !important;
+  --bg-secondary: var(--dash-surface) !important;
+  --bg-tertiary: var(--dash-surface-soft) !important;
+  --text-primary: var(--dash-ink) !important;
+  --text-secondary: var(--dash-muted) !important;
+  --text-muted: var(--dash-muted) !important;
+  --border-glass: var(--dash-border) !important;
+  --kongila-blue: var(--dash-blue) !important;
+  --accent-purple: var(--dash-blue) !important;
+  background: var(--dash-canvas) !important;
+  color: var(--dash-ink) !important;
+}
+
+.dashboard-shell :where(button, a, input, select, textarea):focus-visible,
+.admin-dashboard-shell :where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid rgba(20, 85, 192, .28);
+  outline-offset: 2px;
+}
+
+.dashboard-shell :where(button, a),
+.admin-dashboard-shell :where(button, a) {
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.dashboard-shell .dashboard-content-area,
+.dashboard-shell .dashboard-main-content,
+.dashboard-shell main {
+  background: var(--dash-canvas) !important;
+  color: var(--dash-ink) !important;
+}
+.client-portal-surface,
+.talent-portal-shell .talent-portal-surface {
+  border: 1px solid var(--dash-border) !important;
+  border-radius: var(--dash-radius) !important;
+  box-shadow: var(--dash-shadow) !important;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.client-portal-surface--interactive,
+.talent-portal-shell .talent-portal-surface--interactive { cursor: pointer; }
+.client-portal-surface--interactive:hover,
+.talent-portal-shell .talent-portal-surface--interactive:hover {
+  border-color: #d6e1f1 !important;
+  box-shadow: 0 5px 16px rgba(24, 43, 73, .07) !important;
+  transform: translateY(-1px);
+}
+
+.dashboard-shell .dashboard-content-area { min-width: 0; }
+.dashboard-shell .dashboard-main-content { padding: 28px clamp(18px, 3vw, 38px) 42px !important; }
+
+/* Talent workspace */
+.talent-portal-shell {
+  --tp-bg: var(--dash-canvas) !important;
+  --tp-surface: var(--dash-surface) !important;
+  --tp-ink: var(--dash-ink) !important;
+  --tp-muted: var(--dash-muted) !important;
+  --tp-border: var(--dash-border) !important;
+  --tp-blue: var(--dash-blue) !important;
+  --tp-pale: #edf3fc !important;
+}
+
+.talent-portal-shell .desktop-sidebar {
+  width: 232px !important;
+  padding: 12px 10px 10px !important;
+  background: var(--dash-surface) !important;
+  border-right-color: var(--dash-border) !important;
+}
+.talent-portal-shell .talent-sidebar-brand { padding: 0 5px 7px !important; margin-bottom: 5px !important; }
+.talent-portal-shell .talent-sidebar-brand img { width: 108px !important; }
+.talent-portal-shell .talent-nav-group-label { padding: 12px 10px 4px !important; color: var(--dash-subtle) !important; }
+.talent-portal-shell .desktop-sidebar nav { gap: 2px !important; }
+.talent-portal-shell .desktop-sidebar nav > button {
+  min-height: 34px !important;
+  padding: 7px 9px !important;
+  border-radius: 9px !important;
+}
+.talent-portal-shell .desktop-sidebar nav > button[style*="#EEF3FF"] {
+  background: #edf3fc !important;
+  color: var(--dash-blue) !important;
+  box-shadow: inset 2px 0 0 var(--dash-blue) !important;
+}
+.talent-portal-shell .desktop-header { background: var(--dash-surface) !important; border-bottom-color: var(--dash-border) !important; }
+.talent-portal-shell .dashboard-main-content { padding: 25px clamp(18px, 3vw, 38px) 40px !important; }
+.talent-portal-shell .talent-section-page > [style*="border-radius"] {
+  border-radius: var(--dash-radius) !important;
+}
+.talent-portal-shell .talent-section-page [style*="box-shadow"] {
+  box-shadow: var(--dash-shadow) !important;
+}
+.talent-portal-shell .talent-section-page [style*="border: 1px solid #DDE2EC"] {
+  border-color: var(--dash-border) !important;
+}
+
+/* Client workspace */
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar {
+  width: 232px !important;
+  padding: 12px 10px !important;
+  background: var(--dash-surface) !important;
+  border-right: 1px solid var(--dash-border) !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar > div:first-child {
+  padding: 0 5px 8px !important;
+  border-bottom-color: var(--dash-border) !important;
+  margin-bottom: 6px !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar > div:first-child img { width: 108px !important; }
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar nav { gap: 2px !important; }
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar nav > button {
+  min-height: 35px !important;
+  padding: 7px 9px !important;
+  border-radius: 9px !important;
+  color: var(--dash-muted) !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar nav > button[style*="#EEF3FF"] {
+  background: #edf3fc !important;
+  color: var(--dash-blue) !important;
+  box-shadow: inset 2px 0 0 var(--dash-blue) !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar nav > button:hover:not(:disabled) { background: #f4f7fb !important; color: var(--dash-ink) !important; }
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar > button[style*="#EF4444"] {
+  color: var(--dash-red) !important;
+  border-radius: 9px !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .desktop-sidebar > button[style*="#EF4444"]:hover { background: #fff2f3 !important; }
+.dashboard-shell:not(.talent-portal-shell) .desktop-header,
+.dashboard-shell:not(.talent-portal-shell) header[style*="border-bottom"] {
+  background: var(--dash-surface) !important;
+  border-bottom-color: var(--dash-border) !important;
+}
+.dashboard-shell:not(.talent-portal-shell) .dashboard-main-content { padding: 25px clamp(18px, 3vw, 38px) 40px !important; }
+
+/* Admin operations workspace */
+.admin-dashboard-shell { min-height: 100vh; }
+.admin-dashboard-shell .sidebar {
+  width: 240px !important;
+  padding: 12px 11px !important;
+  gap: 12px !important;
+  background: var(--dash-surface) !important;
+  border-right: 1px solid var(--dash-border) !important;
+}
+.admin-dashboard-shell .sidebar-logo img { width: 108px !important; }
+.admin-dashboard-shell .sidebar-menu { gap: 2px !important; }
+.admin-dashboard-shell .menu-item {
+  min-height: 34px;
+  padding: 7px 10px !important;
+  border-radius: 9px !important;
+  color: var(--dash-muted) !important;
+}
+.admin-dashboard-shell .menu-item.active {
+  color: var(--dash-blue) !important;
+  background: #edf3fc !important;
+  border-color: transparent !important;
+  box-shadow: inset 2px 0 0 var(--dash-blue);
+}
+.admin-dashboard-shell .menu-item:hover:not(.active) { color: var(--dash-ink) !important; background: #f4f7fb !important; }
+.admin-dashboard-shell .main-content {
+  max-width: none !important;
+  margin: 0 0 0 240px !important;
+  padding: 28px clamp(20px, 3vw, 40px) !important;
+  background: var(--dash-canvas) !important;
+}
+.admin-dashboard-shell .dashboard-grid,
+.admin-dashboard-shell .stats-card-grid { gap: 16px !important; }
+.admin-dashboard-shell .stats-card-grid > *,
+.admin-dashboard-shell .dashboard-grid > .glass-panel,
+.admin-dashboard-shell .dashboard-grid > .assessment-card { border-radius: var(--dash-radius) !important; }
+.admin-dashboard-shell .glass-panel,
+.admin-dashboard-shell .task-card,
+.admin-dashboard-shell .kanban-column,
+.admin-dashboard-shell .assessment-card,
+.admin-dashboard-shell .remotan-card,
+.admin-dashboard-shell .modal-content {
+  border-radius: var(--dash-radius) !important;
+  border-color: var(--dash-border) !important;
+  box-shadow: var(--dash-shadow) !important;
+}
+.admin-dashboard-shell .glass-panel:hover,
+.admin-dashboard-shell .assessment-card:hover,
+.admin-dashboard-shell .task-card:hover { border-color: #d6e1f1 !important; box-shadow: 0 5px 16px rgba(24, 43, 73, .07) !important; }
+.admin-dashboard-shell .page-title { color: var(--dash-ink) !important; }
+.admin-dashboard-shell .page-subtitle { color: var(--dash-muted) !important; }
+.admin-dashboard-shell .custom-table th { color: var(--dash-muted) !important; }
+.admin-dashboard-shell .custom-table td { border-bottom-color: var(--dash-border) !important; }
+.admin-dashboard-shell .custom-table tr:hover td { background: #f8fafc !important; }
+
+@media (max-width: 760px) {
+  .dashboard-shell .dashboard-main-content,
+  .talent-portal-shell .dashboard-main-content,
+  .admin-dashboard-shell .main-content { padding: 18px 14px 30px !important; }
+  .talent-portal-shell .desktop-sidebar,
+  .dashboard-shell:not(.talent-portal-shell) .desktop-sidebar { width: 232px !important; }
+}
+
+@media (max-width: 768px) {
+  .admin-dashboard-shell .main-content { margin-left: 0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell *, .admin-dashboard-shell * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}

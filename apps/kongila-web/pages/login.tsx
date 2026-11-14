@@ -61,8 +61,34 @@ export default function LoginPage() {
     }
   };
 
+  // Do not paint a sign-in page (or its registration choices) while Supabase
+  // is restoring an existing session. An authenticated visitor should see a
+  // neutral transition and go straight to the workspace they requested.
+  if (checking) {
+    return (
+      <main className="auth-experience" aria-busy="true">
+        <Head>
+          <title>Sign in · Kongila</title>
+          <meta name="robots" content="noindex" />
+          <meta name="theme-color" content="#f6f4ee" />
+          <link rel="icon" href="/images/kongilalogo.png" />
+        </Head>
+        <div role="status" aria-live="polite" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: '#F6F4EE', color: '#14213D', fontSize: 15, fontWeight: 700 }}>
+          <span className="auth-spinner" aria-hidden="true" />
+          Restoring your Kongila session…
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="auth-experience">
+      {submitting && (
+        <div role="status" aria-live="polite" style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: '#F6F4EE', color: '#14213D', fontSize: 15, fontWeight: 700 }}>
+          <span className="auth-spinner" aria-hidden="true" />
+          Opening your Kongila workspace…
+        </div>
+      )}
       <Head>
         <title>Sign in · Kongila</title>
         <meta name="robots" content="noindex" />
@@ -188,6 +214,9 @@ export default function LoginPage() {
           </div>
 
           <Link href="/" className="auth-back">← <span>Back to kongila.com</span></Link>
+          {process.env.NEXT_PUBLIC_ADMIN_URL && (
+            <a href={process.env.NEXT_PUBLIC_ADMIN_URL} className="auth-back">Administrator? <span>Open the Admin Portal</span></a>
+          )}
         </div>
       </section>
     </main>

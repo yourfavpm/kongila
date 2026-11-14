@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
 import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, TIMEZONE_OPTIONS } from '@kongila/utils';
 import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
@@ -16,6 +17,7 @@ import { COUNTRIES_AND_CODES, SUGGESTED_SKILLS, CURRENCIES, currencyForCountry }
 import TalentDashboard from '../components/TalentDashboard';
 import { MascotLoader } from '../components/brand/MascotFeedback';
 import { SiteHeader, SiteFooter } from '../components/marketing/SiteChrome';
+import { SOLUTIONS } from '../components/marketing/siteMap';
 import HomePage from '../components/marketing/HomePage';
 import ClientDashboard from '../components/ClientDashboard';
 import EmailVerification from '../components/EmailVerification';
@@ -160,6 +162,9 @@ export default function KongilaWeb({
   initialWorkspaceTransition,
   initialInviteTransition
 }: KongilaWebProps) {
+  const router = useRouter();
+  const requestedModel = Array.isArray(router.query.model) ? router.query.model[0] : router.query.model;
+  const initialServiceType = SOLUTIONS.find(solution => solution.slug === requestedModel)?.serviceType as ServiceType | undefined;
   // DB States
   const [talents, setTalents] = useState<TalentProfile[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
@@ -172,6 +177,7 @@ export default function KongilaWeb({
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
   const [interviews, setInterviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sessionInitialized, setSessionInitialized] = useState(false);
   // True once the first database load has come back, successfully or not.
   // Both dashboards used to render the instant the user was known, with
   // every list still empty, so a signed-in person's first sight of their
@@ -489,8 +495,12 @@ export default function KongilaWeb({
     if (wantsWorkspace) consumed = true;
 
     if (consumed) {
-      const clean = window.location.pathname + window.location.hash;
-      window.history.replaceState(null, '', clean);
+      // Consume only the one-shot entry flags. Portal and section query
+      // parameters are durable route state and must survive sign-in/refresh.
+      for (const key of ['view', 'role', 'intake', 'workspace']) params.delete(key);
+      const query = params.toString();
+      const clean = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+      window.history.replaceState(window.history.state, '', clean);
     }
   }, []);
 
@@ -564,11 +574,15 @@ export default function KongilaWeb({
       setRouteTransitionPending(false);
       return;
     }
-    if (!loading && !currentUser) {
-      setAuthView('login');
+    if (authView && authView !== 'login') {
+      setRouteTransitionPending(false);
+      return;
+    }
+    if (sessionInitialized && !loading && !currentUser) {
+      setAuthView(current => current || 'login');
       setRouteTransitionPending(false);
     }
-  }, [initialWorkspaceTransition, initialInviteTransition, routeTransitionPending, currentUser, authView, dataReady, loading]);
+  }, [initialWorkspaceTransition, initialInviteTransition, routeTransitionPending, currentUser, authView, dataReady, loading, sessionInitialized]);
 
   // Load offers once a candidate is signed in, and again whenever the
   // poll refreshes their profile, so an offer sent while they are looking
@@ -806,6 +820,18 @@ export default function KongilaWeb({
       const dbUser = meRes.ok ? await meRes.json() : null;
 
       const role = dbUser?.role || authUser.user_metadata?.role || 'talent';
+      // Administrator workspaces run in their own app and have their own
+      // server-verified entry point. Never fall through into the client UI
+      // just because this shared app only has talent/client dashboards.
+      if (role !== 'talent' && role !== 'client') {
+        await supabase.auth.signOut();
+        currentUserRef.current = null;
+        setCurrentUser(null);
+        setAuthView('login');
+        setLoading(false);
+        triggerBanner('Administrator accounts sign in through the Admin Portal.', 'info');
+        return;
+      }
       // The user is considered to have completed onboarding only when their talent_profile
       // bio contains the __kongila envelope with 100% completion. status='inactive' means
       // they are a talent that has not yet finished onboarding.
@@ -887,17 +913,24 @@ export default function KongilaWeb({
     const initSession = async (existingSession?: Session | null) => {
       const initSafetyTimeout = setTimeout(() => {
         setLoading(false);
+        setSessionInitialized(true);
       }, 30000);
+      let restoredSession: Session | null = null;
       try {
-        const session = existingSession ?? (await supabase.auth.getSession()).data.session;
-        if (session?.user) {
-          await restoreUserFromSession(session);
+        restoredSession = existingSession ?? (await supabase.auth.getSession()).data.session;
+        if (restoredSession?.user) {
+          await restoreUserFromSession(restoredSession);
         }
       } catch (err) {
         console.error("Session init failed", err);
       } finally {
         clearTimeout(initSafetyTimeout);
-        await syncFromDb();
+        setSessionInitialized(true);
+        setLoading(false);
+        // Session/role resolution gates the interface. Data loading follows
+        // independently and must never delay the public homepage or hold an
+        // authenticated user on the session-restoration screen.
+        if (restoredSession?.user) void syncFromDb();
       }
     };
 
@@ -990,6 +1023,34 @@ export default function KongilaWeb({
       supabase.removeChannel(msgsChannel);
     };
   }, []);
+
+  // A portal section in the URL is a protected deep link. Keep the neutral
+  // loader visible while restoring the session, then send signed-out visitors
+  // to the universal sign-in page with the exact destination encoded in `next`.
+  useEffect(() => {
+    if (!router.isReady || !sessionInitialized || !router.query.portal || currentUser || authView) return;
+    const next = router.asPath.startsWith('/') && !router.asPath.startsWith('//') ? router.asPath : '/';
+    void router.replace({ pathname: '/login', query: { next } });
+  }, [router.isReady, router.asPath, router.query.portal, sessionInitialized, currentUser, authView, router]);
+
+  // Portal selection is always derived from the authenticated role. A manually
+  // edited query string cannot switch a client into the talent workspace (or
+  // vice versa); it resolves to that user's own dashboard instead.
+  useEffect(() => {
+    if (!router.isReady || !sessionInitialized || !currentUser || !router.query.portal) return;
+    const expected = currentUser.role === 'talent' ? 'talent' : currentUser.role === 'client' ? 'client' : null;
+    if (!expected) return;
+    if (router.query.portal !== expected) {
+      void router.replace({ pathname: '/', query: { portal: expected, section: 'dashboard' } }, undefined, { shallow: true });
+    }
+  }, [router.isReady, router.query.portal, sessionInitialized, currentUser, router]);
+
+  useEffect(() => {
+    if (!sessionInitialized || currentUser?.role !== 'talent' || !clientIntakeActive) return;
+    setClientIntakeActive(false);
+    setActiveTab('talent');
+    void router.replace({ pathname: '/', query: { portal: 'talent', section: 'dashboard' } }, undefined, { shallow: true });
+  }, [sessionInitialized, currentUser?.role, clientIntakeActive, router]);
 
 
   // Form Submit
@@ -1977,7 +2038,21 @@ export default function KongilaWeb({
   // Find the database talent profile matching current user email or ID
   const getCurrentTalentProfile = () => {
     if (!currentUser) return null;
-    return talents.find(t => t.id === currentUser.id || t.email.toLowerCase() === currentUser.email.toLowerCase());
+    const talent = talents.find(t => t.id === currentUser.id || String(t.email || '').toLowerCase() === String(currentUser.email || '').toLowerCase());
+    if (!talent) return null;
+    const managerId = talent.talentManagerId || null;
+    const manager = managerId
+      ? users.find((candidate: any) => String(candidate.id) === String(managerId))
+      : null;
+    return {
+      ...talent,
+      assignedManager: manager ? {
+        id: manager.id,
+        name: manager.name || manager.email || 'Talent Manager',
+        email: manager.email || '',
+        role: manager.role === 'talent_manager' ? 'Talent Manager' : manager.role || 'Talent Manager'
+      } : null
+    };
   };
 
   const handleUpdateProfile = async (updatedProfile: any) => {
@@ -2232,7 +2307,25 @@ export default function KongilaWeb({
         {/* ====================================================================== */}
         {/* MARKETING HUB & HERO (Shown if not logged in AND not inside intake/auth) */}
         {/* ====================================================================== */}
-        {!currentUser && !authView && !clientIntakeActive && !routeTransitionPending && (
+        {!sessionInitialized && !authView && !clientIntakeActive && !routeTransitionPending && (
+          <div className="route-transition-loader">
+            <MascotLoader variant="page" message="Restoring your Kongila session…" />
+          </div>
+        )}
+
+        {!sessionInitialized && authView && !clientIntakeActive && !routeTransitionPending && (
+          <div className="route-transition-loader">
+            <MascotLoader variant="page" message="Preparing your Kongila experience…" />
+          </div>
+        )}
+
+        {sessionInitialized && router.query.portal && !currentUser && !authView && !clientIntakeActive && (
+          <div className="route-transition-loader">
+            <MascotLoader variant="page" message="Taking you to sign in…" />
+          </div>
+        )}
+
+        {sessionInitialized && !currentUser && !authView && !clientIntakeActive && !routeTransitionPending && !router.query.portal && (
           /* The public site.
            *
              The marketing pages used to live here as roughly nine hundred lines
@@ -2281,6 +2374,7 @@ export default function KongilaWeb({
                  behaved correctly from inside the portal and not from the
                  public page. */
               currentUser={currentUser}
+              initialServiceType={initialServiceType}
               onComplete={async (created) => {
                 // No matching here. The requests go to the admin matching
                 // queue, which scores each against the whole vetted pool.
@@ -2328,7 +2422,7 @@ export default function KongilaWeb({
           />
         )}
 
-        {(authView === 'login' || authView === 'signup') && !clientIntakeActive && (
+        {(authView === 'login' || authView === 'signup') && sessionInitialized && !clientIntakeActive && (
           <div className={isTalentSignup ? 'talent-signup-experience' : 'legacy-auth-experience'} style={{
             minHeight: '100vh',
             width: '100%',

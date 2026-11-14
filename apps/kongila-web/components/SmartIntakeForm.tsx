@@ -18,6 +18,7 @@ import { COUNTRIES_AND_CODES } from '../lib/onboarding-constants';
 
 interface SmartIntakeFormProps {
   currentUser?: any;
+  initialServiceType?: ServiceType;
   /**
    * Every request the brief produced. A brief with three roles files three
    * requests, so this is a list; a single-role brief sends a list of one.
@@ -169,7 +170,7 @@ function IntakeIllustration({ service, step }: { service?: string; step: number 
   );
 }
 
-export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: SmartIntakeFormProps) {
+export default function SmartIntakeForm({ currentUser, initialServiceType, onComplete, onCancel }: SmartIntakeFormProps) {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Set once the request is filed. While it holds a value the wizard is
@@ -185,7 +186,7 @@ export default function SmartIntakeForm({ currentUser, onComplete, onCancel }: S
   const [showPhoneCodeDropdown, setShowPhoneCodeDropdown] = useState(false);
 
   const [formData, setFormData] = useState<Partial<ServiceRequest>>({
-    serviceType: '' as ServiceType,
+    serviceType: (initialServiceType || '') as ServiceType,
     currency: 'USD',
     budgetMinUsd: 0,
     budgetMaxUsd: 0,

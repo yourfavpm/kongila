@@ -73,9 +73,38 @@ export interface VettingStageRecord {
   /** IANA zone interviewDate and interviewTime were entered in. */
   interviewTimezone?: string;  // Time string for the scheduled interview
   meetingLink?: string;    // Video meeting link for the interview
+  interviewRubricScores?: {
+    communication: number;
+    behavioral: number;
+    cultural: number;
+    technical: number;
+  };
   taskId?: string;         // Reference to a WorkSimulationTask
-  personalityLink?: string; // Link to the external personality test
-  personalityScore?: number; // Score received from personality test provider
+  personalityLink?: string; // Legacy external assessment link; new assignments use the in-portal IPIP-50
+  personalityScore?: number; // Legacy provider score; new review rating is stored in score
+  /** Descriptive IPIP-50 profile. These trait scores are not a hiring rating. */
+  personalityAssessment?: {
+    instrument: 'IPIP-50';
+    version: number;
+    completedAt: string;
+    scores: Record<'extraversion' | 'agreeableness' | 'conscientiousness' | 'emotionalSensitivity' | 'openness', { score: number; rawScore: number }>;
+  };
+  /** Candidate-reported device summary and browser-measured network readiness. */
+  remoteReadiness?: {
+    provider: 'LibreSpeed' | 'browser-only';
+    testedAt: string;
+    downloadMbps?: number;
+    uploadMbps?: number;
+    latencyMs?: number;
+    jitterMs?: number;
+    browser: string;
+    operatingSystem: string;
+    deviceType: string;
+    viewport: string;
+    networkEstimate?: { effectiveType?: string; downlinkMbps?: number; rttMs?: number; saveData?: boolean };
+    hasBackupPowerAndSuitableHardware: boolean;
+    hasQuietWorkspace: boolean;
+  };
   assessorId?: string | null;
   reapplicationDate?: string | null;
   submissionData?: any;

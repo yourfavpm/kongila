@@ -23,7 +23,7 @@ import {
   type AdminRole
 } from '@kongila/auth';
 import { notifyAdmins, notifyUsers } from './notify';
-import { buildNotification, emailIsConfigured, sendEmail } from '@kongila/notifications';
+import { buildNotification, sendEmail } from '@kongila/notifications';
 
 /** Named apart from interviewService's ServiceResult, which is a different shape. */
 export interface UserServiceResult<T = any> {
@@ -105,10 +105,6 @@ export async function inviteOperator(
 
   const supabase = getSupabaseClient();
 
-  if (!emailIsConfigured()) {
-    return fail(503, 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM before inviting operators.');
-  }
-
   const { data: existing, error: existingError } = await supabase
     .from('users')
     .select('id, role, status')
@@ -184,12 +180,12 @@ export async function inviteOperator(
   });
   const warnings = emailResult.success
     ? []
-    : [`The account was created, but its invitation email was not sent: ${emailResult.error || 'Resend rejected the message'}. Use Resend invite to try again.`];
+    : [`The operator account was created, but the invitation email was not sent: ${emailResult.error || 'Resend rejected the message'}. Share the single-use setup link below securely.`];
 
   return {
     ok: true,
     status: 201,
-    data: { id: userId, email, role, emailSent: emailResult.success },
+    data: { id: userId, email, role, emailSent: emailResult.success, ...(!emailResult.success ? { setupLink: actionLink } : {}) },
     warnings
   };
 }
@@ -362,10 +358,6 @@ export async function resendOperatorInvite(
 ): Promise<UserServiceResult> {
   const refused = guard(actor);
   if (refused) return refused;
-  if (!emailIsConfigured()) {
-    return fail(503, 'Email is not configured. Set RESEND_API_KEY and RESEND_FROM before resending invitations.');
-  }
-
   const supabase = getSupabaseClient();
   const { data: target, error: targetError } = await supabase
     .from('users')
@@ -403,9 +395,14 @@ export async function resendOperatorInvite(
   const emailResult = await sendEmail({ to: target.email, subject: content.subject, body: content.body });
   if (!emailResult.success) {
     return {
-      ok: false,
-      status: 502,
-      error: `A new setup link was created, but the email was not sent: ${emailResult.error || 'Resend rejected the message'}.`
+      ok: true,
+      status: 200,
+      data: {
+        id: target.id,
+        emailSent: false,
+        setupLink: actionLink
+      },
+      warnings: [`A fresh single-use setup link was created for ${target.email}, but email delivery failed: ${emailResult.error || 'Resend rejected the message'}. Share the link below securely.`]
     };
   }
 

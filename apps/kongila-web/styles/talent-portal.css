@@ -470,6 +470,18 @@
 .talent-portal-shell .mobile-sidebar-drawer > div:first-child img { width: 100px !important; }
 .talent-portal-shell .mobile-sidebar-drawer .talent-nav-group-label { padding: 10px 9px 3px !important; }
 
+/* The source logo contains a large transparent canvas. Use the tightly
+   cropped portal asset and keep the brand block compact above navigation. */
+.talent-portal-shell .desktop-sidebar > div:first-child {
+  gap: 1px !important;
+  padding: 0 5px 5px !important;
+  margin-bottom: 2px !important;
+}
+.talent-portal-shell .desktop-sidebar > div:first-child img { width: 132px !important; height: auto !important; }
+.talent-portal-shell .mobile-sidebar-drawer { padding: 12px 16px !important; }
+.talent-portal-shell .mobile-sidebar-drawer > div:first-child { margin-bottom: 8px !important; padding-bottom: 6px !important; }
+.talent-portal-shell .mobile-sidebar-drawer > div:first-child img { width: 132px !important; height: auto !important; }
+
 /* Deliberate solid-surface transition and confirmation treatments. */
 .route-transition-loader,
 .onboarding-completion-loader {
