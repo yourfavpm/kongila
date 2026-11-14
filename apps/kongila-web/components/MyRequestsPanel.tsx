@@ -10,6 +10,7 @@ import { requestTitle, requestHeadcount } from '@kongila/shared-types';
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { apiFetch } from "../lib/apiFetch";
+import { confirmInApp } from '@kongila/ui';
 
 interface MyRequestsPanelProps {
   currentUser: any;
@@ -445,7 +446,7 @@ export default function MyRequestsPanel({
   };
 
   const handleCancelRequest = async (request: any) => {
-    const sure = typeof window !== 'undefined' && window.confirm(
+    const sure = await confirmInApp(
       `Cancel this request?\n\nYour Kongila team will stop work on it. This cannot be undone — `
       + `you would need to file a new request to pick it back up.`
     );

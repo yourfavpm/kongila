@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { apiFetch } from '../lib/apiFetch';
-import { GlassCard, Chip } from '@kongila/ui';
+import { GlassCard, Chip, confirmInApp } from '@kongila/ui';
 import { formatDate } from '@kongila/utils';
 
 export default function ComplianceManager({
@@ -64,7 +64,7 @@ export default function ComplianceManager({
   };
 
   const handleHideDoc = async (docId: string) => {
-    if (!confirm('Are you sure you want to hide this compliance document? It will no longer be mandatory for talents.')) return;
+    if (!await confirmInApp('Are you sure you want to hide this compliance document? It will no longer be mandatory for talents.', 'Hide compliance document')) return;
     setSaving(true);
 
     // The hide path in the route was unreachable: there were two

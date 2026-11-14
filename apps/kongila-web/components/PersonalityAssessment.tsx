@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/apiFetch';
 import { PERSONALITY_QUESTIONS } from '../lib/personalityQuestions';
+import { confirmInApp } from '@kongila/ui';
 
 const SCALE = [
   { value: 1, label: 'Very inaccurate' },
@@ -20,9 +21,9 @@ export default function PersonalityAssessment({ onClose, onComplete }: {
   const [error, setError] = useState('');
   const pages = Math.ceil(PERSONALITY_QUESTIONS.length / 10);
   const pageQuestions = useMemo(() => PERSONALITY_QUESTIONS.slice(page * 10, page * 10 + 10), [page]);
-  const requestClose = () => {
+  const requestClose = async () => {
     if (saving) return;
-    if (Object.keys(answers).length > 0 && !window.confirm('Close the assessment? Your unsubmitted answers will be lost.')) return;
+    if (Object.keys(answers).length > 0 && !await confirmInApp('Close the assessment? Your unsubmitted answers will be lost.', 'Close assessment')) return;
     onClose();
   };
   const requestCloseRef = useRef(requestClose);

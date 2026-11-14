@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { supabase } from '../lib/supabaseClient';
 import { formatCurrency, interviewInstant, formatForBothParties, viewerTimeZone, wallClockToUtc, countUnreadMessages, countUnreadNotifications, countUnreadByModule, TIMEZONE_OPTIONS } from '@kongila/utils';
-import { GlassCard, Badge, NeonButton, KongilaLoader } from '@kongila/ui';
+import { GlassCard, Badge, NeonButton, KongilaLoader, promptInApp } from '@kongila/ui';
 
 /**
  * When an interview starts, in the candidate's own zone, with the client's
@@ -829,9 +829,9 @@ const ProfileSection = ({
               Accept offer
             </button>
             <button
-              onClick={() => {
-                const reason = window.prompt('Let the team know why you are declining (optional):') || undefined;
-                if (onRespondToOffer) onRespondToOffer(offer.id, 'decline', reason);
+              onClick={async () => {
+                const reason = await promptInApp('Let the team know why you are declining (optional):', { title: 'Decline offer', placeholder: 'Reason (optional)' });
+                if (reason !== null && onRespondToOffer) await onRespondToOffer(offer.id, 'decline', reason.trim() || undefined);
               }}
               style={{ background: 'transparent', color: '#B91C1C', border: '1px solid rgba(185, 28, 28, 0.4)', borderRadius: '10px', padding: '10px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}
             >
@@ -8182,7 +8182,7 @@ export default function TalentDashboard({
    * them about.
    */
   const respondToInterview = async (interviewId: string, accept: boolean) => {
-    const reason = accept ? undefined : (prompt('Why can you not make this interview?') || undefined);
+    const reason = accept ? undefined : (await promptInApp('Why can you not make this interview?', { title: 'Decline interview', placeholder: 'Reason for declining', required: true }))?.trim();
     if (!accept && reason === undefined) return;
 
     try {

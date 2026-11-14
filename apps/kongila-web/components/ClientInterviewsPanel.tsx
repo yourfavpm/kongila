@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Interview, TalentProfile } from "@kongila/shared-types";
 import { apiFetch } from "../lib/apiFetch";
 import { interviewInstant, formatForBothParties, viewerTimeZone } from "@kongila/utils";
+import { confirmInApp, promptInApp } from '@kongila/ui';
 
 /**
  * When an interview actually starts, as a number. Everything here used to do
@@ -61,7 +62,7 @@ export default function ClientInterviewsPanel({
   );
 
   const handleCancel = async (iv: Interview) => {
-    if (!confirm("Are you sure you want to cancel this interview?")) return;
+    if (!await confirmInApp('Are you sure you want to cancel this interview?', 'Cancel interview')) return;
 
     // Through the server. A browser update cancelled the row and told
     // nobody: the candidate kept the slot in their calendar and found out
@@ -94,7 +95,7 @@ export default function ClientInterviewsPanel({
       return;
     }
 
-    const reason = prompt('Why do you need to move this interview?');
+    const reason = await promptInApp('Why do you need to move this interview?', { title: 'Request a new interview time', placeholder: 'Reason (optional)' });
     if (reason === null) return;
 
     try {

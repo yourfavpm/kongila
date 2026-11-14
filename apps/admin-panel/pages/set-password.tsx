@@ -15,19 +15,64 @@ export default function SetPasswordPage() {
 
   useEffect(() => {
     let active = true;
-
-    supabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (!active) return;
-      if (sessionError) setError(`The invitation could not be verified: ${sessionError.message}`);
-      setEmail(data.session?.user.email || '');
-      setValidLink(Boolean(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active || !session) return;
+      setEmail(session?.user.email || '');
+      setValidLink(true);
       setChecking(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const resolveInvitation = async () => {
+      const callbackUrl = new URL(window.location.href);
+      const callbackError = callbackUrl.searchParams.get('error_description') || callbackUrl.searchParams.get('error');
+      if (callbackError) throw new Error(callbackError);
+
+      // Supabase can return a session itself (implicit flow), or deliver a
+      // PKCE code / token hash depending on the project auth configuration.
+      let { data, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      let session = data.session;
+
+      if (!session && callbackUrl.searchParams.has('token_hash')) {
+        const tokenHash = callbackUrl.searchParams.get('token_hash') || '';
+        const rawType = callbackUrl.searchParams.get('type') || 'invite';
+        const supportedTypes = ['invite', 'signup', 'magiclink', 'recovery', 'email_change', 'email'];
+        if (!supportedTypes.includes(rawType)) throw new Error('This invitation link has an unsupported verification type.');
+        const verified = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: rawType as any });
+        if (verified.error) throw verified.error;
+        session = verified.data.session;
+      }
+
+      if (!session && callbackUrl.searchParams.has('code')) {
+        const exchanged = await supabase.auth.exchangeCodeForSession(callbackUrl.searchParams.get('code') || '');
+        if (exchanged.error) throw exchanged.error;
+        session = exchanged.data.session;
+      }
+
+      if (!session && window.location.hash) {
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
+        const accessToken = fragment.get('access_token');
+        const refreshToken = fragment.get('refresh_token');
+        if (accessToken && refreshToken) {
+          const restored = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+          if (restored.error) throw restored.error;
+          session = restored.data.session;
+        }
+      }
+
       if (!active) return;
       setEmail(session?.user.email || '');
       setValidLink(Boolean(session));
+      setChecking(false);
+      // Remove one-time credentials from the address bar after Supabase has
+      // accepted them. Do not leave invite tokens in browser history.
+      if (session) window.history.replaceState({}, document.title, callbackUrl.pathname);
+    };
+
+    void resolveInvitation().catch((cause: any) => {
+      if (!active) return;
+      setError(`The invitation could not be verified: ${cause?.message || 'The link may have expired.'}`);
+      setValidLink(false);
       setChecking(false);
     });
 

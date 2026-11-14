@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
 import { supabase } from '../lib/supabaseClient';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader } from '@kongila/ui';
+import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader, confirmInApp, promptInApp } from '@kongila/ui';
 import UnassignedTalentPrompt from '../components/UnassignedTalentPrompt';
 import ContractsManager from '../components/ContractsManager';
 import ComplianceManager from '../components/ComplianceManager';
@@ -2554,13 +2554,13 @@ export default function AdminPanel() {
                     {['submitted', 'admin_approved', 'revision_requested'].includes(offer.status) && (
                       <>
                         <button onClick={() => decideOffer(offer.id, 'send')} className="btn-primary">Send to candidate</button>
-                        <button onClick={() => {
-                          const note = window.prompt('What needs changing?') || undefined;
-                          if (note) decideOffer(offer.id, 'request_revision', note);
+                        <button onClick={async () => {
+                          const note = await promptInApp('What needs changing?', { title: 'Request a revision', placeholder: 'Describe the requested changes', required: true });
+                          if (note?.trim()) await decideOffer(offer.id, 'request_revision', note.trim());
                         }} className="btn-secondary">Request revision</button>
-                        <button onClick={() => {
-                          const note = window.prompt('Why are you declining this offer?') || undefined;
-                          decideOffer(offer.id, 'decline', note);
+                        <button onClick={async () => {
+                          const note = await promptInApp('Why are you declining this offer?', { title: 'Decline offer', placeholder: 'Reason (optional)' });
+                          if (note !== null) await decideOffer(offer.id, 'decline', note.trim() || undefined);
                         }} className="btn-secondary">Decline</button>
                       </>
                     )}
@@ -4553,11 +4553,11 @@ export default function AdminPanel() {
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button onClick={() => {
+                      <button onClick={async () => {
                         // Check if it has results
                         if (results.length > 0) {
                            // If has results, we want to clone and archive
-                           if (window.confirm("This assessment has already been taken. Editing it will create a new version and archive this one so that existing results are not affected. Proceed?")) {
+                           if (await confirmInApp("This assessment has already been taken. Editing it will create a new version and archive this one so that existing results are not affected. Proceed?", 'Create a new assessment version')) {
                              const newTitle = assessment.title + " (Edited)";
                              setAssessmentToEdit({ ...assessment, id: undefined, title: newTitle, status: 'draft' });
                              setShowAssessmentModal(true);
@@ -5323,10 +5323,10 @@ export default function AdminPanel() {
                         Resend invite
                       </button>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const next = op.status === 'suspended' ? 'active' : 'suspended';
-                          if (next === 'suspended' && !confirm(`Suspend ${op.email}? They will not be able to sign in.`)) return;
-                          callUsersApi(
+                          if (next === 'suspended' && !await confirmInApp(`Suspend ${op.email}? They will not be able to sign in.`, 'Suspend operator')) return;
+                          await callUsersApi(
                             { action: 'setStatus', userId: op.id, status: next },
                             `${op.email} ${next === 'suspended' ? 'suspended' : 'restored'}.`
                           );

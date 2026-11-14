@@ -388,10 +388,42 @@ interface ToastContextType {
   addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+type AppDialogRequest = {
+  kind: 'confirm' | 'prompt';
+  message: string;
+  title?: string;
+  placeholder?: string;
+  required?: boolean;
+  resolve: (value: any) => void;
+};
+
+let requestAppDialog: ((request: AppDialogRequest) => void) | null = null;
+
+/** Use an application modal instead of the blocking browser confirm dialog. */
+export function confirmInApp(message: string, title = 'Please confirm'): Promise<boolean> {
+  return new Promise(resolve => {
+    if (!requestAppDialog) return resolve(false);
+    requestAppDialog({ kind: 'confirm', message, title, resolve });
+  });
+}
+
+/** Use an application modal instead of the blocking browser prompt dialog. */
+export function promptInApp(
+  message: string,
+  options: { title?: string; placeholder?: string; required?: boolean } = {}
+): Promise<string | null> {
+  return new Promise(resolve => {
+    if (!requestAppDialog) return resolve(null);
+    requestAppDialog({ kind: 'prompt', message, ...options, resolve });
+  });
+}
+
 const ToastContext = React.createContext<ToastContextType>({ addToast: () => {} });
 
 export const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
+  const [dialog, setDialog] = React.useState<AppDialogRequest | null>(null);
+  const [dialogValue, setDialogValue] = React.useState('');
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString();
@@ -399,6 +431,29 @@ export const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children 
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
+  };
+
+  React.useEffect(() => {
+    const originalAlert = window.alert;
+    const handleRequest = (request: AppDialogRequest) => {
+      setDialogValue('');
+      setDialog(request);
+    };
+    requestAppDialog = handleRequest;
+    // Keep legacy alert call sites on the app's toast system while they are
+    // migrated. This guarantees the browser's blocking alert never appears.
+    window.alert = (message?: any) => addToast(String(message ?? ''), 'info');
+    return () => {
+      if (requestAppDialog === handleRequest) requestAppDialog = null;
+      window.alert = originalAlert;
+    };
+  }, []);
+
+  const finishDialog = (value: boolean | string | null) => {
+    if (!dialog) return;
+    dialog.resolve(value);
+    setDialog(null);
+    setDialogValue('');
   };
 
   return (
@@ -428,6 +483,19 @@ export const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children 
           </div>
         ))}
       </div>
+      {dialog && (
+        <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) finishDialog(dialog.kind === 'confirm' ? false : null); }} style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(15, 23, 42, .48)' }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="kongila-dialog-title" aria-describedby="kongila-dialog-message" style={{ width: 'min(100%, 440px)', borderRadius: 18, background: '#fff', padding: 24, boxShadow: '0 24px 70px rgba(15,23,42,.24)', color: '#14213D' }}>
+            <h2 id="kongila-dialog-title" style={{ margin: '0 0 10px', fontSize: 19, lineHeight: 1.3 }}>{dialog.title || (dialog.kind === 'confirm' ? 'Please confirm' : 'Add details')}</h2>
+            <p id="kongila-dialog-message" style={{ margin: '0 0 18px', color: '#526174', fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{dialog.message}</p>
+            {dialog.kind === 'prompt' && <input autoFocus value={dialogValue} onChange={event => setDialogValue(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (!dialog.required || dialogValue.trim())) finishDialog(dialogValue); }} placeholder={dialog.placeholder} style={{ width: '100%', minHeight: 44, boxSizing: 'border-box', border: '1px solid #D8E0EA', borderRadius: 10, padding: '10px 12px', color: '#14213D', font: 'inherit', outlineColor: '#1455C0' }} />}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+              <button type="button" onClick={() => finishDialog(dialog.kind === 'confirm' ? false : null)} style={{ minHeight: 42, border: '1px solid #D8E0EA', borderRadius: 999, background: '#fff', color: '#334155', padding: '0 17px', fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button type="button" disabled={dialog.kind === 'prompt' && Boolean(dialog.required) && !dialogValue.trim()} onClick={() => finishDialog(dialog.kind === 'confirm' ? true : dialogValue)} style={{ minHeight: 42, border: 0, borderRadius: 999, background: '#1455C0', color: '#fff', padding: '0 19px', fontWeight: 700, cursor: 'pointer', opacity: dialog.kind === 'prompt' && Boolean(dialog.required) && !dialogValue.trim() ? .55 : 1 }}>{dialog.kind === 'confirm' ? 'Continue' : 'Submit'}</button>
+            </div>
+          </section>
+        </div>
+      )}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes kongilaToastSlideIn {
           from { transform: translateX(120%) scale(0.9); opacity: 0; }

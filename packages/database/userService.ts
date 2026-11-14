@@ -34,6 +34,25 @@ export interface UserServiceResult<T = any> {
   warnings?: string[];
 }
 
+/** Resolve the actual admin application origin for Supabase auth callbacks. */
+function adminAppUrl(): string | null {
+  const configured = process.env.NEXT_PUBLIC_ADMIN_URL?.trim();
+  const vercelProject = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  const vercelDeployment = process.env.VERCEL_URL?.trim();
+  const candidate = configured
+    || (vercelProject ? `https://${vercelProject}` : '')
+    || (vercelDeployment ? `https://${vercelDeployment}` : '')
+    || (process.env.NODE_ENV !== 'production' ? 'http://localhost:3002' : '');
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(candidate);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 function fail(status: number, error: string): UserServiceResult {
   return { ok: false, status, error };
 }
@@ -116,11 +135,9 @@ export async function inviteOperator(
     return fail(409, `${email} already has an account. Change their role instead of inviting them again.`);
   }
 
-  const adminBaseUrl = process.env.NEXT_PUBLIC_ADMIN_URL
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
-    || process.env.NEXT_PUBLIC_SITE_URL
-    || 'http://localhost:3002';
-  const setupUrl = `${adminBaseUrl.replace(/\/$/, '')}/set-password`;
+  const adminBaseUrl = adminAppUrl();
+  if (!adminBaseUrl) return fail(503, 'Admin activation URL is not configured. Set NEXT_PUBLIC_ADMIN_URL on the admin deployment and try again.');
+  const setupUrl = `${adminBaseUrl}/set-password`;
   const { data: invited, error: inviteError } = await supabase.auth.admin.generateLink({
     type: 'invite',
     email,
@@ -368,14 +385,14 @@ export async function resendOperatorInvite(
   if (targetError) return fail(500, `The operator could not be loaded: ${targetError.message}`);
   if (!target?.email) return fail(404, 'That user does not exist, or has no email address.');
 
+  const adminBaseUrl = adminAppUrl();
+  if (!adminBaseUrl) return fail(503, 'Admin activation URL is not configured. Set NEXT_PUBLIC_ADMIN_URL on the admin deployment and try again.');
+
   const { data: generated, error } = await supabase.auth.admin.generateLink({
     type: 'magiclink',
     email: target.email,
     options: {
-      redirectTo: `${(process.env.NEXT_PUBLIC_ADMIN_URL
-        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
-        || process.env.NEXT_PUBLIC_SITE_URL
-        || 'http://localhost:3002').replace(/\/$/, '')}/set-password`,
+      redirectTo: `${adminBaseUrl}/set-password`,
       data: { full_name: target.name || '', role: storableRole(target.role) }
     }
   });

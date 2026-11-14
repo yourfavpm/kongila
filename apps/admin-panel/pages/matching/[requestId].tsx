@@ -2,7 +2,7 @@ import { apiFetch } from '../../lib/apiFetch';
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { GlassCard, KongilaLoader } from '@kongila/ui';
+import { GlassCard, KongilaLoader, confirmInApp } from '@kongila/ui';
 import { formatCurrency, getGradeColor } from '@kongila/utils';
 import { coerceRequestStatus } from '@kongila/workflows';
 import { calculateMatchScore } from '@kongila/matching-engine';
@@ -365,7 +365,7 @@ export default function MatchingEngine() {
 
 
   const handleSourcingRequired = async () => {
-    if (!confirm('Flag this request as Sourcing Required?')) return;
+    if (!await confirmInApp('Flag this request as Sourcing Required?', 'Flag request for sourcing')) return;
     try {
       setIsSubmitting(true);
       const response = await apiFetch('/api/matching/submit', {

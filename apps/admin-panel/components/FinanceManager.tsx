@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { apiFetch } from '../lib/apiFetch';
-import { GlassCard as Card, NeonButton as Button, Badge } from '@kongila/ui';
+import { GlassCard as Card, NeonButton as Button, Badge, promptInApp } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
 import { Invoice, TalentPayout, FeeConfig, FeeAuditLog, TalentProfile, Contract } from '@kongila/shared-types';
 
@@ -263,7 +263,7 @@ export default function FinanceManager({
     // through the server where the role is checked and the change is
     // audited. The other two are presentational and stay local.
     if (newStatus === 'paid') {
-      const reference = window.prompt('Payment reference (bank reference, or how it was confirmed):')?.trim();
+      const reference = (await promptInApp('Payment reference (bank reference, or how it was confirmed):', { title: 'Record payment', placeholder: 'Enter payment reference', required: true }))?.trim();
       if (!reference) return;
       try {
         const res = await apiFetch('/api/finance', {
@@ -286,7 +286,7 @@ export default function FinanceManager({
     // used to post the whole invoices array through /api/db.
     const action = newStatus === 'void' ? 'void_invoice' : 'send_invoice';
     const reason = newStatus === 'void'
-      ? window.prompt('Why is this invoice being voided?')?.trim()
+      ? (await promptInApp('Why is this invoice being voided?', { title: 'Void invoice', placeholder: 'Reason for voiding', required: true }))?.trim()
       : undefined;
     if (newStatus === 'void' && !reason) return;
 
@@ -368,7 +368,7 @@ export default function FinanceManager({
   const handleSettlePayout = async (id: string, outcome: 'paid' | 'failed') => {
     let reason: string | undefined;
     if (outcome === 'failed') {
-      reason = window.prompt('What reason did the bank give for the rejection?')?.trim();
+      reason = (await promptInApp('What reason did the bank give for the rejection?', { title: 'Record failed payout', placeholder: 'Bank rejection reason', required: true }))?.trim();
       if (!reason) return;
     }
 

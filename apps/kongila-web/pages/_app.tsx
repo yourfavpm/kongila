@@ -11,6 +11,7 @@ import '../styles/talent-signup.css';
 import '../styles/talent-portal.css';
 import '../styles/talent-onboarding.css';
 import '../../../packages/ui/dashboard-theme.css';
+import { ToastProvider } from '@kongila/ui';
 
 /**
  * Two things every page needs, in the one place that wraps all of them.
@@ -40,7 +41,9 @@ export default function App({ Component, pageProps }: AppProps) {
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
       </Head>
-      <Component {...pageProps} />
+      <ToastProvider>
+        <Component {...pageProps} />
+      </ToastProvider>
     </>
   );
 }
