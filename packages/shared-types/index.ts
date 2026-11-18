@@ -1222,6 +1222,41 @@ export interface SupportMessage {
   createdAt: string;
 }
 
+/**
+ * Every value interviews_status_check accepts, and nothing else.
+ *
+ * This used to be eight strings covering about half of them. The flow an
+ * interview actually travels — client asks, operations reviews, the
+ * candidate answers — is written in the other ten, so any code that read or
+ * wrote a real status against this type failed to compile, and the ones that
+ * did compile were comparing against values the database never stores.
+ *
+ * The lower-case names are the live vocabulary. The capitalised ones are
+ * what earlier code wrote and are kept because those rows are still in the
+ * table; @kongila/workflows maps both onto one set of stages.
+ */
+export type InterviewStatus =
+  // The flow, in order.
+  | 'client_requested'
+  | 'admin_reviewing'
+  | 'sent_to_talent'
+  | 'talent_accepted'
+  | 'talent_countered'
+  | 'talent_declined'
+  | 'confirmed'
+  | 'admin_declined'
+  | 'expired'
+  | 'cancelled'
+  // Written before the flow above existed. Still in the table.
+  | 'Proposed'
+  | 'Scheduled'
+  | 'scheduled'
+  | 'Rescheduled'
+  | 'pending_confirmation'
+  | 'Reschedule Requested'
+  | 'Completed'
+  | 'Cancelled';
+
 export interface Interview {
   id: string;
   requestId?: string;
@@ -1239,34 +1274,42 @@ export interface Interview {
   durationMinutes?: number;
   talentTimezone?: string;
   rescheduledFrom?: string;
-  /**
-   * The five original values did not include the states the product can
-   * actually reach. 'Reschedule Requested' is what the reader returns when
-   * the reschedule_requested flag is set, and the two talent_ values are the
-   * candidate's answer, which until now nothing could record.
-   */
-  status:
-    | 'Proposed'
-    | 'Scheduled'
-    | 'Rescheduled'
-    | 'Completed'
-    | 'Cancelled'
-    | 'Reschedule Requested'
-    | 'talent_accepted'
-    | 'talent_declined';
+  status: InterviewStatus;
   meetingLink?: string;
   notes?: string;
   talentNotes?: string;
+  clientNotes?: string;
   clientRating?: number;
   clientFeedback?: string;
-  outcome?: 'Proceed to Hire' | 'No Fit' | 'Hold' | 'Pending Decision' | 'Proceeded' | 'Not Selected';
+  outcome?: string;
+  /** From interviews_admin_outcome_check. The operator's own read. */
+  adminOutcome?: 'Proceed to Hire' | 'No Fit' | 'Hold' | null;
+  adminNoteInternal?: string | null;
   googleCalendarEventId?: string;
   googleCalendarLink?: string;
   rescheduleRequested?: boolean;
   rescheduleRequestedBy?: 'talent' | 'client' | 'admin' | null;
+  rescheduleRequestedAt?: string | null;
   rescheduleReason?: string;
   proposedNewDate?: string;
   proposedNewTime?: string;
+  proposedTime?: string | null;
+  proposedTimezone?: string | null;
+  clientTimezone?: string;
+  /** Delivery format, from interviews_interview_type_check. */
+  interviewType?: 'video' | 'phone' | 'async_video' | string;
+  /**
+   * Every time the client said would work, best first, as ISO instants.
+   * Operations picks one of these when they put the interview to the
+   * candidate. The column existed from the start and nothing wrote to it,
+   * so the backups used to be pasted into the notes as English prose.
+   */
+  proposedSlots?: string[];
+  /** The instant both sides agreed, kept apart from a later reschedule. */
+  confirmedSlot?: string | null;
+  /** When the candidate first saw it — what an SLA is measured from. */
+  revealedToTalentAt?: string | null;
+  talentDeclineReason?: string | null;
   createdAt: string;
   updatedAt?: string;
 }

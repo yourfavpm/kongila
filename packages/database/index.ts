@@ -1332,8 +1332,7 @@ export async function readDbAsync(): Promise<Schema> {
 
     const notifications: Notification[] = (rNotifs.data || []).map((n: any) => ({
       id: n.id, userId: n.user_id, title: n.title, message: n.message,
-      read: n.read, createdAt: n.created_at, module: n.module_type,
-      category: n.category, sourceRecordId: n.source_record_id
+      read: n.read, createdAt: n.created_at, category: n.category, sourceRecordId: n.source_record_id
     }));
 
     const auditLogs: AuditLog[] = (rAudit.data || []).map((al: any) => ({
@@ -1384,7 +1383,6 @@ export async function readDbAsync(): Promise<Schema> {
       proposedSlots: Array.isArray(iv.proposed_slots) ? iv.proposed_slots : [],
       confirmedSlot: iv.confirmed_slot,
       revealedToTalentAt: iv.revealed_to_talent_at,
-      meetingLinkSource: iv.google_calendar_link ? 'calendar' : 'room',
       createdAt: iv.created_at
     }));
 
