@@ -302,3 +302,47 @@ export async function createContract(
 
   return { ok: true, status: 201, data: contract };
 }
+
+/**
+ * Contracts whose start date has arrived.
+ *
+ * A contract both sides sign before the start date waits at 'fully_signed',
+ * because calling a placement active a fortnight before anyone starts work
+ * is a lie. Nothing then moved it on, so it waited for ever and every count
+ * of active placements was short. This runs in the nightly pass and is safe
+ * to run twice: it only touches contracts still at 'fully_signed' whose
+ * start date is today or past.
+ */
+export async function activateDueContracts(): Promise<{
+  activated: number;
+  warnings: string[];
+}> {
+  const supabase = getSupabaseClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const warnings: string[] = [];
+
+  const { data, error } = await supabase
+    .from('contracts')
+    .update({ status: 'active', updated_at: new Date().toISOString() })
+    .eq('status', 'fully_signed')
+    .lte('start_date', today)
+    .select('id, talent_id, client_id');
+
+  if (error) {
+    warnings.push(`Contracts due to start were not activated: ${error.message}`);
+    return { activated: 0, warnings };
+  }
+
+  // Both sides are told, because the day a placement starts is the day the
+  // invoicing, the payouts and the reviews all begin counting.
+  for (const contract of data || []) {
+    const parties = [contract.talent_id, contract.client_id].filter(Boolean).map(String);
+    if (parties.length === 0) continue;
+    const notice = await notifyUsers(parties, 'contract_signed', {
+      reason: 'This engagement starts today.'
+    }, { sourceRecordId: String(contract.id) });
+    warnings.push(...notice.warnings);
+  }
+
+  return { activated: (data || []).length, warnings };
+}

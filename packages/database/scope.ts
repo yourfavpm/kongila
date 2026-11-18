@@ -36,6 +36,27 @@ function idsOf(rows: any[], key = 'id'): Set<string> {
 }
 
 /**
+ * Every id a request may be known by.
+ *
+ * A request's identity is its row id, and everything written against it — the
+ * matches, interviews, offers, contracts and call requests — carries that one.
+ * Rows written before that was settled reference the id the intake form put in
+ * the payload instead, so both are collected here. Matching on the set rather
+ * than on `id` alone is what keeps a client's shortlist from being filtered
+ * out of their own dashboard because the row was written under the other name.
+ */
+function requestIdentities(rows: any[]): Set<string> {
+  const s = new Set<string>();
+  for (const r of arr(rows)) {
+    if (!r) continue;
+    for (const value of [r.id, r.rowId, r.payloadId]) {
+      if (value != null && value !== '') s.add(String(value));
+    }
+  }
+  return s;
+}
+
+/**
  * Fields on a talent record that nobody outside Kongila operations should see.
  * Clients reviewing a candidate get the professional profile without the
  * identity documents. Adjust this list rather than the scoping logic below.
@@ -47,7 +68,21 @@ const TALENT_PRIVATE_FIELDS = [
   'maritalStatus',
   'gender',
   'address',
-  'nationality'
+  'nationality',
+  // Ways to reach the candidate directly.
+  //
+  // These were being sent to clients. Kongila introduces the candidate and
+  // handles the conversation, and a client who has the email address or the
+  // phone number of someone they have not hired can step around all of it.
+  // The CV goes for the same reason rather than a different one: a CV header
+  // is an email address, a phone number and usually a home address.
+  'email',
+  'phone',
+  'linkedIn',
+  'linkedinUrl',
+  'cvUrl',
+  'cvName',
+  'cvSize'
 ];
 
 function redactTalentForClient(t: any) {
@@ -228,7 +263,9 @@ function scopeForTalent(db: any, actor: RequestActor) {
   const relatedRequestIds = new Set<string>();
   for (const m of ownMatches) if (m.requestId) relatedRequestIds.add(String(m.requestId));
   for (const iv of ownInterviews) if (iv.requestId) relatedRequestIds.add(String(iv.requestId));
-  const relatedRequests = arr(db.clientRequests).filter((r: any) => relatedRequestIds.has(String(r.id)));
+  const relatedRequests = arr(db.clientRequests).filter((r: any) =>
+    [r.id, r.rowId, r.payloadId].some((value) => value != null && relatedRequestIds.has(String(value)))
+  );
 
   // Organisations behind those requests and contracts, so role cards can show
   // a company name.
@@ -330,7 +367,7 @@ function scopeForClient(db: any, actor: RequestActor) {
   orgUserIds.add(String(uid));
 
   const ownRequests = arr(db.clientRequests).filter((r: any) => orgUserIds.has(String(r.clientId)));
-  const ownRequestIds = idsOf(ownRequests);
+  const ownRequestIds = requestIdentities(ownRequests);
 
   // The Kongila people assigned to this account: the organisation's account
   // manager, plus anyone assigned to one of its requests. Collected as ids
@@ -500,7 +537,9 @@ export function filterWritableDb(
       : [];
     const orgUserIds = new Set<string>(orgProfiles.map((cp: any) => String(cp.userId)));
     orgUserIds.add(String(actor.userId));
-    ownRequestIds = idsOf(arr(existing?.clientRequests).filter((r: any) => orgUserIds.has(String(r.clientId))));
+    ownRequestIds = requestIdentities(
+      arr(existing?.clientRequests).filter((r: any) => orgUserIds.has(String(r.clientId)))
+    );
   }
 
   for (const key of Object.keys(incoming)) {

@@ -11,7 +11,12 @@ import ComplianceManager from '../components/ComplianceManager';
 import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
 import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, interviewInstant, formatInstantInZone } from '@kongila/utils';
-import { coerceRequestStatus } from '@kongila/workflows';
+import {
+  coerceRequestStatus,
+  normalizeInterviewStage,
+  describeInterviewStage,
+  isConfirmedInterview
+} from '@kongila/workflows';
 import { calculateCompositeVettingGrade, vettingScoreState, calculateMatchScore, reconcileMatchesForRequest, VETTING_STAGES, advanceTalentStage, validateStageDecision, buildDefaultVettingPipeline } from '@kongila/matching-engine';
 import { computePlatformMetrics } from '@kongila/analytics';
 import {
@@ -294,6 +299,14 @@ export default function AdminPanel() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
+  /** The client request being put to a candidate, while the operator reviews it. */
+  const [sendInterviewTarget, setSendInterviewTarget] = useState<{
+    interview: any;
+    slots: string[];
+    chosenSlot: string;
+    meetingLink: string;
+    note: string;
+  } | null>(null);
   const [rehireRequests, setRehireRequests] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [organizations, setOrganizations] = useState<any[]>([]);
@@ -1788,6 +1801,148 @@ export default function AdminPanel() {
   const handleGlobalApproveReschedule = (iv: any) => decideRescheduleRequest(iv, true);
   const handleGlobalRejectReschedule = (iv: any) => decideRescheduleRequest(iv, false);
 
+  /**
+   * Operations answers a client's interview request.
+   *
+   * Neither of these existed. A client's request went straight to the
+   * candidate, so by the time it appeared on this board the candidate had
+   * already been asked, and a request operations did not want to put forward
+   * could only be left sitting with nobody telling the client why.
+   *
+   * Sending may move the time — that is usually the point of the review — so
+   * the route re-checks both diaries before it goes out.
+   */
+  const answerInterviewRequest = async (
+    iv: any,
+    action: 'send' | 'decline',
+    extra: {
+      scheduledTime?: string;
+      date?: string;
+      time?: string;
+      timezone?: string;
+      meetingLink?: string;
+      note?: string;
+      reason?: string;
+    } = {}
+  ) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const response = await apiFetch('/api/interviews/send-to-talent', {
+        method: 'POST',
+        body: JSON.stringify({ interviewId: iv.id, action, ...extra })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `That was not saved (${response.status}).`);
+
+      setInterviews((current: any[]) => current.map((row: any) =>
+        String(row.id) === String(iv.id)
+          ? {
+              ...row,
+              status: payload.interview?.status || row.status,
+              date: payload.interview?.date || row.date,
+              time: payload.interview?.time || row.time,
+              scheduledTime: payload.interview?.scheduled_time || row.scheduledTime,
+              meetingLink: payload.interview?.meeting_link ?? row.meetingLink
+            }
+          : row
+      ));
+      if (payload.warnings?.length) console.warn('[interviews]', payload.warnings.join(' '));
+    } catch (error: any) {
+      console.error('[admin] interview request decision failed:', error);
+      alert(error?.message || 'That was not saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * Opening the review panel, rather than a browser prompt.
+   *
+   * This was `window.prompt` for a joining link. The one decision that
+   * actually matters at this step — which of the times the client offered to
+   * put to the candidate — could not be made at all: the first choice went
+   * out and the backups sat in a note nobody read. A prompt also cannot show
+   * what the client asked for, so the operator was answering a request they
+   * could not see.
+   */
+  const handleSendInterviewToTalent = (iv: any) => {
+    const slots: string[] = Array.isArray(iv.proposedSlots) && iv.proposedSlots.length > 0
+      ? iv.proposedSlots
+      : [iv.scheduledTime].filter(Boolean);
+    setSendInterviewTarget({
+      interview: iv,
+      slots,
+      chosenSlot: slots[0] || '',
+      meetingLink: iv.meetingLink || '',
+      note: ''
+    });
+  };
+
+  const submitSendInterviewToTalent = async () => {
+    if (!sendInterviewTarget) return;
+    const { interview, chosenSlot, meetingLink, note } = sendInterviewTarget;
+    await answerInterviewRequest(interview, 'send', {
+      scheduledTime: chosenSlot || undefined,
+      meetingLink: meetingLink.trim() || undefined,
+      note: note.trim() || undefined
+    });
+    setSendInterviewTarget(null);
+  };
+
+  /**
+   * Operations records whether an interview actually took place.
+   *
+   * Nothing did this. The only thing that ever set an interview to Completed
+   * was a client opening the rating modal, and the client's next decision —
+   * offer, or not a fit — is only offered once the interview is known to be
+   * over. So an interview nobody rated left the hire with nowhere to go, and
+   * the candidate heard nothing either.
+   */
+  const recordInterviewOutcome = async (iv: any, held: boolean) => {
+    if (saving) return;
+    const outcome = held
+      ? window.prompt(
+          'Your read on the interview — Proceed to Hire, No Fit or Hold. Leave blank if the client has not said yet.',
+          ''
+        )
+      : window.prompt('What happened? The client and the candidate are both told.', '');
+    if (outcome === null) return;
+
+    setSaving(true);
+    try {
+      const response = await apiFetch('/api/interviews/schedule', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'complete',
+          interviewId: iv.id,
+          held,
+          outcome: held ? (outcome.trim() || undefined) : undefined,
+          note: held ? undefined : (outcome.trim() || undefined)
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `That was not saved (${response.status}).`);
+
+      setInterviews((current: any[]) => current.map((row: any) =>
+        String(row.id) === String(iv.id)
+          ? { ...row, status: payload.interview?.status || row.status, outcome: payload.interview?.outcome }
+          : row
+      ));
+    } catch (error: any) {
+      console.error('[admin] interview outcome failed:', error);
+      alert(error?.message || 'That was not saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeclineInterviewRequest = async (iv: any) => {
+    const reason = window.prompt('Why is this request not going forward? The client will be told.');
+    if (reason === null) return;
+    await answerInterviewRequest(iv, 'decline', { reason: reason.trim() });
+  };
+
   const handleRejectReschedule = async () => {
     if (!selectedTalent) return;
     setSaving(true);
@@ -2535,6 +2690,20 @@ export default function AdminPanel() {
                           Client note: {offer.client_note_to_admin}
                         </div>
                       )}
+                      {Array.isArray(offer.pendingMandatoryDocuments) && offer.pendingMandatoryDocuments.length > 0 && (
+                        <div style={{ marginTop: '10px', padding: '10px 12px', background: '#FFF7E8', border: '1px solid #F3D7A3', borderRadius: '10px', color: '#7A4B00' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 800 }}>Unsigned mandatory documents</div>
+                          <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                            {offer.pendingMandatoryDocuments.map((doc: any) => doc.name).join(' · ')}
+                          </div>
+                          <div style={{ fontSize: '11px', marginTop: '4px' }}>The talent can accept after signing these in Documents.</div>
+                        </div>
+                      )}
+                      {offer.complianceStatusError && (
+                        <div style={{ fontSize: '12px', color: '#9A3412', marginTop: '8px' }}>
+                          Mandatory document status could not be checked: {offer.complianceStatusError}
+                        </div>
+                      )}
                       {offer.talent_response_deadline && (
                         <div style={{ fontSize: '12px', marginTop: '6px', fontWeight: 700, color: offer.isOverdue ? '#B91C1C' : '#64748B' }}>
                           {offer.isOverdue ? 'Response overdue since ' : 'Candidate must respond by '}
@@ -3006,9 +3175,14 @@ export default function AdminPanel() {
           <div className="stats-card-grid" style={{ marginBottom: '24px' }}>
             {[
               { label: 'Total', val: interviews.length, color: 'var(--kongila-blue)' },
-              { label: 'Scheduled', val: interviews.filter(iv => iv.status === 'Scheduled').length, color: '#2563EB' },
-              { label: 'Rescheduled', val: interviews.filter(iv => iv.status === 'Rescheduled').length, color: '#7C3AED' },
-              { label: 'Completed', val: interviews.filter(iv => iv.status === 'Completed').length, color: 'var(--accent-green)' },
+              // Counted by stage rather than by matching one status string.
+              // "Scheduled" and "Rescheduled" were the only two counted here,
+              // so a request waiting on operations, one with the candidate and
+              // one the candidate had countered all showed as nothing at all.
+              { label: 'Waiting on you', val: interviews.filter(iv => normalizeInterviewStage(iv.status) === 'client_requested' || normalizeInterviewStage(iv.status) === 'admin_reviewing').length, color: '#C2410C' },
+              { label: 'With candidate', val: interviews.filter(iv => normalizeInterviewStage(iv.status) === 'sent_to_talent').length, color: '#7C3AED' },
+              { label: 'Scheduled', val: interviews.filter(iv => isConfirmedInterview(iv.status)).length, color: '#2563EB' },
+              { label: 'Completed', val: interviews.filter(iv => normalizeInterviewStage(iv.status) === 'completed').length, color: 'var(--accent-green)' },
             ].map(({ label, val, color }) => (
               <GlassCard key={label}>
                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{label}</div>
@@ -3016,6 +3190,76 @@ export default function AdminPanel() {
               </GlassCard>
             ))}
           </div>
+          {/* The queue that did not exist.
+
+              A client's interview request used to be written straight to the
+              candidate, so there was nothing here for operations to act on
+              and no way to turn one down. These are the requests sitting with
+              Kongila: put each to the candidate, moving the time if it needs
+              moving, or tell the client it is not going forward. */}
+          {(() => {
+            const awaitingOps = interviews.filter(iv =>
+              ['client_requested', 'admin_reviewing'].includes(normalizeInterviewStage(iv.status))
+            );
+            if (awaitingOps.length === 0) return null;
+            return (
+              <GlassCard style={{ marginBottom: '24px', borderColor: '#FDBA74' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '4px' }}>
+                  Waiting on you ({awaitingOps.length})
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>
+                  Clients have asked for these. The candidate has not been contacted yet.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {awaitingOps.map(iv => (
+                    <div key={iv.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: '16px', flexWrap: 'wrap', padding: '14px 16px', borderRadius: '10px',
+                      border: '1px solid var(--border-glass)', background: 'var(--bg-tertiary)'
+                    }}>
+                      <div style={{ minWidth: '240px', flex: 1 }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700 }}>{iv.title}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                          {iv.clientName || 'Client'} → {iv.talentName || 'candidate'} · {iv.date} {iv.time}
+                          {iv.durationMinutes ? ` · ${iv.durationMinutes} min` : ''}
+                        </div>
+                        {Array.isArray(iv.proposedSlots) && iv.proposedSlots.length > 1 && (
+                          <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                            Client also offered:{' '}
+                            {iv.proposedSlots.slice(1).map((slot: string) =>
+                              formatInstantInZone(slot, iv.clientTimezone || viewerTimeZone())
+                            ).join(' · ')}
+                          </div>
+                        )}
+                        {iv.notes && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+                            {iv.notes}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleSendInterviewToTalent(iv)}
+                          disabled={saving}
+                          style={{ padding: '8px 14px', borderRadius: '8px', background: '#2563EB', color: '#fff', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 700 }}
+                        >
+                          Send to candidate
+                        </button>
+                        <button
+                          onClick={() => handleDeclineInterviewRequest(iv)}
+                          disabled={saving}
+                          style={{ padding: '8px 14px', borderRadius: '8px', background: 'transparent', color: '#DC2626', border: '1px solid #DC2626', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 700 }}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </GlassCard>
+            );
+          })()}
+
           <GlassCard>
             <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '16px' }}>All Interviews</h3>
             {interviews.length === 0 ? (
@@ -3045,15 +3289,42 @@ export default function AdminPanel() {
                           <div style={{ fontSize: '13px', fontWeight: 600 }}>{iv.date}</div>
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{iv.time}</div>
                         </td>
-                        <td><Chip label={iv.status} /></td>
+                        <td>
+                          <Chip label={describeInterviewStage(iv.status).label} />
+                          {normalizeInterviewStage(iv.status) === 'talent_countered' && (
+                            <div style={{ fontSize: '10px', color: '#92400E', marginTop: '4px', fontWeight: 700 }}>
+                              Candidate proposed {iv.proposedNewDate} {iv.proposedNewTime} — with the client
+                            </div>
+                          )}
+                        </td>
                         <td>
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {iv.meetingLink && <a href={iv.meetingLink} target="_blank" rel="noreferrer" style={{ padding: '3px 8px', borderRadius: '6px', background: '#2563EB', color: '#fff', fontWeight: 600, fontSize: '10px', textDecoration: 'none' }}>Join</a>}
+                            {/* Only once it is confirmed and its time has
+                                passed. Before that there is nothing to
+                                record, and offering the button anyway is how
+                                interviews get closed out by mistake. */}
+                            {isConfirmedInterview(iv.status)
+                              && interviewInstant(iv)
+                              && new Date(interviewInstant(iv) as string).getTime() < Date.now() && (
+                              <>
+                                <button onClick={() => recordInterviewOutcome(iv, true)} disabled={saving} style={{ padding: '3px 8px', borderRadius: '6px', background: '#13866F', color: '#fff', border: 'none', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 700 }}>Mark as held</button>
+                                <button onClick={() => recordInterviewOutcome(iv, false)} disabled={saving} style={{ padding: '3px 8px', borderRadius: '6px', background: 'transparent', color: '#BD4D58', border: '1px solid #BD4D58', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 700 }}>Did not happen</button>
+                              </>
+                            )}
                             {iv.googleCalendarLink && <a href={iv.googleCalendarLink} target="_blank" rel="noreferrer" style={{ padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', fontSize: '10px', textDecoration: 'none' }}>📅 Cal</a>}
                             {iv.rescheduleRequested && (
                               <div style={{ display: 'flex', gap: '4px', marginTop: '4px', width: '100%' }}>
-                                <button onClick={() => handleGlobalApproveReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#10B981', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Approve</button>
-                                <button onClick={() => handleGlobalRejectReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Reject</button>
+                                {iv.rescheduleRequestedBy === 'talent' && iv.clientId ? (
+                                  <span style={{ padding: '4px 7px', borderRadius: '6px', background: '#FEF3C7', color: '#92400E', fontSize: '10px', fontWeight: 700 }}>
+                                    Sent to client · awaiting their decision
+                                  </span>
+                                ) : (
+                                  <>
+                                    <button onClick={() => handleGlobalApproveReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#10B981', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Approve</button>
+                                    <button onClick={() => handleGlobalRejectReschedule(iv)} style={{ padding: '3px 8px', borderRadius: '6px', background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '10px', fontWeight: 600 }}>Reject</button>
+                                  </>
+                                )}
                                 <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{iv.proposedNewDate} {iv.proposedNewTime} - {iv.rescheduleReason}</div>
                               </div>
                             )}
@@ -6038,6 +6309,111 @@ export default function AdminPanel() {
                 style={{ padding: '10px 16px', borderRadius: '8px', border: 'none', background: !rejectionReasonInput.trim() ? '#94A3B8' : '#EF4444', color: '#fff', fontSize: '13px', fontWeight: 900, cursor: !rejectionReasonInput.trim() ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}
               >
                 {saving ? 'Rejecting...' : 'Reject and Notify Talent'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Putting a client's interview request to the candidate.
+
+          The operator can see what the client actually asked for, pick which
+          of their times to put forward, and set the joining link before it
+          goes out. Before this it was a window.prompt for a link, so the one
+          decision this step exists for could not be made. */}
+      {sendInterviewTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: 'var(--bg-primary, #FFFFFF)', borderRadius: '16px', padding: '26px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800 }}>Send to candidate</h3>
+            <p style={{ margin: '6px 0 18px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              {sendInterviewTarget.interview.clientName || 'The client'} asked to interview{' '}
+              {sendInterviewTarget.interview.talentName || 'this candidate'}.
+            </p>
+
+            <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              Times the client offered
+            </div>
+            <div style={{ display: 'grid', gap: '8px', marginBottom: '18px' }}>
+              {sendInterviewTarget.slots.length === 0 && (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  No times were recorded on this request.
+                </div>
+              )}
+              {sendInterviewTarget.slots.map((slot, index) => {
+                const active = sendInterviewTarget.chosenSlot === slot;
+                return (
+                  <button
+                    key={slot}
+                    onClick={() => setSendInterviewTarget({ ...sendInterviewTarget, chosenSlot: slot })}
+                    style={{
+                      textAlign: 'left', padding: '12px 14px', borderRadius: '10px', cursor: 'pointer',
+                      border: `2px solid ${active ? 'var(--kongila-blue, #2563EB)' : 'var(--border-glass, #E2E8F0)'}`,
+                      background: active ? 'rgba(37,99,235,0.08)' : 'transparent'
+                    }}
+                  >
+                    <div style={{ fontSize: '14px', fontWeight: 800 }}>
+                      {formatInstantInZone(slot, sendInterviewTarget.interview.clientTimezone || viewerTimeZone())}
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      {index === 0 ? "Client's first choice" : 'Backup'}
+                      {sendInterviewTarget.interview.talentTimezone
+                        ? ` · ${formatInstantInZone(slot, sendInterviewTarget.interview.talentTimezone)} for the candidate`
+                        : ''}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {sendInterviewTarget.interview.notes && (
+              <div style={{ padding: '11px 13px', borderRadius: '10px', background: 'var(--bg-tertiary)', fontSize: '12.5px', lineHeight: 1.55, marginBottom: '18px' }}>
+                <strong>Client's note: </strong>{sendInterviewTarget.interview.notes}
+              </div>
+            )}
+
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '6px' }}>
+              Joining link
+            </label>
+            <input
+              value={sendInterviewTarget.meetingLink}
+              onChange={event => setSendInterviewTarget({ ...sendInterviewTarget, meetingLink: event.target.value })}
+              placeholder="Leave blank and we create a video room automatically"
+              style={{ width: '100%', padding: '11px 13px', borderRadius: '10px', border: '1px solid var(--border-glass, #CBD5E1)', fontSize: '13px', boxSizing: 'border-box' }}
+            />
+            <p style={{ margin: '6px 0 16px', fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Paste a Google Meet or Zoom link if you have one. If you do not, a Kongila video room
+              is created and sent with the invitation, so the candidate is never asked to hold a
+              time with nowhere to be.
+            </p>
+
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '6px' }}>
+              Note for the candidate <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>(optional)</span>
+            </label>
+            <textarea
+              value={sendInterviewTarget.note}
+              onChange={event => setSendInterviewTarget({ ...sendInterviewTarget, note: event.target.value })}
+              rows={2}
+              style={{ width: '100%', padding: '11px 13px', borderRadius: '10px', border: '1px solid var(--border-glass, #CBD5E1)', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
+            />
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button
+                onClick={() => setSendInterviewTarget(null)}
+                style={{ padding: '11px 18px', borderRadius: '10px', border: '1px solid var(--border-glass, #E2E8F0)', background: 'transparent', fontWeight: 700, fontSize: '13px', cursor: 'pointer', color: 'var(--text-secondary)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitSendInterviewToTalent}
+                disabled={saving || !sendInterviewTarget.chosenSlot}
+                style={{
+                  flex: 1, padding: '11px 18px', borderRadius: '10px', border: 'none',
+                  background: (saving || !sendInterviewTarget.chosenSlot) ? '#94A3B8' : '#2563EB',
+                  color: '#FFFFFF', fontWeight: 800, fontSize: '13px',
+                  cursor: (saving || !sendInterviewTarget.chosenSlot) ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {saving ? 'Sending…' : 'Send invitation'}
               </button>
             </div>
           </div>

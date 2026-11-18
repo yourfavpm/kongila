@@ -338,3 +338,9 @@ export * from './matchStatus';
 // case throughout and the column takes none of those values. Covered
 // by contractStatus.test.ts.
 export * from './contractStatus';
+
+// Where an offer has got to, and whose move it is. offer_status_enum has
+// modelled Kongila's approval sitting between the client and the candidate
+// since the table was created; nothing agreed on what those words meant, so
+// all three portals printed the raw string. Covered by offers.test.ts.
+export * from './offers';

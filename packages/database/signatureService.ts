@@ -205,8 +205,25 @@ export async function signContract(
   const roles = new Set(signatures.map((s: any) => s.signer_role));
   const bothParties = roles.has('talent') && roles.has('client');
 
+  /**
+   * Both signed, and the engagement has begun: the contract is active.
+   *
+   * It used to stop at 'fully_signed' and stay there. Nothing ever moved a
+   * contract to 'active', so a placement both sides had signed showed as
+   * still being signed — on the client's My Team screen, in the candidate's
+   * contracts, and in every count of active placements.
+   *
+   * A contract signed before its start date waits at 'fully_signed' until
+   * the day arrives, because saying a placement is active a fortnight before
+   * anyone starts work is the same lie in the other direction. The nightly
+   * pass promotes those.
+   */
+  const startsInFuture = Boolean(
+    contract.start_date && new Date(contract.start_date).getTime() > Date.now()
+  );
+
   const nextStatus = bothParties
-    ? 'fully_signed'
+    ? (startsInFuture ? 'fully_signed' : 'active')
     : role === 'talent' ? 'talent_signed'
     : role === 'client' ? 'client_signed'
     : 'pending_signatures';
@@ -298,6 +315,31 @@ export async function complianceGate(
       signedAt: s.signed_at
     }))
   );
+}
+
+/** Returns the current server-side mandatory-document position for a talent. */
+export async function getTalentComplianceStatus(talentId: string) {
+  if (!talentId) return fail(400, 'A talent profile is required to check mandatory documents.');
+
+  const supabase = getSupabaseClient();
+  const [{ data: documents, error: documentsError }, { data: signatures, error: signaturesError }] = await Promise.all([
+    supabase.from('documents').select('id, name, type, is_mandatory, is_template, user_id'),
+    supabase.from('document_signatures').select('document_id, talent_id, signed_at').eq('talent_id', talentId)
+  ]);
+  if (documentsError) return fail(500, `Could not load mandatory documents: ${documentsError.message}`);
+  if (signaturesError) return fail(500, `Could not load document signatures: ${signaturesError.message}`);
+
+  const status = complianceStatus(
+    talentId,
+    (documents || []).map((d: any) => ({
+      id: d.id, name: d.name, type: d.type,
+      isMandatory: d.is_mandatory, isTemplate: d.is_template, userId: d.user_id
+    })),
+    (signatures || []).map((s: any) => ({
+      documentId: s.document_id, talentId: s.talent_id, signedAt: s.signed_at
+    }))
+  );
+  return { ok: true, status: 200, data: status };
 }
 
 /** Records a candidate signing one of the universal compliance templates. */

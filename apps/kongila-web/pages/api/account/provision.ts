@@ -49,8 +49,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const supabase = getSupabaseClient();
-  const userId = auth.userId;
-  const email = auth.email || req.body?.email || null;
+  let userId = auth.userId;
+  const email = String(auth.email || req.body?.email || '').trim().toLowerCase() || null;
 
   try {
     // If this signup came from an invitation, the organisation and permission
@@ -66,7 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // ── users ────────────────────────────────────────────────────────────────
-    const { data: existingUser, error: existingUserError } = await supabase
+    let { data: existingUser, error: existingUserError } = await supabase
       .from('users').select('role, name, email_verified').eq('id', userId).maybeSingle();
     if (existingUserError) {
       console.error('[account/provision] users lookup failed:', existingUserError.message);
@@ -77,6 +77,67 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const personName = String(name || '').trim();
+
+    // Older signup code created a public.users row with a generated app ID
+    // instead of the Supabase Auth ID. The email is unique, so a later
+    // verified signup could authenticate successfully but fail here on
+    // users_email_key. Reattach that legacy row to the authenticated ID and
+    // keep its related records through ON UPDATE CASCADE foreign keys.
+    if (!existingUser && email) {
+      const { data: emailUser, error: emailLookupError } = await supabase
+        .from('users')
+        .select('id, role, name, email_verified')
+        .eq('email', email)
+        .maybeSingle();
+      if (emailLookupError) {
+        console.error('[account/provision] email account lookup failed:', emailLookupError.message);
+        return res.status(500).json({ error: 'Could not verify your account email.' });
+      }
+
+      if (emailUser) {
+        if (String(emailUser.role).toLowerCase() !== role) {
+          return res.status(409).json({ error: 'This email is already attached to an account with a different role. Sign in to that account to continue.' });
+        }
+        if (!auth.emailConfirmed) {
+          return res.status(403).json({ error: 'Verify this email address before linking it to the existing account.' });
+        }
+
+        // Do not take over an application row that is still attached to a
+        // different live Auth identity. Only an orphaned legacy row can be
+        // safely rebound after this caller proves ownership of the email.
+        const owner = await supabase.auth.admin.getUserById(String(emailUser.id));
+        if (owner.error && owner.error.status !== 404) {
+          console.error('[account/provision] legacy auth owner lookup failed:', owner.error.message);
+          return res.status(503).json({ error: 'Could not verify the existing account owner. Please try again.' });
+        }
+        if (owner.data?.user && String(emailUser.id) !== auth.userId) {
+          return res.status(409).json({ error: 'This email is attached to another active account. Sign in with that account or contact Kongila support.' });
+        }
+
+        const { data: adoptedUser, error: adoptionError } = await supabase
+          .from('users')
+          .update({
+            id: auth.userId,
+            email,
+            ...(personName && !String(emailUser.name || '').trim() ? { name: personName } : {}),
+            email_verified: true
+          })
+          .eq('id', String(emailUser.id))
+          .select('role, name, email_verified')
+          .maybeSingle();
+        if (adoptionError || !adoptedUser) {
+          console.error('[account/provision] legacy account link failed:', adoptionError?.message || 'row not found');
+          return res.status(409).json({
+            error: adoptionError?.code === '23503'
+              ? 'This existing account has related records that could not be linked. Apply the latest database migration, then retry.'
+              : 'Could not link the existing account to this verified sign-in. Please retry or contact Kongila support.'
+          });
+        }
+
+        userId = auth.userId;
+        existingUser = adoptedUser;
+      }
+    }
 
     if (!existingUser) {
       const { error: userError } = await supabase.from('users').insert({

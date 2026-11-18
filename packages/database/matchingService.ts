@@ -19,7 +19,7 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers, talentPortalUrl, clientPortalUrl } from './notify';
+import { notifyUsers, talentPortalUrl, clientPortalUrl, adminPortalUrl } from './notify';
 import { coerceRequestStatus, matchingProgressStatus, normalizeRequestStatus } from '@kongila/workflows';
 import { requestTitle } from '@kongila/shared-types';
 import { canAccessRequest } from './requestAccess';
@@ -307,9 +307,15 @@ export async function flagSourcingRequired(
     .filter((id): id is string => Boolean(id));
 
   if (managers.length > 0) {
-    const notified = await notifyUsers(managers, 'request_received', {
+    // `sourcing_required`, not `request_received`. The managers were being
+    // sent the client's receipt — "We have your request, our talent team will
+    // come back to you with a shortlist" — which is the opposite of what just
+    // happened, and said nothing about sourcing.
+    const notified = await notifyUsers(managers, 'sourcing_required', {
       roleTitle: payload.roleDescription || row.role_description || row.service_type || undefined,
-      reason: 'No candidate on the platform fits this request yet. It needs sourcing.'
+      companyName: payload.clientName || undefined,
+      reason: 'No candidate on the platform fits this request yet. It needs sourcing.',
+      actionUrl: adminPortalUrl(`/requests/${row.id}`)
     });
     warnings.push(...notified.warnings);
   } else {

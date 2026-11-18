@@ -1,5 +1,4 @@
 import { apiFetch } from '../lib/apiFetch';
-import { createAccountWithEmailOtp, requestEmailOtp } from '../lib/emailOtpClient';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { GlassCard, NeonButton } from '@kongila/ui';
@@ -45,6 +44,9 @@ const INTAKE_SERVICES = [
     desc: 'Engage Kongila to staff and manage the delivery of a specific project or defined deliverable.'
   }
 ];
+
+const CLIENT_SIGNUP_OTP_LENGTH = 8;
+const CLIENT_SIGNUP_OTP_RESEND_SECONDS = 60;
 
 function findIntakeService(serviceType: unknown) {
   const aliases: Record<string, string> = {
@@ -181,9 +183,32 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
   const [showPassword, setShowPassword] = useState(false);
   const [signupOtp, setSignupOtp] = useState('');
   const [signupOtpRequested, setSignupOtpRequested] = useState(false);
+  const [signupOtpVerified, setSignupOtpVerified] = useState(false);
+  const [signupOtpModalOpen, setSignupOtpModalOpen] = useState(false);
+  const [signupOtpCooldown, setSignupOtpCooldown] = useState(0);
   const [otpMessage, setOtpMessage] = useState('');
   const [phoneCodeSearch, setPhoneCodeSearch] = useState('');
   const [showPhoneCodeDropdown, setShowPhoneCodeDropdown] = useState(false);
+
+  useEffect(() => {
+    if (signupOtpCooldown <= 0) return;
+    const timer = window.setTimeout(() => setSignupOtpCooldown(value => value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [signupOtpCooldown]);
+
+  useEffect(() => {
+    if (!signupOtpModalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmitting) setSignupOtpModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [signupOtpModalOpen, isSubmitting]);
 
   const [formData, setFormData] = useState<Partial<ServiceRequest>>({
     serviceType: (initialServiceType || '') as ServiceType,
@@ -233,6 +258,13 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
 
   const updateForm = (field: keyof ServiceRequest, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const openClientSignupOtp = (message = `We sent an 8-digit verification code to ${authData.businessEmail.trim()}.`) => {
+    setSignupOtpRequested(true);
+    setSignupOtpModalOpen(true);
+    setSignupOtpCooldown(CLIENT_SIGNUP_OTP_RESEND_SECONDS);
+    setOtpMessage(message);
   };
 
   // ─── Roles ──────────────────────────────────────────────────────────────────
@@ -348,7 +380,7 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
     setStep(prev => prev + 1);
   };
 
-  const submitRequest = async () => {
+  const submitRequest = async (emailVerifiedForThisAttempt = false) => {
     setIsSubmitting(true);
     setErrorMsg('');
     try {
@@ -382,32 +414,104 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
             console.warn('Free email domain detected. We recommend a business email.');
           }
 
-          if (!signupOtpRequested) {
-            const result = await requestEmailOtp(authData.businessEmail, 'signup');
-            setSignupOtpRequested(true);
-            setOtpMessage(result.message || 'If eligible, a six-digit code is on its way.');
+          let emailVerified = emailVerifiedForThisAttempt || signupOtpVerified;
+
+          if (!emailVerified && !signupOtpRequested) {
+            const { data: signup, error: signupError } = await supabase.auth.signUp({
+              email: authData.businessEmail.trim(),
+              password: authData.password,
+              options: {
+                emailRedirectTo: `${window.location.origin}/?authView=verified`,
+                data: {
+                  full_name: authData.fullName.trim(),
+                  role: 'client',
+                  company_name: authData.companyName.trim(),
+                  position: authData.jobTitle.trim()
+                }
+              }
+            });
+
+            if (signupError) {
+              if (/already registered|already exists/i.test(signupError.message)) {
+                const existing = await supabase.auth.signInWithPassword({
+                  email: authData.businessEmail.trim(),
+                  password: authData.password
+                });
+                if (existing.error || !existing.data.user) {
+                  if (/email not confirmed/i.test(existing.error?.message || '')) {
+                    const resend = await supabase.auth.resend({ type: 'signup', email: authData.businessEmail.trim() });
+                    if (resend.error) throw resend.error;
+                    openClientSignupOtp();
+                    setIsSubmitting(false);
+                    return;
+                  }
+                  throw new Error('This email already has an account. Sign in with that account to continue your request.');
+                }
+                const confirmed = Boolean(existing.data.user.email_confirmed_at || (existing.data.user as any).confirmed_at);
+                if (!confirmed) {
+                  const resend = await supabase.auth.resend({ type: 'signup', email: authData.businessEmail.trim() });
+                  if (resend.error) throw resend.error;
+                  openClientSignupOtp();
+                  setIsSubmitting(false);
+                  return;
+                }
+                emailVerified = true;
+              } else {
+                throw signupError;
+              }
+            } else {
+              const user = signup.user;
+              const identities = (user as any)?.identities;
+              if (Array.isArray(identities) && identities.length === 0) {
+                const existing = await supabase.auth.signInWithPassword({
+                  email: authData.businessEmail.trim(),
+                  password: authData.password
+                });
+                if (existing.error || !existing.data.user) {
+                  if (/email not confirmed/i.test(existing.error?.message || '')) {
+                    const resend = await supabase.auth.resend({ type: 'signup', email: authData.businessEmail.trim() });
+                    if (resend.error) throw resend.error;
+                    openClientSignupOtp();
+                    setIsSubmitting(false);
+                    return;
+                  }
+                  throw new Error('This email already has an account. Sign in with that account to continue your request.');
+                }
+                emailVerified = Boolean(existing.data.user.email_confirmed_at || (existing.data.user as any).confirmed_at);
+                if (!emailVerified) {
+                  const resend = await supabase.auth.resend({ type: 'signup', email: authData.businessEmail.trim() });
+                  if (resend.error) throw resend.error;
+                  openClientSignupOtp();
+                  setIsSubmitting(false);
+                  return;
+                }
+              } else {
+                // This is a newly-created signup. Obfuscated/existing-account
+                // responses are handled above using the password sign-in
+                // result; their fake signup user must not overwrite that
+                // account's real confirmation status.
+                emailVerified = Boolean(user?.email_confirmed_at || (user as any)?.confirmed_at);
+                if (!emailVerified) {
+                  openClientSignupOtp();
+                  setIsSubmitting(false);
+                  return;
+                }
+              }
+            }
+          }
+
+          if (!emailVerified) {
+            setSignupOtpModalOpen(true);
             setIsSubmitting(false);
             return;
           }
 
-          const created = await createAccountWithEmailOtp({
-            email: authData.businessEmail,
-            code: signupOtp,
-            password: authData.password,
-            role: 'client',
-            name: authData.fullName,
-            companyName: authData.companyName
-          });
-          const { data: authRes, error: signInError } = await supabase.auth.signInWithPassword({
-            email: authData.businessEmail,
-            password: authData.password
-          });
-          if (signInError || !authRes.user) {
-            setSignupOtpRequested(false);
-            throw new Error('Your email is verified and account created. Sign in to continue.');
+          setSignupOtpVerified(true);
+          const { data: authenticated, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError || !authenticated.session?.user) {
+            throw new Error('Your email is verified, but your account session could not be restored. Sign in and continue your request.');
           }
-
-          finalUserId = created.userId || authRes.user.id;
+          finalUserId = authenticated.session.user.id;
           finalClientName = `${authData.fullName} (${authData.companyName})`;
 
           // Users, organisation and client profile are created server-side in
@@ -596,6 +700,62 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
 
     } catch (err: any) {
       setErrorMsg(err.message);
+      setIsSubmitting(false);
+    }
+  };
+
+  const resendClientSignupCode = async () => {
+    if (signupOtpCooldown > 0 || isSubmitting) return;
+    setIsSubmitting(true);
+    setOtpMessage('');
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: authData.businessEmail.trim()
+      });
+      if (error) throw error;
+      setSignupOtpCooldown(CLIENT_SIGNUP_OTP_RESEND_SECONDS);
+      setOtpMessage(`A new 8-digit code is on its way to ${authData.businessEmail.trim()}.`);
+    } catch (error: any) {
+      setOtpMessage(error?.message || 'We could not resend the verification code. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const verifyClientSignupCode = async () => {
+    if (signupOtp.length !== CLIENT_SIGNUP_OTP_LENGTH || isSubmitting) return;
+    setIsSubmitting(true);
+    setOtpMessage('Checking your code…');
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: authData.businessEmail.trim(),
+        token: signupOtp,
+        type: 'email'
+      });
+      if (error) throw error;
+
+      let session = data.session;
+      if (!session) {
+        const current = await supabase.auth.getSession();
+        if (current.error) throw current.error;
+        session = current.data.session;
+      }
+      if (!session?.user) throw new Error('Your email was verified, but we could not open your account session. Please sign in and continue.');
+
+      setSignupOtpVerified(true);
+      setSignupOtpModalOpen(false);
+      setOtpMessage('Email verified. Finishing your account and service request…');
+      await submitRequest(true);
+    } catch (error: any) {
+      setOtpMessage(
+        /expired/i.test(error?.message || '')
+          ? 'That code has expired. Request a new code below.'
+          : /invalid|incorrect|token/i.test(error?.message || '')
+            ? 'That 8-digit code could not be verified. Check it and try again.'
+            : error?.message || 'We could not verify that code. Please try again.'
+      );
+      setSignupOtp('');
       setIsSubmitting(false);
     }
   };
@@ -1093,8 +1253,11 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
           onChange={e => {
             setAuthData({...authData, businessEmail: e.target.value});
             setSignupOtpRequested(false);
+            setSignupOtpVerified(false);
+            setSignupOtpModalOpen(false);
             setSignupOtp('');
             setOtpMessage('');
+            setSignupOtpCooldown(0);
           }}
         />
       </div>
@@ -1146,42 +1309,12 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
         {authData.mode === 'signup' && <div className="intake-password-hint">Use at least 8 characters for your password.</div>}
       </div>
 
-      {authData.mode === 'signup' && signupOtpRequested && (
-        <div className="form-group">
-          <label className="form-label" htmlFor="intake-email-otp">Six-digit email code</label>
-          <input
-            id="intake-email-otp"
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            className="form-input"
-            value={signupOtp}
-            onChange={e => setSignupOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            placeholder="000000"
-          />
-          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
-            {otpMessage || `Enter the code sent to ${authData.businessEmail}. It expires in 10 minutes.`}
-            {' '}
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={async () => {
-                try {
-                  setIsSubmitting(true);
-                  const result = await requestEmailOtp(authData.businessEmail, 'signup');
-                  setOtpMessage(result.message || 'If eligible, a new code is on its way.');
-                } catch (error: any) {
-                  setErrorMsg(error?.message || 'Could not resend the code.');
-                } finally {
-                  setIsSubmitting(false);
-                }
-              }}
-              style={{ border: 0, background: 'none', color: 'var(--kongila-blue, #2563EB)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
-            >
-              Resend code
-            </button>
-          </div>
+      {authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified && (
+        <div role="status" style={{ marginTop: '12px', padding: '12px 14px', border: '1px solid #C9D9F3', borderRadius: '12px', background: '#F3F7FD', color: '#28415E', fontSize: '13px', lineHeight: 1.5 }}>
+          An 8-digit verification code was sent to <strong>{authData.businessEmail}</strong>.{' '}
+          <button type="button" onClick={() => setSignupOtpModalOpen(true)} style={{ border: 0, padding: 0, background: 'none', color: '#1455C0', font: 'inherit', fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' }}>
+            Enter code
+          </button>
         </div>
       )}
 
@@ -1354,14 +1487,22 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
               {step < totalSteps ? (
                 <NeonButton onClick={handleNext}>Continue <span aria-hidden="true">→</span></NeonButton>
               ) : (
-                <NeonButton onClick={submitRequest} disabled={isSubmitting || (authData.mode === 'signup' && !authData.tosAccepted)}>
+                <NeonButton onClick={() => {
+                  if (authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified) {
+                    setSignupOtpModalOpen(true);
+                    return;
+                  }
+                  void submitRequest(signupOtpVerified);
+                }} loading={isSubmitting} disabled={authData.mode === 'signup' && !authData.tosAccepted}>
                   {isSubmitting
                     ? 'Submitting...'
-                    : authData.mode === 'signup' && signupOtpRequested
-                      ? 'Verify Email & Submit Request'
-                      : authData.mode === 'signup'
-                        ? 'Send Verification Code'
-                        : 'Sign In & Submit Request'}
+                    : authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified
+                      ? 'Enter 8-digit code'
+                      : authData.mode === 'signup' && !signupOtpVerified
+                        ? 'Verify email & submit request'
+                        : authData.mode === 'signup'
+                          ? 'Submit service request'
+                          : 'Sign In & Submit Request'}
                 </NeonButton>
               )}
             </div>
@@ -1392,6 +1533,56 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
       </div>
 
       <footer className="intake-footer"><span>© {new Date().getFullYear()} Kongila</span><span>Thoughtful workforce solutions, built around your needs.</span><Link href="/">Return to kongila.com</Link></footer>
+
+      {signupOtpModalOpen && (
+        <div
+          role="presentation"
+          onMouseDown={event => { if (event.target === event.currentTarget && !isSubmitting) setSignupOtpModalOpen(false); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: '20px', background: 'rgba(15, 23, 42, .58)' }}
+        >
+          <section role="dialog" aria-modal="true" aria-labelledby="client-signup-otp-title" aria-describedby="client-signup-otp-description" style={{ width: '100%', maxWidth: '460px', boxSizing: 'border-box', background: '#fff', border: '1px solid #DFE6EE', borderRadius: '20px', padding: 'clamp(22px, 5vw, 34px)', color: '#14213D', boxShadow: '0 28px 80px rgba(15, 23, 42, .26)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
+              <div>
+                <div style={{ color: '#1455C0', fontSize: '11px', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase' }}>Email verification</div>
+                <h2 id="client-signup-otp-title" style={{ margin: '8px 0 7px', fontSize: '23px', lineHeight: 1.25, letterSpacing: '-.02em' }}>Check your inbox</h2>
+              </div>
+              <button type="button" aria-label="Close verification dialog" disabled={isSubmitting} onClick={() => setSignupOtpModalOpen(false)} style={{ flex: '0 0 auto', width: '36px', height: '36px', border: '1px solid #E2E8F0', borderRadius: '50%', background: '#fff', color: '#526174', fontSize: '20px', cursor: isSubmitting ? 'wait' : 'pointer' }}>×</button>
+            </div>
+            <p id="client-signup-otp-description" style={{ margin: '0 0 20px', color: '#526174', fontSize: '14px', lineHeight: 1.6 }}>
+              Enter the 8-digit code sent to <strong style={{ color: '#14213D', overflowWrap: 'anywhere' }}>{authData.businessEmail}</strong> to verify your email and finish creating your account and request.
+            </p>
+            <label htmlFor="client-signup-otp" style={{ display: 'block', marginBottom: '7px', color: '#26384D', fontSize: '13px', fontWeight: 700 }}>8-digit verification code</label>
+            <input
+              id="client-signup-otp"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={CLIENT_SIGNUP_OTP_LENGTH}
+              autoFocus
+              disabled={isSubmitting}
+              value={signupOtp}
+              onChange={event => setSignupOtp(event.target.value.replace(/\D/g, '').slice(0, CLIENT_SIGNUP_OTP_LENGTH))}
+              onKeyDown={event => { if (event.key === 'Enter') void verifyClientSignupCode(); }}
+              placeholder="00000000"
+              style={{ width: '100%', minHeight: '54px', boxSizing: 'border-box', border: '1px solid #CBD5E1', borderRadius: '12px', padding: '10px 14px', background: '#FAFCFF', color: '#14213D', fontSize: '22px', fontWeight: 700, letterSpacing: '.22em', textAlign: 'center', outlineColor: '#1455C0' }}
+            />
+            {otpMessage && <p role="status" aria-live="polite" style={{ minHeight: '22px', margin: '11px 0 0', color: /could not|invalid|expired|error|wait/i.test(otpMessage) ? '#B42332' : '#526174', fontSize: '13px', lineHeight: 1.5 }}>{otpMessage}</p>}
+            <button type="button" onClick={() => void verifyClientSignupCode()} disabled={signupOtp.length !== CLIENT_SIGNUP_OTP_LENGTH || isSubmitting} style={{ width: '100%', minHeight: '48px', marginTop: '18px', border: 0, borderRadius: '999px', background: '#1455C0', color: '#fff', fontSize: '14px', fontWeight: 800, cursor: signupOtp.length === CLIENT_SIGNUP_OTP_LENGTH && !isSubmitting ? 'pointer' : 'not-allowed', opacity: signupOtp.length === CLIENT_SIGNUP_OTP_LENGTH && !isSubmitting ? 1 : .58 }}>
+              {isSubmitting ? 'Verifying and submitting…' : 'Verify & submit request'}
+            </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '16px', color: '#64748B', fontSize: '13px' }}>
+              <span>Didn’t receive the email?</span>
+              <button type="button" disabled={signupOtpCooldown > 0 || isSubmitting} onClick={() => void resendClientSignupCode()} style={{ border: 0, padding: 0, background: 'none', color: signupOtpCooldown > 0 || isSubmitting ? '#94A3B8' : '#1455C0', font: 'inherit', fontWeight: 800, cursor: signupOtpCooldown > 0 || isSubmitting ? 'not-allowed' : 'pointer' }}>
+                {signupOtpCooldown > 0 ? `Resend in ${signupOtpCooldown}s` : 'Resend code'}
+              </button>
+            </div>
+            <div style={{ marginTop: '17px', paddingTop: '14px', borderTop: '1px solid #E8EDF3', color: '#718096', fontSize: '12px', lineHeight: 1.55 }}>
+              If the address is incorrect, close this dialog and edit it before requesting another code.
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

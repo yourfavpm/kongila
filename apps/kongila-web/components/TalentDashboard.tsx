@@ -615,6 +615,23 @@ const ProfileSection = ({
   onContactManager?: (managerId: string) => void;
   onRequestReschedule?: (interview: any) => void;
 }) => {
+  const [offerDocumentsPrompt, setOfferDocumentsPrompt] = useState<any>(null);
+  const [complianceStatusDocs, setComplianceStatusDocs] = useState<any[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    setComplianceStatusDocs(null);
+    apiFetch('/api/signatures?view=compliance')
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then((status) => {
+        if (active && status && Array.isArray(status.outstanding)) setComplianceStatusDocs(status.outstanding);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [profile?.id]);
+  const offerPendingDocs = complianceStatusDocs ?? pendingDocs;
   const vettingStatus = profile?.vettingStatus || 'Applied';
   const { percentage: profileCompletion, incompleteFields } = countProfileCompletion(profile);
   const talentContracts = contracts?.filter((c: any) => c.talentId === profile?.id || c.talentName === profile?.name) || [];
@@ -823,7 +840,9 @@ const ProfileSection = ({
           )}
           <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
             <button
-              onClick={() => onRespondToOffer && onRespondToOffer(offer.id, 'accept')}
+              onClick={() => offerPendingDocs.length > 0
+                ? setOfferDocumentsPrompt(offer)
+                : onRespondToOffer && onRespondToOffer(offer.id, 'accept')}
               style={{ background: '#10B981', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer' }}
             >
               Accept offer
@@ -840,7 +859,33 @@ const ProfileSection = ({
           </div>
         </div>
       ))}
-      {pendingDocs.length > 0 && (
+      {offerDocumentsPrompt && (
+        <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOfferDocumentsPrompt(null); }} style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: '20px', background: 'rgba(15, 23, 42, 0.52)' }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="offer-documents-title" style={{ width: 'min(100%, 520px)', background: '#fff', borderRadius: '18px', padding: '26px', boxShadow: '0 24px 70px rgba(15,23,42,.24)' }}>
+            <div style={{ color: '#1455C0', fontSize: '12px', fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>One quick step before accepting</div>
+            <h2 id="offer-documents-title" style={{ margin: '8px 0', color: '#182B49', fontSize: '22px' }}>Sign your required documents</h2>
+            <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: '14px', lineHeight: 1.55 }}>
+              You can review the offer now, but you’ll need to sign these mandatory documents before you can accept it.
+            </p>
+            <ul style={{ margin: '0 0 20px', paddingLeft: '20px', color: '#334155', lineHeight: 1.8 }}>
+              {offerPendingDocs.map((doc: any, index: number) => <li key={doc.id || doc.name || index}>{doc.name || doc.title || 'Required document'}</li>)}
+            </ul>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setOfferDocumentsPrompt(null)} style={{ border: '1px solid #D7DEE8', background: '#fff', color: '#334155', borderRadius: '10px', padding: '11px 15px', fontWeight: 700, cursor: 'pointer' }}>Review offer later</button>
+              <button type="button" onClick={() => { setOfferDocumentsPrompt(null); setActiveSection('compliance'); }} style={{ border: 0, background: '#1455C0', color: '#fff', borderRadius: '10px', padding: '11px 16px', fontWeight: 800, cursor: 'pointer' }}>Go to Documents</button>
+              <button type="button" onClick={async () => {
+                const offer = offerDocumentsPrompt;
+                setOfferDocumentsPrompt(null);
+                if (onRespondToOffer) {
+                  const accepted = await onRespondToOffer(offer.id, 'accept');
+                  if (!accepted) setOfferDocumentsPrompt(offer);
+                }
+              }} style={{ border: '1px solid #1455C0', background: '#EFF6FF', color: '#1455C0', borderRadius: '10px', padding: '11px 15px', fontWeight: 800, cursor: 'pointer' }}>I’ve signed them — retry</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {offerPendingDocs.length > 0 && (
         <div style={{
           background: 'rgba(239, 68, 68, 0.08)',
           border: '1px solid rgba(239, 68, 68, 0.28)',
@@ -857,7 +902,7 @@ const ProfileSection = ({
               ⚠️ Pending compliance documents
             </div>
             <p style={{ margin: '4px 0 0 0', color: '#7F1D1D', fontSize: '13px' }}>
-              You have {pendingDocs.length} mandatory compliance document{pendingDocs.length > 1 ? 's' : ''} to review before matching can continue.
+              You have {offerPendingDocs.length} mandatory document{offerPendingDocs.length > 1 ? 's' : ''} to sign. They must be completed before accepting an offer.
             </p>
           </div>
           <button
@@ -1601,8 +1646,14 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond, onRequestR
                   {/* A candidate could not accept or decline an interview at
                       all. The client flow wrote Scheduled straight away, so
                       the first they heard was a confirmation of a call they
-                      had never been asked about. */}
-                  {['Proposed', 'client_requested', 'sent_to_talent', 'pending_confirmation'].includes(String(i.status)) && onRespond && (
+                      had never been asked about.
+
+                      'client_requested' is deliberately not in this list any
+                      more: that is a request sitting with Kongila that the
+                      candidate has not been sent yet, and offering them an
+                      Accept button for it puts them back in front of
+                      interviews nobody has reviewed. */}
+                  {['Proposed', 'sent_to_talent', 'pending_confirmation'].includes(String(i.status)) && onRespond && (
                     <>
                       <button onClick={() => onRespond(i.id, true)} style={{
                         padding: '10px 16px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
@@ -1616,9 +1667,14 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond, onRequestR
                       </button>
                     </>
                   )}
-                  {String(i.status) === 'talent_accepted' && (
+                  {['talent_accepted', 'confirmed', 'Scheduled', 'scheduled', 'Rescheduled'].includes(String(i.status)) && (
                     <span style={{ padding: '8px 12px', background: '#D1FAE5', color: '#047857', borderRadius: '8px', fontSize: '12px', fontWeight: 800 }}>
-                      You confirmed this
+                      Confirmed on both sides
+                    </span>
+                  )}
+                  {String(i.status) === 'talent_countered' && (
+                    <span style={{ padding: '8px 12px', background: '#FFFBEB', color: '#92400E', borderRadius: '8px', fontSize: '12px', fontWeight: 800 }}>
+                      Your time is with the client
                     </span>
                   )}
                   {i.meetingLink ? (
@@ -1630,11 +1686,17 @@ const InterviewsSection = ({ scheduledInterviews, profile, onRespond, onRequestR
                   ) : (
                     <span style={{ color: '#6B7A99', fontSize: '13px' }}>Link will be provided soon</span>
                   )}
-                  {onRequestReschedule && (
+                  {onRequestReschedule && String(i.status) !== 'talent_countered' && (
                     <button onClick={() => onRequestReschedule(i)} style={{
                       padding: '10px 16px', background: '#F5F7FA', color: '#0047CC', border: 'none', borderRadius: '8px', fontWeight: 700, cursor: 'pointer'
                     }}>
-                      Request Reschedule
+                      {/* Before anyone has agreed a time there is nothing to
+                          reschedule. Proposing another time is what the
+                          candidate is actually doing, and the client is who
+                          answers it. */}
+                      {['Proposed', 'sent_to_talent', 'pending_confirmation'].includes(String(i.status))
+                        ? 'Propose another time'
+                        : 'Request Reschedule'}
                     </button>
                   )}
                   {generateGoogleCalendarLink(i) && (
@@ -8156,7 +8218,7 @@ export default function TalentDashboard({
       if (!response.ok) throw new Error(payload?.error || `Could not send the request (${response.status}).`);
 
       onInterviewUpdate?.(targetId, {
-        status: 'Reschedule Requested',
+        status: payload.interview?.status || 'Reschedule Requested',
         rescheduleRequested: true,
         rescheduleReason,
         proposedNewDate: rescheduleDate,
@@ -8165,7 +8227,11 @@ export default function TalentDashboard({
         proposedTimezone: payload.interview?.proposed_timezone || talentProfile?.timezone || viewerTimeZone()
       });
       setRescheduleModalOpen(false);
-      showGlobalToast('Reschedule request sent. Operations will confirm a new time.');
+      showGlobalToast(
+        String(payload.interview?.status) === 'talent_countered'
+          ? 'Sent. The client will accept your time or your Kongila team will find another.'
+          : 'Reschedule request sent. Operations will confirm a new time.'
+      );
     } catch (err: any) {
       console.error('[TalentDashboard] reschedule request failed:', err);
       showGlobalToast(err?.message || 'Could not send the reschedule request.');
@@ -8194,10 +8260,15 @@ export default function TalentDashboard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `Could not send your response (${response.status}).`);
 
+      // Accepting is the agreement, so the interview is confirmed outright —
+      // not parked at 'talent_accepted', which no screen ever called
+      // scheduled and which no calendar invitation was ever sent for.
       onInterviewUpdate?.(interviewId, {
-        status: accept ? 'talent_accepted' : 'talent_declined'
+        status: payload.interview?.status || (accept ? 'confirmed' : 'talent_declined')
       });
-      showGlobalToast(accept ? 'Interview confirmed.' : 'Interview declined. Operations has been told.');
+      showGlobalToast(accept
+        ? 'Interview confirmed. The client has been told and a calendar invitation is on its way.'
+        : 'Interview declined. The client and your Kongila team have been told.');
     } catch (err: any) {
       console.error('[TalentDashboard] interview response failed:', err);
       showGlobalToast(err?.message || 'Could not send your response.');

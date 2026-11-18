@@ -27,6 +27,8 @@ export type NotificationEvent =
   | 'operator_account_restored'
   // Request
   | 'request_received'
+  // The same arrival, read by operations rather than by the client.
+  | 'new_request_for_ops'
   | 'candidates_ready'
   | 'all_candidates_rejected'
   | 'client_call_requested'
@@ -35,9 +37,33 @@ export type NotificationEvent =
   | 'request_message_from_admin'
   | 'request_message_from_client'
   // Interview
+  //
+  // An interview with a matched candidate travels: the client asks, operations
+  // puts it to the candidate, the candidate answers, and a counter-offer goes
+  // back to the client. Each of those steps has a different reader, so each
+  // has its own wording rather than one "interview scheduled" doing for all of
+  // them regardless of whether anything was actually scheduled.
+  | 'interview_requested'
+  | 'interview_request_sent'
+  | 'interview_request_declined'
+  | 'interview_sent_to_talent'
+  | 'interview_invitation'
+  | 'interview_confirmed'
+  | 'interview_declined_by_talent'
+  | 'interview_new_time_proposed'
+  | 'interview_reschedule_waiting_on_client'
+  | 'interview_reschedule_submitted'
+  | 'interview_reschedule_request_declined'
+  | 'interview_counter_declined'
   | 'interview_scheduled'
   | 'interview_rescheduled'
   | 'interview_reminder'
+  // After it has happened. An interview that nobody closes out leaves
+  // the hire with nowhere to go, because the decision that follows is
+  // only offered once the interview is known to be over.
+  | 'interview_outcome_due'
+  | 'interview_completed'
+  | 'interview_did_not_happen'
   // Offer
   | 'offer_extended'
   | 'offer_accepted'
@@ -345,6 +371,20 @@ export function buildNotification(
         inApp: `Request received: ${role}. Our team is sourcing candidates.`
       };
 
+    case 'new_request_for_ops':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `New request — ${role}${ctx.companyName ? ` from ${ctx.companyName}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.companyName || ctx.clientName || 'A client'} has filed a request for ${role}. ` +
+          'It is sitting in the request queue waiting to be picked up and sourced.' +
+          (ctx.reason ? `\n\n${ctx.reason}` : ''),
+          ctx, 'Open the request'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `New request: ${role}${ctx.companyName ? ` from ${ctx.companyName}` : ''}.`
+      };
+
     case 'candidates_ready':
       return {
         module: 'matches',
@@ -426,6 +466,197 @@ export function buildNotification(
       };
 
     // ── Interview ───────────────────────────────────────────────────────────
+    case 'interview_requested':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview requested — ${ctx.talentName || 'a candidate'}${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.companyName || ctx.clientName || 'A client'} has asked to interview ` +
+          `${ctx.talentName || 'a candidate'}${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.\n\n` +
+          `Proposed: ${ctx.when || 'no time given'}.\n\n` +
+          (ctx.reason ? `Note from the client: ${ctx.reason}\n\n` : '') +
+          'Review it and put it to the candidate, or decline it.',
+          ctx, 'Open the request'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview requested with ${ctx.talentName || 'a candidate'}${ctx.when ? ` — ${ctx.when}` : ''}.`
+      };
+
+    case 'interview_request_sent':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `We have your interview request${ctx.talentName ? ` for ${ctx.talentName}` : ''}`,
+        body: withAction(
+          `${hi}\n\nYour request to interview ${ctx.talentName || 'this candidate'}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''} is with your Kongila team.\n\n` +
+          `Proposed: ${ctx.when || 'no time given'}.\n\n` +
+          'We will put it to the candidate and come back to you as soon as they answer. ' +
+          'You do not need to contact them yourself.',
+          ctx, 'Track the request'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview request sent${ctx.talentName ? ` for ${ctx.talentName}` : ''}. We will confirm shortly.`
+      };
+
+    case 'interview_request_declined':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview request not proceeding${ctx.talentName ? ` — ${ctx.talentName}` : ''}`,
+        body: withAction(
+          `${hi}\n\nYour Kongila team has not taken your interview request with ` +
+          `${ctx.talentName || 'this candidate'} forward.` +
+          (ctx.reason ? `\n\nReason: ${ctx.reason}` : '') +
+          '\n\nYour account manager will be in touch about what happens next.',
+          ctx, 'Open the role'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview request with ${ctx.talentName || 'a candidate'} is not proceeding.`
+      };
+
+    case 'interview_sent_to_talent':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Your interview request is with ${ctx.talentName || 'the candidate'}`,
+        body: withAction(
+          `${hi}\n\nYour Kongila team has put your interview request to ` +
+          `${ctx.talentName || 'the candidate'}${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.\n\n` +
+          `Proposed: ${ctx.when || 'no time given'}.\n\n` +
+          'We will let you know as soon as they accept or come back with another time. ' +
+          'Nothing is in anyone\'s diary until they do.',
+          ctx, 'Track the interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview request is with ${ctx.talentName || 'the candidate'}${ctx.when ? ` — ${ctx.when}` : ''}.`
+      };
+
+    case 'interview_invitation':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview invitation${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}${ctx.when ? ` on ${ctx.when}` : ''}`,
+        body: withAction(
+          `${hi}\n\nYou have been invited to an interview` +
+          `${ctx.companyName ? ` with ${ctx.companyName}` : ''}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.\n\n` +
+          `Proposed: ${ctx.when || 'a time will be confirmed with you'}.\n\n` +
+          (ctx.reason ? `${ctx.reason}\n\n` : '') +
+          'You can accept it, propose a time that suits you better, or turn it down. ' +
+          'Nothing is in your diary until you answer.',
+          ctx, 'Answer the invitation'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview invitation${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}${ctx.when ? ` — ${ctx.when}` : ''}. Please answer.`
+      };
+
+    case 'interview_confirmed':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview confirmed${ctx.when ? ` — ${ctx.when}` : ''}`,
+        body: withAction(
+          `${hi}\n\nThis interview is confirmed by both sides` +
+          `${ctx.talentName ? ` with ${ctx.talentName}` : ''}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.\n\n` +
+          `${ctx.when || 'A time has not been recorded.'}\n\n` +
+          `${ctx.joiningDetails || 'Joining details will follow before the call.'}\n\n` +
+          'The attached calendar file adds this at the correct local time.',
+          ctx, 'Open the interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview confirmed${ctx.when ? ` — ${ctx.when}` : ''}.`
+      };
+
+    case 'interview_declined_by_talent':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview declined${ctx.talentName ? ` — ${ctx.talentName}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.talentName || 'The candidate'} has turned down this interview` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.` +
+          (ctx.reason ? `\n\nReason: ${ctx.reason}` : '') +
+          '\n\nYour Kongila team will come back to you with other candidates for this role.',
+          ctx, 'Open the role'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `${ctx.talentName || 'The candidate'} declined the interview.`
+      };
+
+    case 'interview_new_time_proposed':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `New interview time proposed${ctx.talentName ? ` by ${ctx.talentName}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.talentName || 'The candidate'} has requested a change to the interview time` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''} and suggested an alternative.\n\n` +
+          `Proposed: ${ctx.when || 'no time given'}.\n\n` +
+          (ctx.reason ? `Their note: ${ctx.reason}\n\n` : '') +
+          'Please accept or decline the proposed time. The interview will not be moved to this time unless you accept; if it does not work, Kongila can coordinate another option.',
+          ctx, 'Accept or decline the new time'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `${ctx.talentName || 'The candidate'} requested a reschedule${ctx.when ? ` to ${ctx.when}` : ''}. Your answer is needed.`
+      };
+
+    case 'interview_reschedule_submitted':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: 'Your interview reschedule request was sent',
+        body: withAction(
+          `${hi}\n\nYour request to change the interview time` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''} has been sent to the client for a decision.` +
+          `${ctx.when ? `\n\nProposed time: ${ctx.when}.` : ''}` +
+          (ctx.reason ? `\n\nYour note: ${ctx.reason}` : '') +
+          '\n\nThe current invitation remains in place until the client accepts a new time. We will let you know when they respond.',
+          ctx, 'View interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Your reschedule request${ctx.when ? ` for ${ctx.when}` : ''} was sent to the client.`
+      };
+
+    case 'interview_reschedule_waiting_on_client':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Talent reschedule request sent to client${ctx.talentName ? ` — ${ctx.talentName}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.talentName || 'The talent'} has requested a change to the interview time` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.` +
+          `${ctx.when ? `\n\nProposed time: ${ctx.when}.` : ''}` +
+          (ctx.reason ? `\n\nTalent note: ${ctx.reason}` : '') +
+          '\n\nThe request has been sent to the client. Please coordinate if needed; the client must accept or decline the proposed time.',
+          ctx, 'Open interviews'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Talent reschedule request sent to the client${ctx.when ? ` for ${ctx.when}` : ''}.`
+      };
+
+    case 'interview_reschedule_request_declined':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: 'Your interview reschedule request was declined',
+        body: withAction(
+          `${hi}\n\nThe client could not accept the proposed time` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.` +
+          (ctx.reason ? `\n\nClient note: ${ctx.reason}` : '') +
+          '\n\nYour original interview time is still scheduled. Kongila can help coordinate another option if needed.',
+          ctx, 'View interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `The client declined your proposed reschedule. Your original interview time remains scheduled.`
+      };
+
+    case 'interview_counter_declined':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Proposed interview time turned down${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}`,
+        body: withAction(
+          `${hi}\n\nThe time proposed for this interview does not work for ` +
+          `${ctx.companyName || ctx.clientName || 'the client'}.` +
+          (ctx.reason ? `\n\nReason: ${ctx.reason}` : '') +
+          '\n\nYour Kongila team is finding a time that suits both sides and will come back to you.',
+          ctx, 'Open the interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `The proposed time was turned down. Kongila is finding another.`
+      };
+
     case 'interview_scheduled':
       return {
         module: 'interviews',
@@ -464,6 +695,50 @@ export function buildNotification(
           `${ctx.when || ''}\n\n` +
           `${ctx.joiningDetails || 'Joining details will follow before the call.'}\n\n${SIGN_OFF}`,
         inApp: `Interview reminder${ctx.when ? ` — ${ctx.when}` : ''}.`
+      };
+
+    case 'interview_outcome_due':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `How did the interview with ${ctx.talentName || 'the candidate'} go?`,
+        body: withAction(
+          `${hi}\n\nYour interview with ${ctx.talentName || 'the candidate'}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''} is marked as held.\n\n` +
+          'Tell us what you would like to do next: make them an offer, or let us know they are ' +
+          'not the right fit so we can keep looking. Either way we take it from there.',
+          ctx, 'Make the decision'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview with ${ctx.talentName || 'a candidate'} is done. Make an offer, or tell us they are not a fit.`
+      };
+
+    case 'interview_completed':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Thanks for interviewing${ctx.companyName ? ` with ${ctx.companyName}` : ''}`,
+        body: withAction(
+          `${hi}\n\nYour interview${ctx.companyName ? ` with ${ctx.companyName}` : ''}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''} is marked as held.\n\n` +
+          'They are deciding now. We will come back to you either way, and you do not need to ' +
+          'chase anyone in the meantime.',
+          ctx, 'Open your opportunities'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview marked as held. You will hear back either way.`
+      };
+
+    case 'interview_did_not_happen':
+      return {
+        module: 'interviews',
+        alsoInApp: true,
+        subject: `Interview did not take place${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}`,
+        body: withAction(
+          `${hi}\n\nThis interview has been recorded as not having taken place.` +
+          (ctx.reason ? `\n\n${ctx.reason}` : '') +
+          '\n\nYour Kongila team will be in touch to set up another time.',
+          ctx, 'Open the interview'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Interview did not take place. Kongila will arrange another time.`
       };
 
     // ── Offer ───────────────────────────────────────────────────────────────
@@ -977,10 +1252,16 @@ export const ALL_NOTIFICATION_EVENTS: NotificationEvent[] = [
   // all_candidates_rejected had a template and was never in this list, so
   // anything iterating the events — settings screens, tests — did not know
   // it existed.
-  'request_received', 'candidates_ready', 'all_candidates_rejected',
+  'request_received', 'new_request_for_ops', 'candidates_ready', 'all_candidates_rejected',
   'client_call_requested', 'client_call_responded', 'client_call_scheduled',
   'request_message_from_admin', 'request_message_from_client',
+  'interview_requested', 'interview_request_sent', 'interview_request_declined',
+  'interview_sent_to_talent',
+  'interview_invitation', 'interview_confirmed', 'interview_declined_by_talent',
+  'interview_new_time_proposed', 'interview_reschedule_waiting_on_client', 'interview_reschedule_submitted',
+  'interview_reschedule_request_declined', 'interview_counter_declined',
   'interview_scheduled', 'interview_rescheduled', 'interview_reminder',
+  'interview_outcome_due', 'interview_completed', 'interview_did_not_happen',
   'offer_extended', 'offer_accepted', 'offer_declined',
   'contract_ready', 'contract_signed', 'contract_renewal_due', 'contract_terminated',
   'contract_voided', 'contract_unsigned_chase', 'compliance_document_expiring',

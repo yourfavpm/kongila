@@ -24,13 +24,25 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers, resolveNotificationRecipients } from './notify';
+import {
+  notifyUsers,
+  notifyAdmins,
+  resolveNotificationRecipients,
+  clientPortalUrl,
+  talentPortalUrl,
+  adminPortalUrl
+} from './notify';
 import {
   findSchedulingConflicts,
   describeConflict,
   mapInterviewStatusToDb,
   matchingProgressStatus,
-  normalizeRequestStatus
+  normalizeRequestStatus,
+  normalizeInterviewStage,
+  interviewTransition,
+  interviewStageToDb,
+  explainInterviewTransition,
+  type InterviewEvent as InterviewFlowEvent
 } from '@kongila/workflows';
 import { interviewInstant, formatInstantInZone, wallClockToUtc } from '@kongila/utils';
 import {
@@ -53,6 +65,9 @@ export interface ServiceResult<T = any> {
 const DEFAULT_DURATION_MINUTES = 60;
 const INTERVIEW_TYPES = new Set(['video', 'phone', 'async_video']);
 
+/** interviews_admin_outcome_check accepts exactly these three. */
+const ADMIN_OUTCOMES = new Set(['Proceed to Hire', 'No Fit', 'Hold']);
+
 /** A client may schedule at most this many interviews per candidate, per request. */
 const MAX_INTERVIEWS_PER_PAIR = 3;
 
@@ -61,6 +76,41 @@ const LATE_CHANGE_HOURS = 4;
 
 function fail(status: number, error: string): ServiceResult {
   return { ok: false, status, error };
+}
+
+/**
+ * A joining link for an interview that has just been agreed.
+ *
+ * `google_calendar_link` and `google_calendar_event_id` have been sitting on
+ * the interviews table unused since it was created, waiting for a Calendar
+ * integration that needs a Google Cloud project, OAuth consent and a service
+ * account on the Workspace domain. Until that exists, every interview was
+ * confirmed with no way to join it and a line promising that details would
+ * follow — which somebody then had to remember to do by hand.
+ *
+ * A Jitsi room needs none of that. It is a real, working video room the
+ * moment the URL exists, with no account on either side, so an interview is
+ * never confirmed without somewhere to hold it. The room name is derived
+ * from the interview id, so the same interview always resolves to the same
+ * room however many times this runs, and it carries no readable detail about
+ * who is meeting or what for.
+ *
+ * An operator pasting their own Meet or Zoom link always wins: this only
+ * fills the gap when nobody has.
+ */
+const MEETING_ROOM_HOST = process.env.MEETING_ROOM_HOST?.trim() || 'https://meet.jit.si';
+
+export function generateMeetingLink(interviewId: string): string | null {
+  const id = String(interviewId || '').trim();
+  if (!id) return null;
+  // Lowercase alphanumerics only: Jitsi treats the room as a URL path, and a
+  // name with punctuation in it is a name that sometimes does not resolve.
+  const room = `kongila-${id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 60);
+  try {
+    return new URL(`/${room}`, MEETING_ROOM_HOST).toString();
+  } catch {
+    return null;
+  }
 }
 
 function isUsableMeetingLink(value: unknown): boolean {
@@ -325,6 +375,183 @@ async function notifyParties(
   return warnings;
 }
 
+// ─── Telling the right person the right thing ────────────────────────────────
+//
+// `notifyParties` below sends one message to both sides of an interview. That
+// is right for a cancellation, where the fact is the same for everyone, and
+// wrong for everything else in the flow: when a client asks for an interview,
+// operations needs "review this and put it to the candidate", the client needs
+// "we have it", and the candidate needs nothing at all yet, because it has not
+// been put to them. Sending all three the same "an interview has been
+// proposed" is how the candidate came to hear about interviews before
+// operations had looked at them.
+//
+// This addresses each audience separately, with its own event from the
+// catalogue and its own copy of the time in its own zone, and it goes through
+// `notifyUsers`, so the in-app row and the email are the same message rather
+// than two hand-written ones that drift.
+
+interface InterviewAudience {
+  clientId: string | null;
+  talentId: string | null;
+  /** The managers on the request. Empty means "all of operations". */
+  opsIds: string[];
+}
+
+async function interviewAudience(interview: any): Promise<InterviewAudience> {
+  const supabase = getSupabaseClient();
+  const opsIds: string[] = [];
+
+  if (interview?.request_id) {
+    const { data: request } = await supabase
+      .from('talent_requests')
+      .select('talent_manager_id, account_manager_id')
+      .eq('id', interview.request_id)
+      .maybeSingle();
+    for (const id of [request?.talent_manager_id, request?.account_manager_id]) {
+      if (id && !opsIds.includes(String(id))) opsIds.push(String(id));
+    }
+  }
+
+  return {
+    clientId: interview?.client_id ? String(interview.client_id) : null,
+    talentId: interview?.talent_id ? String(interview.talent_id) : null,
+    opsIds
+  };
+}
+
+interface AudienceNotice {
+  event: NotificationEvent;
+  /** Extra sentence for the template, such as a decline reason. */
+  reason?: string | null;
+  /** Attach a calendar file. Only ever true once both sides have agreed. */
+  calendar?: boolean;
+}
+
+function interviewWhen(interview: any, zone?: string | null): string | undefined {
+  const startsAt = interviewInstant({
+    scheduled_time: interview?.scheduled_time,
+    date: interview?.date,
+    time: interview?.time,
+    scheduled_timezone: interview?.scheduled_timezone
+  });
+  if (!startsAt) return undefined;
+  return `${formatInstantInZone(startsAt, zone || 'UTC')}${zone ? '' : ' (UTC)'}`;
+}
+
+/**
+ * Sends one event per audience. Never throws: a notification that could not
+ * be delivered is a warning on the action, not a reason to undo it.
+ */
+async function notifyInterviewEvent(
+  interview: any,
+  notices: {
+    client?: AudienceNotice;
+    talent?: AudienceNotice;
+    ops?: AudienceNotice;
+  },
+  options: { proposedInstant?: string | null } = {}
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const audience = await interviewAudience(interview);
+
+  const startsAt = options.proposedInstant || interviewInstant({
+    scheduled_time: interview?.scheduled_time,
+    date: interview?.date,
+    time: interview?.time,
+    scheduled_timezone: interview?.scheduled_timezone
+  });
+
+  const joining = isUsableMeetingLink(interview?.meeting_link)
+    ? `Joining link: ${interview.meeting_link}`
+    : 'Joining details will follow before the call.';
+
+  const calendarInvite = startsAt
+    ? {
+        uid: `kongila-interview-${interview?.id}@kongila`,
+        title: interview?.title || 'Kongila interview',
+        description: joining,
+        startsAt: startsAt as string,
+        durationMinutes: Number(interview?.duration_minutes) || DEFAULT_DURATION_MINUTES,
+        location: isUsableMeetingLink(interview?.meeting_link) ? interview.meeting_link : undefined,
+        sequence: Math.floor(Date.now() / 1000) % 100000,
+        method: 'REQUEST' as const
+      }
+    : null;
+
+  const send = async (
+    recipients: string[],
+    notice: AudienceNotice | undefined,
+    zone: string | null | undefined,
+    actionUrl: string | undefined,
+    useAdminFallback = false
+  ) => {
+    if (!notice) return;
+    const context = {
+      roleTitle: interview?.title || undefined,
+      talentName: interview?.talent_name || undefined,
+      companyName: interview?.client_name || undefined,
+      clientName: interview?.client_name || undefined,
+      when: startsAt
+        ? `${formatInstantInZone(startsAt, zone || 'UTC')}${zone ? '' : ' (UTC)'}`
+        : undefined,
+      joiningDetails: joining,
+      reason: notice.reason || undefined,
+      actionUrl
+    };
+    const sendOptions = notice.calendar && calendarInvite
+      ? { calendarInvite, sourceRecordId: String(interview?.id || '') }
+      : { sourceRecordId: String(interview?.id || '') };
+
+    const result = recipients.length > 0
+      ? await notifyUsers(recipients, notice.event, context, sendOptions)
+      : useAdminFallback
+        ? await notifyAdmins(notice.event, context, sendOptions)
+        : { delivered: 0, warnings: ['Nobody to notify.'] };
+    warnings.push(...result.warnings);
+  };
+
+  await send(
+    audience.clientId ? [audience.clientId] : [],
+    notices.client,
+    interview?.client_timezone,
+    clientPortalUrl('/?section=interviews')
+  );
+  await send(
+    audience.talentId ? [audience.talentId] : [],
+    notices.talent,
+    interview?.talent_timezone,
+    talentPortalUrl('/?section=interviews')
+  );
+  // No manager on the request means the whole operations team, because the
+  // alternative is that a request nobody has been assigned reaches nobody.
+  await send(
+    audience.opsIds,
+    notices.ops,
+    null,
+    interview?.request_id ? adminPortalUrl(`/requests/${interview.request_id}`) : adminPortalUrl('/'),
+    true
+  );
+
+  for (const warning of warnings) console.warn(`[interviews] ${warning}`);
+  return warnings;
+}
+
+/**
+ * Applies a move on the flow, or explains why it cannot be made.
+ *
+ * Every state change below goes through this, so an interview can never be
+ * put into a stage it cannot be in — a candidate accepting something that was
+ * never sent to them, a client confirming a time nobody proposed.
+ */
+function advance(interview: any, event: InterviewFlowEvent): { stage: string } | { error: string } {
+  const next = interviewTransition(interview?.status, event);
+  if (!next) {
+    return { error: explainInterviewTransition(interview?.status, event) as string };
+  }
+  return { stage: interviewStageToDb(next) };
+}
+
 async function writeAudit(actor: Actor, action: string, details: string) {
   const supabase = getSupabaseClient();
   const { error } = await supabase.from('audit_logs').insert({
@@ -359,6 +586,17 @@ export interface ScheduleInput {
   talentAvatar?: string | null;
   /** Delivery format accepted by interviews.interview_type. Defaults to video. */
   interviewType?: string | null;
+  /**
+   * Every time the client said would work, best first, as ISO instants.
+   *
+   * A client is asked for a first choice and up to two backups, and all of
+   * it used to be flattened into one `scheduled_time` with the alternatives
+   * pasted into the notes as English prose. Operations then had to read them
+   * out of a sentence, and nothing else could see them at all. The
+   * `proposed_slots` column has been on the table since it was created and
+   * nothing ever wrote to it.
+   */
+  proposedSlots?: string[] | null;
 }
 
 export async function scheduleInterview(
@@ -456,8 +694,16 @@ export async function scheduleInterview(
   }
 
   try {
-    // The cap used to be enforced in the modal only, so it was bypassable by
-    // anything that did not go through that screen.
+    // One conversation at a time with a candidate on a role.
+    //
+    // The cap was three, enforced in the modal only, so it was bypassable by
+    // anything that did not go through that screen — and three was the wrong
+    // number anyway. A client who asked on Monday and had heard nothing by
+    // Wednesday asked again, and operations ended up with three requests for
+    // one conversation, each sitting at a different stage.
+    //
+    // A finished interview does not block a second round: completed ones are
+    // not counted, so a follow-up can still be asked for.
     if (requestId) {
       const { data: pairRows, error: pairError } = await supabase
         .from('interviews')
@@ -466,11 +712,30 @@ export async function scheduleInterview(
         .eq('talent_id', input.talentId);
       if (pairError) return fail(500, `Existing interviews could not be checked: ${pairError.message}`);
 
+      const openOne = (pairRows || []).find((row: any) => {
+        const stage = normalizeInterviewStage(row.status);
+        return stage !== 'completed'
+          && stage !== 'cancelled'
+          && stage !== 'talent_declined'
+          && stage !== 'admin_declined'
+          && stage !== 'expired';
+      });
+
+      if (openOne) {
+        return fail(
+          409,
+          normalizeInterviewStage(openOne.status) === 'confirmed'
+            ? 'This candidate already has an interview booked on this role.'
+            : 'There is already an interview request open with this candidate on this role. '
+              + 'Your Kongila team is working on it — you can follow it on your Interviews screen.'
+        );
+      }
+
       const live = (pairRows || []).filter(
         (r: any) => !['cancelled', 'declined', 'expired'].includes(String(r.status).toLowerCase())
       );
       if (live.length >= MAX_INTERVIEWS_PER_PAIR) {
-        return fail(409, `There are already ${MAX_INTERVIEWS_PER_PAIR} interviews with this candidate for this request.`);
+        return fail(409, `There have already been ${MAX_INTERVIEWS_PER_PAIR} interviews with this candidate for this request.`);
       }
     }
 
@@ -488,6 +753,17 @@ export async function scheduleInterview(
       return { ok: false, status: 409, error: describeConflict(conflicts) as string };
     }
 
+    // Deduplicated, sorted, and always containing the time being booked, so
+    // the list and the chosen slot can never disagree.
+    const normalizedSlots = Array.from(new Set(
+      [startsAt, ...(input.proposedSlots || [])]
+        .map(value => {
+          const parsed = new Date(String(value));
+          return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+        })
+        .filter((value): value is string => Boolean(value))
+    )).sort();
+
     const zone = input.timezone || input.clientTimezone || 'UTC';
     const row = {
       id: `iv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -502,6 +778,9 @@ export async function scheduleInterview(
       // client-facing. The request and title carry that distinction.
       interview_type: interviewType,
       title: input.title || 'Interview',
+      // The first choice is the interview's time until operations picks
+      // another; the whole list stays so they can.
+      proposed_slots: normalizedSlots.length > 0 ? normalizedSlots : null,
       scheduled_time: startsAt,
       scheduled_timezone: zone,
       client_timezone: input.clientTimezone || zone,
@@ -510,10 +789,18 @@ export async function scheduleInterview(
       date: input.date || startsAt.slice(0, 10),
       time: input.time || null,
       duration_minutes: input.durationMinutes || DEFAULT_DURATION_MINUTES,
-      // Candidates are asked, not told. This used to be written as Scheduled
-      // straight away, so the first a candidate heard of an interview was a
-      // confirmation of one they had never agreed to.
-      status: mapInterviewStatusToDb('Proposed'),
+      // Where a new interview starts depends on who asked for it.
+      //
+      // A client asking is a request, not a booking: it goes to operations
+      // first, who review it and put it to the candidate. It used to be
+      // written straight out to the candidate as 'Proposed', so the first
+      // Kongila heard of an interview with one of its candidates was after
+      // the candidate had already been asked.
+      //
+      // Operations creating one directly — a vetting interview, or a slot
+      // agreed on a call — has already had that review, so it goes to the
+      // candidate to answer.
+      status: actor.kind === 'client' ? 'client_requested' : 'sent_to_talent',
       meeting_link: isUsableMeetingLink(input.meetingLink) ? input.meetingLink : null,
       notes: input.notes || null,
       created_at: new Date().toISOString()
@@ -559,16 +846,25 @@ export async function scheduleInterview(
       }
     }
 
-    warnings.push(...await notifyParties(
-      inserted || row,
-      'scheduled',
-      'The candidate has been asked to confirm.'
-    ));
+    // Who hears about it, and what they are told, depends on where it is.
+    const saved = inserted || row;
+    if (actor.kind === 'client') {
+      warnings.push(...await notifyInterviewEvent(saved, {
+        // Not the candidate. Nothing has been put to them yet.
+        client: { event: 'interview_request_sent' },
+        ops: { event: 'interview_requested', reason: input.notes || null }
+      }));
+    } else {
+      warnings.push(...await notifyInterviewEvent(saved, {
+        talent: { event: 'interview_invitation', reason: input.notes || null },
+        client: { event: 'interview_sent_to_talent' }
+      }));
+    }
 
     await writeAudit(
       actor,
-      'Schedule Interview',
-      `Proposed "${row.title}" with ${row.talent_name || row.talent_id} for ` +
+      actor.kind === 'client' ? 'Request Interview' : 'Schedule Interview',
+      `${actor.kind === 'client' ? 'Requested' : 'Proposed'} "${row.title}" with ${row.talent_name || row.talent_id} for ` +
       `${formatInstantInZone(startsAt, 'UTC')} UTC.` +
       (row.meeting_link ? ' Joining link supplied.' : ' No joining link yet.')
     );
@@ -577,6 +873,437 @@ export async function scheduleInterview(
   } catch (err: any) {
     console.error('[interviewService] scheduleInterview failed:', err);
     return fail(500, err?.message || 'The interview could not be scheduled.');
+  }
+}
+
+// ─── Operations, between the client and the candidate ────────────────────────
+
+/**
+ * Operations puts a client's request to the candidate.
+ *
+ * This step did not exist. A client's request went straight to the candidate,
+ * so nobody at Kongila saw an interview before the candidate did, nobody
+ * checked the time against the candidate's vetting stage or their other
+ * calls, and there was no point at which a request could be turned down
+ * without the candidate having already been bothered by it.
+ *
+ * Operations may move the time while sending it — that is usually the whole
+ * point of the review — so the conflict check runs again on whatever is sent.
+ */
+export async function sendInterviewToTalent(
+  actor: Actor,
+  input: {
+    interviewId: string;
+    scheduledTime?: string | null;
+    date?: string | null;
+    time?: string | null;
+    timezone?: string | null;
+    durationMinutes?: number;
+    meetingLink?: string | null;
+    note?: string;
+  }
+): Promise<ServiceResult> {
+  if (actor?.kind !== 'admin') return fail(403, 'Only operations can send an interview to a candidate.');
+  if (!input.interviewId) return fail(400, 'interviewId is required.');
+
+  try {
+    const interview = await loadInterview(input.interviewId);
+    if (!interview) return fail(404, 'Interview not found.');
+
+    const move = advance(interview, 'admin_sends_to_talent');
+    if ('error' in move) return fail(409, move.error);
+
+    const startsAt = resolveInstant({
+      scheduledTime: input.scheduledTime,
+      date: input.date,
+      time: input.time,
+      timezone: input.timezone || interview.scheduled_timezone
+    }) || interview.scheduled_time;
+
+    if (!startsAt) return fail(400, 'A time is needed before this goes to the candidate.');
+
+    const duration = Number(input.durationMinutes || interview.duration_minutes) || DEFAULT_DURATION_MINUTES;
+    const diary = await loadDiary(interview.talent_id, interview.client_id);
+    const conflicts = findSchedulingConflicts(
+      {
+        startsAt,
+        durationMinutes: duration,
+        talentId: interview.talent_id,
+        clientId: interview.client_id,
+        excludeInterviewId: input.interviewId
+      },
+      diary
+    );
+    if (conflicts.length > 0) return fail(409, describeConflict(conflicts) as string);
+
+    const zone = input.timezone || interview.scheduled_timezone || 'UTC';
+    const supabase = getSupabaseClient();
+
+    // A candidate is being asked to hold an hour. Telling them where it
+    // happens is part of asking. An operator's own Meet or Zoom link wins;
+    // otherwise a room is made now rather than promised in a sentence
+    // somebody has to remember to act on.
+    const meetingLink = isUsableMeetingLink(input.meetingLink)
+      ? String(input.meetingLink)
+      : isUsableMeetingLink(interview.meeting_link)
+        ? interview.meeting_link
+        : generateMeetingLink(String(interview.id));
+
+    const { data: updated, error } = await supabase
+      .from('interviews')
+      .update({
+        status: move.stage,
+        scheduled_time: startsAt,
+        scheduled_timezone: zone,
+        date: input.date || startsAt.slice(0, 10),
+        time: input.time || interview.time,
+        duration_minutes: duration,
+        meeting_link: meetingLink,
+        // When the candidate first saw it, which is what the SLA on an
+        // unanswered invitation has to be measured from.
+        revealed_to_talent_at: interview.revealed_to_talent_at || new Date().toISOString(),
+        // A time the candidate has not answered yet is not a time to remind
+        // anyone about.
+        reminder_24h_sent_at: null,
+        reminder_1h_sent_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', input.interviewId)
+      .select()
+      .maybeSingle();
+
+    if (error) return fail(500, `The invitation was not sent: ${error.message}`);
+
+    const saved = updated || interview;
+    const warnings = await notifyInterviewEvent(saved, {
+      talent: { event: 'interview_invitation', reason: input.note || null },
+      client: { event: 'interview_sent_to_talent' }
+    });
+
+    await writeAudit(
+      actor,
+      'Send Interview To Candidate',
+      `Put "${interview.title}" to ${interview.talent_name || interview.talent_id} for ` +
+      `${formatInstantInZone(startsAt, 'UTC')} UTC.` + (input.note ? ` Note: ${input.note}` : '')
+    );
+
+    return { ok: true, status: 200, data: saved, warnings };
+  } catch (err: any) {
+    console.error('[interviewService] sendInterviewToTalent failed:', err);
+    return fail(500, err?.message || 'The invitation could not be sent.');
+  }
+}
+
+/**
+ * Operations turns a client's interview request down.
+ *
+ * There was no way to do this. A request operations did not want to put
+ * forward — the candidate is mid-assessment, already placed, or no longer on
+ * the platform — could only be left sitting, and the client was never told.
+ */
+export async function declineInterviewRequest(
+  actor: Actor,
+  input: { interviewId: string; reason?: string }
+): Promise<ServiceResult> {
+  if (actor?.kind !== 'admin') return fail(403, 'Only operations can decline an interview request.');
+  if (!input.interviewId) return fail(400, 'interviewId is required.');
+
+  try {
+    const interview = await loadInterview(input.interviewId);
+    if (!interview) return fail(404, 'Interview not found.');
+
+    const move = advance(interview, 'admin_declines');
+    if ('error' in move) return fail(409, move.error);
+
+    const supabase = getSupabaseClient();
+    const { data: updated, error } = await supabase
+      .from('interviews')
+      .update({
+        status: move.stage,
+        admin_note_internal: input.reason || interview.admin_note_internal || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', input.interviewId)
+      .select()
+      .maybeSingle();
+
+    if (error) return fail(500, `That was not saved: ${error.message}`);
+
+    const saved = updated || interview;
+    // The candidate is not told, because the candidate was never asked.
+    const warnings = await notifyInterviewEvent(saved, {
+      client: { event: 'interview_request_declined', reason: input.reason || null }
+    });
+
+    await writeAudit(
+      actor,
+      'Decline Interview Request',
+      `Declined the request to interview ${interview.talent_name || interview.talent_id}.` +
+      (input.reason ? ` Reason: ${input.reason}` : '')
+    );
+
+    return { ok: true, status: 200, data: saved, warnings };
+  } catch (err: any) {
+    console.error('[interviewService] declineInterviewRequest failed:', err);
+    return fail(500, err?.message || 'That could not be saved.');
+  }
+}
+
+/**
+ * The client answers a time the candidate proposed instead.
+ *
+ * This is the step the loop was missing. A candidate who could not make the
+ * slot raised a reschedule, which only operations could answer, so the client
+ * whose interview it was had no say in the time they were being moved to and
+ * often learned of it from the calendar invitation.
+ *
+ * Accepting is agreement from both sides, so it confirms there and then.
+ * Turning it down hands it back to operations to find a third time, rather
+ * than bouncing it straight back to the candidate.
+ */
+export async function decideCounterOffer(
+  actor: Actor,
+  input: { interviewId: string; accept: boolean; reason?: string; meetingLink?: string | null }
+): Promise<ServiceResult> {
+  if (!input.interviewId) return fail(400, 'interviewId is required.');
+  if (actor?.kind === 'talent') {
+    return fail(403, 'Only the client can answer a time proposed to them.');
+  }
+
+  try {
+    const interview = await loadInterview(input.interviewId);
+    if (!interview) return fail(404, 'Interview not found.');
+    if (!actorOwnsInterview(actor, interview)) return fail(403, 'That interview is not yours.');
+
+    const supabase = getSupabaseClient();
+
+    // A reschedule request on an already-confirmed interview is different
+    // from the candidate countering an initial invitation: the original
+    // calendar booking remains active until the client accepts the proposed
+    // replacement time.
+    const isConfirmedReschedule = Boolean(
+      interview.reschedule_requested &&
+      interview.reschedule_requested_by === 'talent' &&
+      interview.client_id &&
+      normalizeInterviewStage(interview.status) === 'confirmed'
+    );
+
+    if (isConfirmedReschedule) {
+      if (!input.accept) {
+        const { data: declined, error } = await supabase
+          .from('interviews')
+          .update({
+            reschedule_requested: false,
+            reschedule_reason: null,
+            reschedule_requested_by: null,
+            reschedule_requested_at: null,
+            proposed_time: null,
+            proposed_timezone: null,
+            proposed_new_date: null,
+            proposed_new_time: null,
+            client_notes: input.reason || interview.client_notes || null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', input.interviewId)
+          .eq('reschedule_requested', true)
+          .select()
+          .maybeSingle();
+
+        if (error) return fail(500, `Your answer was not saved: ${error.message}`);
+        if (!declined) return fail(409, 'This reschedule request has already been answered.');
+
+        const warnings = await notifyInterviewEvent(declined, {
+          talent: { event: 'interview_reschedule_request_declined', reason: input.reason || null },
+          ops: { event: 'interview_reschedule_request_declined', reason: input.reason || null }
+        });
+        await writeAudit(
+          actor,
+          'Decline Talent Reschedule Request',
+          `The client declined the proposed time for "${interview.title}". The original interview time remains in place.` +
+          (input.reason ? ` Reason: ${input.reason}` : '')
+        );
+        return { ok: true, status: 200, data: declined, warnings };
+      }
+
+      const newStart = resolveInstant({
+        scheduledTime: interview.proposed_time,
+        date: interview.proposed_new_date,
+        time: interview.proposed_new_time,
+        timezone: interview.proposed_timezone || interview.scheduled_timezone
+      });
+      if (!newStart) return fail(409, 'There is no proposed time on this interview to accept.');
+
+      const diary = await loadDiary(interview.talent_id, interview.client_id);
+      const conflicts = findSchedulingConflicts(
+        {
+          startsAt: newStart,
+          durationMinutes: Number(interview.duration_minutes) || DEFAULT_DURATION_MINUTES,
+          talentId: interview.talent_id,
+          clientId: interview.client_id,
+          excludeInterviewId: input.interviewId
+        },
+        diary
+      );
+      if (conflicts.length > 0) return { ok: false, status: 409, error: describeConflict(conflicts) as string };
+
+      const zone = interview.proposed_timezone || interview.scheduled_timezone || 'UTC';
+      const { data: rescheduled, error } = await supabase
+        .from('interviews')
+        .update({
+          status: 'Rescheduled',
+          scheduled_time: newStart,
+          scheduled_timezone: zone,
+          rescheduled_from: interview.scheduled_time || null,
+          date: interview.proposed_new_date || newStart.slice(0, 10),
+          time: interview.proposed_new_time || interview.time,
+          reschedule_requested: false,
+          reschedule_reason: null,
+          reschedule_requested_by: null,
+          reschedule_requested_at: null,
+          proposed_time: null,
+          proposed_timezone: null,
+          proposed_new_date: null,
+          proposed_new_time: null,
+          reminder_24h_sent_at: null,
+          reminder_1h_sent_at: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', input.interviewId)
+        .eq('reschedule_requested', true)
+        .select()
+        .maybeSingle();
+
+      if (error) return fail(500, `The interview was not rescheduled: ${error.message}`);
+      if (!rescheduled) return fail(409, 'This reschedule request has already been answered.');
+
+      const warnings = await notifyInterviewEvent(rescheduled, {
+        client: { event: 'interview_rescheduled', calendar: true },
+        talent: { event: 'interview_rescheduled', calendar: true },
+        ops: { event: 'interview_rescheduled' }
+      });
+      await writeAudit(
+        actor,
+        'Accept Talent Reschedule Request',
+        `The client accepted the proposed time for "${interview.title}". Confirmed for ${formatInstantInZone(newStart, zone)}.`
+      );
+      return { ok: true, status: 200, data: rescheduled, warnings };
+    }
+
+    const move = advance(interview, input.accept ? 'client_accepts_counter' : 'client_declines_counter');
+    if ('error' in move) return fail(409, move.error);
+
+    if (!input.accept) {
+      const { data: handedBack, error } = await supabase
+        .from('interviews')
+        .update({
+          status: move.stage,
+          reschedule_requested: false,
+          reschedule_reason: null,
+          reschedule_requested_by: null,
+          reschedule_requested_at: null,
+          proposed_time: null,
+          proposed_timezone: null,
+          proposed_new_date: null,
+          proposed_new_time: null,
+          client_notes: input.reason || interview.client_notes || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', input.interviewId)
+        .select()
+        .maybeSingle();
+
+      if (error) return fail(500, `Your answer was not saved: ${error.message}`);
+
+      const saved = handedBack || interview;
+      const warnings = await notifyInterviewEvent(saved, {
+        talent: { event: 'interview_counter_declined', reason: input.reason || null },
+        ops: { event: 'interview_counter_declined', reason: input.reason || null }
+      });
+
+      await writeAudit(
+        actor,
+        'Decline Proposed Interview Time',
+        `The client turned down the time proposed for "${interview.title}".` +
+        (input.reason ? ` Reason: ${input.reason}` : '')
+      );
+
+      return { ok: true, status: 200, data: saved, warnings };
+    }
+
+    const newStart = resolveInstant({
+      scheduledTime: interview.proposed_time,
+      date: interview.proposed_new_date,
+      time: interview.proposed_new_time,
+      timezone: interview.proposed_timezone || interview.scheduled_timezone
+    });
+    if (!newStart) return fail(409, 'There is no proposed time on this interview to accept.');
+
+    const diary = await loadDiary(interview.talent_id, interview.client_id);
+    const conflicts = findSchedulingConflicts(
+      {
+        startsAt: newStart,
+        durationMinutes: Number(interview.duration_minutes) || DEFAULT_DURATION_MINUTES,
+        talentId: interview.talent_id,
+        clientId: interview.client_id,
+        excludeInterviewId: input.interviewId
+      },
+      diary
+    );
+    if (conflicts.length > 0) return { ok: false, status: 409, error: describeConflict(conflicts) as string };
+
+    const zone = interview.proposed_timezone || interview.scheduled_timezone || 'UTC';
+    const { data: confirmed, error } = await supabase
+      .from('interviews')
+      .update({
+        status: move.stage,
+        scheduled_time: newStart,
+        scheduled_timezone: zone,
+        rescheduled_from: interview.scheduled_time || null,
+        date: interview.proposed_new_date || newStart.slice(0, 10),
+        time: interview.proposed_new_time || interview.time,
+        // Both sides have now agreed this one, so it is the confirmed slot.
+        confirmed_slot: newStart,
+        meeting_link: isUsableMeetingLink(input.meetingLink)
+          ? input.meetingLink
+          : isUsableMeetingLink(interview.meeting_link)
+            ? interview.meeting_link
+            : generateMeetingLink(String(interview.id)),
+        reschedule_requested: false,
+        reschedule_reason: null,
+        reschedule_requested_by: null,
+        reschedule_requested_at: null,
+        proposed_time: null,
+        proposed_timezone: null,
+        proposed_new_date: null,
+        proposed_new_time: null,
+        reminder_24h_sent_at: null,
+        reminder_1h_sent_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', input.interviewId)
+      .select()
+      .maybeSingle();
+
+    if (error) return fail(500, `The interview was not confirmed: ${error.message}`);
+
+    const saved = confirmed || interview;
+    const warnings = await notifyInterviewEvent(saved, {
+      client: { event: 'interview_confirmed', calendar: true },
+      talent: { event: 'interview_confirmed', calendar: true },
+      ops: { event: 'interview_confirmed' }
+    });
+
+    await writeAudit(
+      actor,
+      'Confirm Interview',
+      `The client accepted the time proposed by ${interview.talent_name || 'the candidate'} for ` +
+      `"${interview.title}". Confirmed for ${formatInstantInZone(newStart, 'UTC')} UTC.`
+    );
+
+    return { ok: true, status: 200, data: saved, warnings };
+  } catch (err: any) {
+    console.error('[interviewService] decideCounterOffer failed:', err);
+    return fail(500, err?.message || 'Your answer could not be saved.');
   }
 }
 
@@ -600,16 +1327,31 @@ export async function respondToInterview(
     if (!actorOwnsInterview(actor, interview)) {
       return fail(403, 'That interview is not yours.');
     }
-    if (['Cancelled', 'cancelled'].includes(String(interview.status))) {
-      return fail(409, 'That interview has been cancelled.');
-    }
+    // Accepting is the agreement, so it confirms the interview outright.
+    // It used to be written as 'talent_accepted' and left there: nothing
+    // moved an interview to confirmed, so an interview both sides had agreed
+    // to sat in a stage that no screen called scheduled, and no calendar
+    // invitation was ever sent for it.
+    const move = advance(interview, input.accept ? 'talent_accepts' : 'talent_declines');
+    if ('error' in move) return fail(409, move.error);
 
     const supabase = getSupabaseClient();
     const { data: updated, error } = await supabase
       .from('interviews')
       .update({
-        status: input.accept ? 'talent_accepted' : 'talent_declined',
+        status: move.stage,
         talent_decline_reason: input.accept ? null : (input.reason || null),
+        // `confirmed_slot` is what both sides agreed, kept apart from
+        // `scheduled_time` so a later move cannot quietly rewrite the record
+        // of what was once settled. The column existed and nothing wrote it.
+        ...(input.accept
+          ? {
+              confirmed_slot: interview.scheduled_time || null,
+              meeting_link: isUsableMeetingLink(interview.meeting_link)
+                ? interview.meeting_link
+                : generateMeetingLink(String(interview.id))
+            }
+          : {}),
         updated_at: new Date().toISOString()
       })
       .eq('id', input.interviewId)
@@ -618,11 +1360,19 @@ export async function respondToInterview(
 
     if (error) return fail(500, `Your response was not saved: ${error.message}`);
 
-    const warnings = await notifyParties(
-      updated || interview,
-      input.accept ? 'accepted' : 'declined',
-      input.accept ? undefined : (input.reason ? `Reason: ${input.reason}` : undefined)
-    );
+    const saved = updated || interview;
+    const warnings = input.accept
+      ? await notifyInterviewEvent(saved, {
+          // Both sides get the calendar file, because now there is something
+          // to put in a calendar.
+          client: { event: 'interview_confirmed', calendar: true },
+          talent: { event: 'interview_confirmed', calendar: true },
+          ops: { event: 'interview_confirmed' }
+        })
+      : await notifyInterviewEvent(saved, {
+          client: { event: 'interview_declined_by_talent', reason: input.reason || null },
+          ops: { event: 'interview_declined_by_talent', reason: input.reason || null }
+        });
 
     await writeAudit(
       actor,
@@ -691,10 +1441,26 @@ export async function requestReschedule(
       timezone: input.timezone
     });
 
+    // A candidate answering an invitation with a different time is not a
+    // reschedule — there is nothing scheduled yet to move. It is a counter,
+    // and the person who has to answer it is the client, not operations.
+    //
+    // Treating it as a reschedule is why the loop never closed: it set a flag
+    // that only `decideReschedule` could clear, and that is admin-only, so
+    // the client whose interview it was never saw the time being proposed to
+    // them and operations had to guess on their behalf.
+    const isCounter = actor.kind === 'talent'
+      && Boolean(interviewTransition(interview.status, 'talent_counters'));
+
+    if (isCounter && !proposed) {
+      return fail(422, 'Propose a time you can make, so the client has something to accept.');
+    }
+
     const supabase = getSupabaseClient();
     const { data: updated, error } = await supabase
       .from('interviews')
       .update({
+        ...(isCounter ? { status: interviewStageToDb('talent_countered') } : {}),
         reschedule_requested: true,
         reschedule_reason: input.reason || null,
         reschedule_requested_by: actor.kind,
@@ -715,11 +1481,25 @@ export async function requestReschedule(
       ? `Proposed: ${formatInstantInZone(proposed, input.timezone || 'UTC')}.`
       : 'No alternative time was proposed.';
 
-    const warnings = await notifyParties(
-      updated || interview,
-      'reschedule_requested',
-      `${proposedText}${input.reason ? ` Reason: ${input.reason}` : ''}`
-    );
+    const saved = updated || interview;
+    const talentAskedClientToMove = actor.kind === 'talent' && Boolean(interview.client_id);
+    const warnings = (isCounter || talentAskedClientToMove)
+      ? await notifyInterviewEvent(
+          saved,
+          {
+            // The client is the decision maker. Operations gets a copy to
+            // coordinate, while the talent receives a clear receipt.
+            client: { event: 'interview_new_time_proposed', reason: input.reason || null },
+            ops: { event: 'interview_reschedule_waiting_on_client', reason: input.reason || null },
+            talent: { event: 'interview_reschedule_submitted', reason: input.reason || null }
+          },
+          { proposedInstant: proposed }
+        )
+      : await notifyParties(
+          saved,
+          'reschedule_requested',
+          `${proposedText}${input.reason ? ` Reason: ${input.reason}` : ''}`
+        );
 
     await writeAudit(
       actor,
@@ -761,13 +1541,28 @@ export async function decideReschedule(
   try {
     const interview = await loadInterview(input.interviewId);
     if (!interview) return fail(404, 'Interview not found.');
+    if (!interview.reschedule_requested) return fail(409, 'There is no pending reschedule request to decide.');
+
+    // A talent reschedule on a client-owned interview must be seen and
+    // answered by that client. Operations can coordinate, but cannot accept
+    // or reject the proposed time on the client's behalf.
+    if (
+      interview.reschedule_requested &&
+      interview.reschedule_requested_by === 'talent' &&
+      interview.client_id
+    ) {
+      return fail(409, 'The client must review this reschedule request before operations can take further action.');
+    }
 
     const supabase = getSupabaseClient();
 
     if (!input.approve) {
+      const refusal = advance(interview, 'admin_rejects_reschedule');
+      if ('error' in refusal) return fail(409, refusal.error);
       const { data: kept, error } = await supabase
         .from('interviews')
         .update({
+          status: refusal.stage,
           reschedule_requested: false,
           reschedule_reason: null,
           reschedule_requested_by: null,
@@ -779,16 +1574,23 @@ export async function decideReschedule(
           updated_at: new Date().toISOString()
         })
         .eq('id', input.interviewId)
+        .eq('reschedule_requested', true)
         .select()
         .maybeSingle();
 
       if (error) return fail(500, error.message);
+      if (!kept) return fail(409, 'This reschedule request has already been answered.');
 
-      const warnings = await notifyParties(
-        kept || interview,
-        'scheduled',
-        `The reschedule request was declined and the original time stands.${input.note ? ` ${input.note}` : ''}`
-      );
+      const warnings = await notifyInterviewEvent(kept || interview, {
+        client: {
+          event: 'interview_confirmed',
+          reason: `The reschedule request was declined and the original time stands.${input.note ? ` ${input.note}` : ''}`
+        },
+        talent: {
+          event: 'interview_confirmed',
+          reason: `The reschedule request was declined and the original time stands.${input.note ? ` ${input.note}` : ''}`
+        }
+      });
       await writeAudit(actor, 'Decline Reschedule', `Kept the original time for "${interview.title}".`);
       return { ok: true, status: 200, data: kept, warnings };
     }
@@ -816,11 +1618,19 @@ export async function decideReschedule(
       return { ok: false, status: 409, error: describeConflict(conflicts) as string };
     }
 
+    // Approving a move does not confirm it. The new time is one the candidate
+    // has not agreed to, so the interview goes back to them to answer. It used
+    // to be written as 'Rescheduled' and treated as scheduled from that
+    // moment, which is how calendar invitations went out for times nobody on
+    // the other end had accepted.
+    const approval = advance(interview, 'admin_approves_reschedule');
+    if ('error' in approval) return fail(409, approval.error);
+
     const zone = input.timezone || interview.proposed_timezone || interview.scheduled_timezone || 'UTC';
     const { data: moved, error } = await supabase
       .from('interviews')
       .update({
-        status: mapInterviewStatusToDb('Rescheduled'),
+        status: approval.stage,
         scheduled_time: newStart,
         scheduled_timezone: zone,
         // Kept, so the history of what it moved from is not lost.
@@ -845,12 +1655,17 @@ export async function decideReschedule(
         updated_at: new Date().toISOString()
       })
       .eq('id', input.interviewId)
+      .eq('reschedule_requested', true)
       .select()
       .maybeSingle();
 
     if (error) return fail(500, `The interview could not be moved: ${error.message}`);
+    if (!moved) return fail(409, 'This reschedule request has already been answered.');
 
-    const warnings = await notifyParties(moved || interview, 'rescheduled', input.note);
+    const warnings = await notifyInterviewEvent(moved || interview, {
+      talent: { event: 'interview_invitation', reason: input.note || null },
+      client: { event: 'interview_sent_to_talent', reason: input.note || null }
+    });
     await writeAudit(
       actor,
       'Reschedule Interview',
@@ -1050,24 +1865,50 @@ export async function moveVettingInterview(
 /** Closing an interview out once the stage decision is taken. */
 export async function completeInterview(
   actor: Actor,
-  input: { interviewId: string; outcome?: string | null }
+  input: {
+    interviewId: string;
+    /** False records that it did not take place. Defaults to held. */
+    held?: boolean;
+    /** The operator's read, from interviews_admin_outcome_check. */
+    outcome?: string | null;
+    note?: string | null;
+  }
 ): Promise<ServiceResult> {
   if (!actor) return fail(401, 'Not authenticated.');
-  if (actor.kind === 'talent') return fail(403, 'Candidates cannot close out their own interviews.');
+  // Operations closes an interview out. It used to be whoever got there
+  // first, and in practice nobody did: the only thing that set Completed was
+  // a client opening a rating modal, and the decision that follows — offer or
+  // pass — is only offered once an interview is known to be over. So an
+  // interview nobody rated left the hire with nowhere to go at all.
+  if (actor.kind !== 'admin') {
+    return fail(403, 'Only operations can record whether an interview took place.');
+  }
 
   const id = String(input.interviewId || '').trim();
   if (!id) return fail(400, 'Which interview?');
 
+  const held = input.held !== false;
+  if (held && input.outcome && !ADMIN_OUTCOMES.has(String(input.outcome))) {
+    return fail(422, `An outcome must be one of: ${[...ADMIN_OUTCOMES].join(', ')}.`);
+  }
+
   const supabase = getSupabaseClient();
-  const { data: existing } = await supabase
-    .from('interviews').select('id, title, status').eq('id', id).maybeSingle();
-  if (!existing) return fail(404, 'That interview does not exist.');
+  const interview = await loadInterview(id);
+  if (!interview) return fail(404, 'That interview does not exist.');
+
+  const move = advance(interview, held ? 'complete' : 'cancel');
+  if ('error' in move) return fail(409, move.error);
 
   const { data, error } = await supabase
     .from('interviews')
     .update({
-      status: mapInterviewStatusToDb('Completed'),
-      outcome: input.outcome || null
+      status: move.stage,
+      outcome: held ? (input.outcome || 'Held') : 'Did not take place',
+      admin_outcome: held && input.outcome && ADMIN_OUTCOMES.has(String(input.outcome))
+        ? String(input.outcome)
+        : interview.admin_outcome || null,
+      admin_note_internal: input.note || interview.admin_note_internal || null,
+      updated_at: new Date().toISOString()
     })
     .eq('id', id)
     .select()
@@ -1075,12 +1916,28 @@ export async function completeInterview(
 
   if (error) return fail(500, `The interview was not closed out: ${error.message}`);
 
+  const saved = data || interview;
+
+  // The client is the one who decides what happens next, so closing an
+  // interview has to reach them. Nothing told anybody before: the status
+  // changed and the client was left to notice.
+  const warnings = held
+    ? await notifyInterviewEvent(saved, {
+        client: { event: 'interview_outcome_due' },
+        talent: { event: 'interview_completed' }
+      })
+    : await notifyInterviewEvent(saved, {
+        client: { event: 'interview_did_not_happen', reason: input.note || null },
+        talent: { event: 'interview_did_not_happen', reason: input.note || null }
+      });
+
   await recordAudit(actor, {
-    action: 'Complete Interview',
-    details: `${existing.title || id}: ${input.outcome || 'completed'}.`,
+    action: held ? 'Complete Interview' : 'Record Interview Not Held',
+    details: `${interview.title || id}: ${held ? (input.outcome || 'held') : 'did not take place'}.`
+      + (input.note ? ` ${input.note}` : ''),
     entityType: 'interview',
     entityId: id
   });
 
-  return { ok: true, status: 200, data: data || existing };
+  return { ok: true, status: 200, data: saved, warnings };
 }

@@ -296,10 +296,10 @@
 .mk-home-button { border-radius:999px; }
 .mk-site-header--dark a.mk-btn--primary { color:#FFFFFF !important; background:#1458C8 !important; border-color:#4A83E4 !important; border-radius:999px; box-shadow:0 5px 18px rgba(20,88,200,.32); }
 .mk-site-header--dark a.mk-btn--ghost { color:#FFFFFF !important; border-color:rgba(255,255,255,.45) !important; background:rgba(255,255,255,.08) !important; border-radius:999px; }
-.mk-site-header--dark .mk-wrap { min-height:118px; }
-.mk-site-footer .mk-footer-brand img { width:auto; height:102px; object-fit:contain; object-position:left center; filter:drop-shadow(0 2px 8px rgba(255,255,255,.12)); }
-@media(max-width:1040px){.mk-site-header--dark .mk-wrap{min-height:88px!important;height:88px!important}.mk-site-header--dark a[aria-label="Kongila home"] img{height:72px!important}}
-@media(max-width:560px){.mk-site-footer .mk-footer-brand img{height:78px}.mk-site-header--dark .mk-wrap{min-height:80px!important;height:80px!important}.mk-site-header--dark a[aria-label="Kongila home"] img{height:66px!important}}
+.mk-site-header--dark .mk-wrap { min-height:88px; }
+.mk-site-footer .mk-footer-brand img { width:auto; height:72px; object-fit:contain; object-position:left center; filter:drop-shadow(0 2px 8px rgba(255,255,255,.12)); }
+@media(max-width:1040px){.mk-site-header--dark .mk-wrap{min-height:88px!important;height:88px!important}.mk-site-header--dark a[aria-label="Kongila home"] img{height:48px!important}}
+@media(max-width:560px){.mk-site-footer .mk-footer-brand img{height:58px!important}.mk-site-header--dark .mk-wrap{min-height:80px!important;height:80px!important}.mk-site-header--dark a[aria-label="Kongila home"] img{height:44px!important}}
 
 /* ─── Marketing primitives ───────────────────────────────────────────────── */
 

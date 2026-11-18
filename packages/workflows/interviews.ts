@@ -282,3 +282,252 @@ export function isUpcomingInterviewStatus(status?: string | null): boolean {
 export function isPastInterviewStatus(status?: string | null): boolean {
   return PAST_INTERVIEW_STATUSES.has(String(status || '').trim().toLowerCase());
 }
+
+// ─── The stage an interview is at ────────────────────────────────────────────
+//
+// An interview with a matched candidate is not a booking the client makes. It
+// is a request that travels: the client asks, operations reviews it and puts
+// it to the candidate, the candidate accepts, counters or declines, and a
+// counter goes back to the client to accept. Only when both sides have agreed
+// the same instant is it an interview.
+//
+// None of that was modelled. A client's request was written straight to the
+// candidate as 'Proposed', operations was told about it but had no part in it,
+// a candidate's acceptance left the row at 'talent_accepted' for ever — there
+// was no step that made an interview confirmed — and a candidate who wanted a
+// different time raised a reschedule that only operations could answer, so the
+// client whose call it was never saw the time they were being moved to.
+//
+// The eighteen statuses the database accepts already contain the right words.
+// What was missing was the order they go in, and that is what this is. It
+// imports nothing, so the whole flow can be tested with node --test.
+
+export type InterviewStage =
+  /** The client has asked. Nobody outside Kongila has seen it yet. */
+  | 'client_requested'
+  /** Operations has it open. */
+  | 'admin_reviewing'
+  /** Put to the candidate, waiting on them. */
+  | 'sent_to_talent'
+  /** The candidate wants a different time; the client has to agree to it. */
+  | 'talent_countered'
+  /** Both sides have agreed the same instant. This is the only "it's on". */
+  | 'confirmed'
+  | 'talent_declined'
+  | 'admin_declined'
+  | 'cancelled'
+  | 'completed'
+  | 'expired';
+
+export type InterviewEvent =
+  | 'client_requests'
+  | 'admin_opens'
+  | 'admin_sends_to_talent'
+  | 'admin_declines'
+  | 'talent_accepts'
+  | 'talent_counters'
+  | 'talent_declines'
+  | 'client_accepts_counter'
+  | 'client_declines_counter'
+  | 'admin_approves_reschedule'
+  | 'admin_rejects_reschedule'
+  | 'cancel'
+  | 'complete';
+
+/**
+ * Statuses written before the flow above existed, and what they meant.
+ *
+ * 'Proposed' and 'pending_confirmation' were written when a client's request
+ * went straight to the candidate, so the candidate is who it is waiting on.
+ * 'Scheduled' and 'Rescheduled' were written as though agreement had happened,
+ * so they read as confirmed — those interviews are real and in diaries, and
+ * re-opening them would be worse than honouring them.
+ */
+const LEGACY_STAGES: Record<string, InterviewStage> = {
+  proposed: 'sent_to_talent',
+  pending_confirmation: 'sent_to_talent',
+  scheduled: 'confirmed',
+  rescheduled: 'confirmed',
+  confirmed: 'confirmed',
+  talent_accepted: 'confirmed',
+  'reschedule requested': 'talent_countered',
+  canceled: 'cancelled',
+  declined: 'talent_declined',
+  failed: 'completed',
+  passed: 'completed'
+};
+
+const KNOWN_STAGES = new Set<InterviewStage>([
+  'client_requested', 'admin_reviewing', 'sent_to_talent', 'talent_countered',
+  'confirmed', 'talent_declined', 'admin_declined', 'cancelled', 'completed', 'expired'
+]);
+
+/** The stage a stored status means, whichever vocabulary wrote it. */
+export function normalizeInterviewStage(status?: string | null): InterviewStage {
+  const raw = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  if (KNOWN_STAGES.has(raw as InterviewStage)) return raw as InterviewStage;
+  const spaced = String(status || '').trim().toLowerCase();
+  return LEGACY_STAGES[raw] || LEGACY_STAGES[spaced] || 'client_requested';
+}
+
+/** The exact string to store. interviews_status_check is picky about case. */
+export function interviewStageToDb(stage: InterviewStage): string {
+  return stage === 'completed' ? 'Completed' : stage;
+}
+
+const TRANSITIONS: Record<InterviewEvent, { from: InterviewStage[]; to: InterviewStage }> = {
+  client_requests: { from: [], to: 'client_requested' },
+  admin_opens: { from: ['client_requested'], to: 'admin_reviewing' },
+  // From talent_countered too: the client turned the candidate's time down,
+  // operations picked a third one and is putting that to the candidate.
+  admin_sends_to_talent: {
+    from: ['client_requested', 'admin_reviewing', 'talent_countered'],
+    to: 'sent_to_talent'
+  },
+  admin_declines: { from: ['client_requested', 'admin_reviewing'], to: 'admin_declined' },
+  // The candidate accepting the slot operations sent is the agreement. There
+  // is no further confirmation step: operations already approved the time
+  // before it went out, so adding one would only leave a window in which
+  // nobody could say whether the interview was on.
+  talent_accepts: { from: ['sent_to_talent'], to: 'confirmed' },
+  talent_counters: { from: ['sent_to_talent'], to: 'talent_countered' },
+  talent_declines: { from: ['sent_to_talent'], to: 'talent_declined' },
+  // The client agreeing to the candidate's time is the same agreement from
+  // the other side, so it confirms. Operations is told, but is not a gate.
+  client_accepts_counter: { from: ['talent_countered'], to: 'confirmed' },
+  client_declines_counter: { from: ['talent_countered'], to: 'admin_reviewing' },
+  // A confirmed interview that is moved is not confirmed any more: the new
+  // time is one the candidate has not agreed to, so it goes back to them.
+  //
+  // 'talent_countered' is deliberately not a legal starting point for either
+  // of these. At that stage the time on the table came from the candidate and
+  // is sitting with the client, and operations approving or refusing it would
+  // be deciding on the client's behalf about the client's own interview. The
+  // client answers; operations can cancel if nobody does.
+  admin_approves_reschedule: { from: ['confirmed', 'sent_to_talent'], to: 'sent_to_talent' },
+  admin_rejects_reschedule: { from: ['confirmed'], to: 'confirmed' },
+  cancel: {
+    from: ['client_requested', 'admin_reviewing', 'sent_to_talent', 'talent_countered', 'confirmed'],
+    to: 'cancelled'
+  },
+  complete: { from: ['confirmed'], to: 'completed' }
+};
+
+/** The stage this event moves an interview to, or null when it is not legal. */
+export function interviewTransition(
+  current: string | null | undefined,
+  event: InterviewEvent
+): InterviewStage | null {
+  const rule = TRANSITIONS[event];
+  if (!rule) return null;
+  if (event === 'client_requests') return rule.to;
+  return rule.from.includes(normalizeInterviewStage(current)) ? rule.to : null;
+}
+
+/** Why an event was refused, in words the person who tried it can act on. */
+export function explainInterviewTransition(
+  current: string | null | undefined,
+  event: InterviewEvent
+): string | null {
+  if (interviewTransition(current, event)) return null;
+  const stage = normalizeInterviewStage(current);
+  return `This interview is ${describeInterviewStage(stage).label.toLowerCase()}, `
+    + 'so that is not something it can do from here.';
+}
+
+export interface InterviewStageDescription {
+  label: string;
+  /** Whose move it is now, or null when nobody's. */
+  waitingOn: 'client' | 'admin' | 'talent' | null;
+  /** One line for whoever is reading the screen. */
+  detail: string;
+  tone: 'pending' | 'active' | 'done' | 'dead';
+}
+
+const STAGE_DESCRIPTIONS: Record<InterviewStage, InterviewStageDescription> = {
+  client_requested: {
+    label: 'Request sent',
+    waitingOn: 'admin',
+    detail: 'Your Kongila team is reviewing the times you proposed.',
+    tone: 'pending'
+  },
+  admin_reviewing: {
+    label: 'With your Kongila team',
+    waitingOn: 'admin',
+    detail: 'Your account manager is lining this up with the candidate.',
+    tone: 'active'
+  },
+  sent_to_talent: {
+    label: 'With the candidate',
+    waitingOn: 'talent',
+    detail: 'The candidate has been asked to confirm the time.',
+    tone: 'active'
+  },
+  talent_countered: {
+    label: 'New time proposed',
+    waitingOn: 'client',
+    detail: 'The candidate has proposed a different time. Accept it, or tell us and we will find another.',
+    tone: 'active'
+  },
+  confirmed: {
+    label: 'Scheduled',
+    waitingOn: null,
+    detail: 'Both sides have confirmed. The joining details are below.',
+    tone: 'done'
+  },
+  talent_declined: {
+    label: 'Declined by candidate',
+    waitingOn: 'admin',
+    detail: 'The candidate turned this interview down. Your Kongila team will follow up.',
+    tone: 'dead'
+  },
+  admin_declined: {
+    label: 'Not proceeding',
+    waitingOn: null,
+    detail: 'Your Kongila team did not take this request forward.',
+    tone: 'dead'
+  },
+  cancelled: { label: 'Cancelled', waitingOn: null, detail: 'This interview was cancelled.', tone: 'dead' },
+  completed: { label: 'Completed', waitingOn: null, detail: 'This interview has taken place.', tone: 'done' },
+  expired: { label: 'Expired', waitingOn: null, detail: 'Nobody answered in time and the slot lapsed.', tone: 'dead' }
+};
+
+export function describeInterviewStage(stage: InterviewStage | string): InterviewStageDescription {
+  return STAGE_DESCRIPTIONS[normalizeInterviewStage(String(stage))];
+}
+
+/** The happy path, for the progress trail on every portal. */
+export const INTERVIEW_TRAIL: InterviewStage[] = [
+  'client_requested',
+  'admin_reviewing',
+  'sent_to_talent',
+  'confirmed'
+];
+
+/**
+ * How far along the trail a stage sits.
+ *
+ * A counter is not a step backwards for the reader — the request is still
+ * with the candidate's answer — so it sits at the same point as sent_to_talent
+ * rather than rewinding the trail and making it look like progress was lost.
+ */
+export function interviewTrailPosition(stage: InterviewStage | string): number {
+  const normalized = normalizeInterviewStage(String(stage));
+  if (normalized === 'talent_countered') return INTERVIEW_TRAIL.indexOf('sent_to_talent');
+  if (normalized === 'completed') return INTERVIEW_TRAIL.length - 1;
+  const index = INTERVIEW_TRAIL.indexOf(normalized);
+  return index >= 0 ? index : 0;
+}
+
+/** True once both sides have agreed, which is the only time it is a booking. */
+export function isConfirmedInterview(status?: string | null): boolean {
+  const stage = normalizeInterviewStage(status);
+  return stage === 'confirmed' || stage === 'completed';
+}
+
+/** True while somebody still owes an answer. */
+export function isOpenInterview(status?: string | null): boolean {
+  const stage = normalizeInterviewStage(status);
+  return stage === 'client_requested' || stage === 'admin_reviewing'
+    || stage === 'sent_to_talent' || stage === 'talent_countered';
+}

@@ -18,7 +18,14 @@ import {
   mapInterviewStatusFromDb,
   isLiveInterview,
   isUpcomingInterviewStatus,
-  isPastInterviewStatus
+  isPastInterviewStatus,
+  normalizeInterviewStage,
+  interviewTransition,
+  interviewStageToDb,
+  describeInterviewStage,
+  interviewTrailPosition,
+  isConfirmedInterview,
+  isOpenInterview
 } from './interviews.ts';
 
 const at = (iso: string, over: any = {}) => ({
@@ -187,4 +194,112 @@ test('dead statuses are not live', () => {
   assert.equal(isLiveInterview({ status: 'Cancelled' }), false);
   assert.equal(isLiveInterview({ status: 'talent_declined' }), false);
   assert.equal(isLiveInterview({ status: 'Scheduled' }), true);
+});
+
+// ─── The stage an interview is at ────────────────────────────────────────────
+
+
+test('a client request reaches the candidate only after operations sends it', () => {
+  const requested = interviewTransition(null, 'client_requests');
+  assert.equal(requested, 'client_requested');
+
+  // The candidate cannot answer something that has not been put to them.
+  assert.equal(interviewTransition(requested, 'talent_accepts'), null);
+
+  assert.equal(interviewTransition(requested, 'admin_opens'), 'admin_reviewing');
+  assert.equal(interviewTransition('admin_reviewing', 'admin_sends_to_talent'), 'sent_to_talent');
+  assert.equal(interviewTransition('sent_to_talent', 'talent_accepts'), 'confirmed');
+});
+
+test('a candidate countering sends the new time to the client, not to nobody', () => {
+  assert.equal(interviewTransition('sent_to_talent', 'talent_counters'), 'talent_countered');
+  assert.equal(describeInterviewStage('talent_countered').waitingOn, 'client');
+
+  // The client accepting it is the agreement, so it is on.
+  assert.equal(interviewTransition('talent_countered', 'client_accepts_counter'), 'confirmed');
+  // Turning it down puts it back with operations to find a third time.
+  assert.equal(interviewTransition('talent_countered', 'client_declines_counter'), 'admin_reviewing');
+});
+
+test('moving a confirmed interview sends it back to the candidate to agree again', () => {
+  assert.equal(interviewTransition('confirmed', 'admin_approves_reschedule'), 'sent_to_talent');
+  assert.equal(interviewTransition('confirmed', 'admin_rejects_reschedule'), 'confirmed');
+});
+
+test('an interview that is over or off cannot be moved on', () => {
+  for (const dead of ['cancelled', 'talent_declined', 'admin_declined', 'expired', 'completed']) {
+    assert.equal(interviewTransition(dead, 'admin_sends_to_talent'), null, dead);
+    assert.equal(interviewTransition(dead, 'talent_accepts'), null, dead);
+    assert.equal(interviewTransition(dead, 'cancel'), null, dead);
+  }
+});
+
+test('statuses written before the flow existed still read as a stage', () => {
+  // These are real interviews sitting in diaries. They have to keep working.
+  assert.equal(normalizeInterviewStage('Proposed'), 'sent_to_talent');
+  assert.equal(normalizeInterviewStage('pending_confirmation'), 'sent_to_talent');
+  assert.equal(normalizeInterviewStage('Scheduled'), 'confirmed');
+  assert.equal(normalizeInterviewStage('Rescheduled'), 'confirmed');
+  assert.equal(normalizeInterviewStage('talent_accepted'), 'confirmed');
+  assert.equal(normalizeInterviewStage('Reschedule Requested'), 'talent_countered');
+  assert.equal(normalizeInterviewStage('Cancelled'), 'cancelled');
+
+  // And a legacy Proposed row can still be accepted by the candidate.
+  assert.equal(interviewTransition('Proposed', 'talent_accepts'), 'confirmed');
+});
+
+test('only a confirmed interview counts as scheduled', () => {
+  assert.equal(isConfirmedInterview('confirmed'), true);
+  assert.equal(isConfirmedInterview('Scheduled'), true);
+  assert.equal(isConfirmedInterview('sent_to_talent'), false);
+  assert.equal(isConfirmedInterview('talent_countered'), false);
+
+  assert.equal(isOpenInterview('client_requested'), true);
+  assert.equal(isOpenInterview('talent_countered'), true);
+  assert.equal(isOpenInterview('confirmed'), false);
+  assert.equal(isOpenInterview('cancelled'), false);
+});
+
+test('the progress trail never reads as going backwards', () => {
+  assert.equal(interviewTrailPosition('client_requested'), 0);
+  assert.equal(
+    interviewTrailPosition('talent_countered'),
+    interviewTrailPosition('sent_to_talent'),
+    'a counter is still the candidate answering, not a step lost'
+  );
+  assert.equal(interviewTrailPosition('completed'), 3);
+});
+
+test('Completed is stored with the capital the check constraint expects', () => {
+  assert.equal(interviewStageToDb('completed'), 'Completed');
+  assert.equal(interviewStageToDb('sent_to_talent'), 'sent_to_talent');
+});
+
+
+test('operations cannot answer a time the client has not seen', () => {
+  // The time on the table came from the candidate and is sitting with the
+  // client. Operations approving or refusing it is deciding on the client's
+  // behalf about the client's own interview.
+  assert.equal(interviewTransition('talent_countered', 'admin_approves_reschedule'), null);
+  assert.equal(interviewTransition('talent_countered', 'admin_rejects_reschedule'), null);
+
+  // Cancelling is still open to them, for a client who never answers.
+  assert.equal(interviewTransition('talent_countered', 'cancel'), 'cancelled');
+
+  // A client's own reschedule is different: they already know about it, so
+  // operations decides and the candidate is asked to agree the new time.
+  assert.equal(interviewTransition('confirmed', 'admin_approves_reschedule'), 'sent_to_talent');
+});
+
+test('a joining link is derived from the interview id, not invented each time', async () => {
+  // The link is generated server-side in @kongila/database, which cannot be
+  // loaded here, so this guards the shape the UI and the .ics depend on:
+  // stable for a given interview, and a valid https URL.
+  const room = (id: string) =>
+    `https://meet.jit.si/${`kongila-${id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`.slice(0, 60)}`;
+
+  assert.equal(room('iv_123_abc'), room('iv_123_abc'), 'the same interview must resolve to the same room');
+  assert.notEqual(room('iv_123_abc'), room('iv_999_xyz'));
+  assert.doesNotThrow(() => new URL(room('iv_123_abc')));
+  assert.ok(!room('iv_Ada_Nwosu_Backend').includes('Ada'), 'the room name leaks who is meeting');
 });

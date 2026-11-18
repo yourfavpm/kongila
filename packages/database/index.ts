@@ -1152,7 +1152,31 @@ export async function readDbAsync(): Promise<Schema> {
 
       return {
         ...payload,
-        id: payload.id || r.id,
+        // The row's primary key is the request's identity, everywhere.
+        //
+        // This used to be `payload.id || r.id`, the id the intake form minted
+        // into the payload. Nothing else in the product uses that one: every
+        // match, interview, offer, contract and call request is written
+        // against talent_requests.id, and both portals' /api/requests routes
+        // return the row id too. So the snapshot handed out a second identity
+        // for the same request, and two things went wrong with it.
+        //
+        // Both dashboards read requests from the snapshot AND from
+        // /api/requests, then merge the two lists keyed by id. Two ids meant
+        // the merge could not see they were the same request, so one filed
+        // request showed up twice.
+        //
+        // And scopeDbForUser collects a client's request ids from here and
+        // keeps the matches whose requestId is in that set. The matches carry
+        // the row id, the set held payload ids, so the set never matched:
+        // every shortlist operations submitted was filtered out before it
+        // reached the client, and the candidate's own opportunity card lost
+        // the request behind it the same way.
+        //
+        // payloadId is kept so a legacy row written against the old id can
+        // still be resolved.
+        id: r.id,
+        payloadId: payload.id || null,
         rowId: r.id,
         clientId: r.client_id || payload.clientId,
         clientName,
@@ -1308,7 +1332,8 @@ export async function readDbAsync(): Promise<Schema> {
 
     const notifications: Notification[] = (rNotifs.data || []).map((n: any) => ({
       id: n.id, userId: n.user_id, title: n.title, message: n.message,
-      read: n.read, createdAt: n.created_at, category: n.category, sourceRecordId: n.source_record_id
+      read: n.read, createdAt: n.created_at, module: n.module_type,
+      category: n.category, sourceRecordId: n.source_record_id
     }));
 
     const auditLogs: AuditLog[] = (rAudit.data || []).map((al: any) => ({
@@ -1333,7 +1358,7 @@ export async function readDbAsync(): Promise<Schema> {
     }));
 
     const interviews: Interview[] = (rInterviews.data || []).map((iv: any) => ({
-      id: iv.id, requestId: iv.request_id, matchId: iv.match_id, talentId: iv.talent_id,
+      id: iv.id, requestId: iv.request_id, matchId: iv.match_id, clientId: iv.client_id, talentId: iv.talent_id,
       talentName: iv.talent_name, talentAvatar: iv.talent_avatar, clientName: iv.client_name,
       title: iv.title, date: iv.date, time: iv.time,
       status: mapInterviewStatusFromDb(iv),
@@ -1356,6 +1381,10 @@ export async function readDbAsync(): Promise<Schema> {
       rescheduleRequestedBy: iv.reschedule_requested_by,
       rescheduleRequestedAt: iv.reschedule_requested_at,
       rescheduledFrom: iv.rescheduled_from,
+      proposedSlots: Array.isArray(iv.proposed_slots) ? iv.proposed_slots : [],
+      confirmedSlot: iv.confirmed_slot,
+      revealedToTalentAt: iv.revealed_to_talent_at,
+      meetingLinkSource: iv.google_calendar_link ? 'calendar' : 'room',
       createdAt: iv.created_at
     }));
 
@@ -1582,7 +1611,11 @@ export async function writeDbAsync(db: Schema): Promise<void> {
       // so the row id is left to the column default and payload.id stays the
       // identifier the portals use.
       const rows = db.clientRequests.map((r: any) => {
-        const { rowId, ...payload } = r as any;
+        const { rowId, payloadId, ...rest } = r as any;
+        // `id` on a request is now the row id. The payload keeps whatever id
+        // it was created with, so a row written back here is not renamed
+        // underneath anything still holding the old identifier.
+        const payload = { ...rest, id: payloadId || rest.id };
         const row: any = {
           client_id: r.clientId,
           service_type: r.serviceType,

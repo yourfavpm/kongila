@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { apiFetch } from "../lib/apiFetch";
 import { requestTitle } from "@kongila/shared-types";
+import { isOpenInterview, isConfirmedInterview, normalizeInterviewStage } from "@kongila/workflows";
+import TalentProfileDrawer from "./TalentProfileDrawer";
+import { interviewTrail } from "../lib/interviewTrail";
 
 /**
  * A match is rejected when its status is "rejected". Rows written before the
@@ -22,6 +25,8 @@ interface MatchedTalentPanelProps {
   onRequestUpdated?: (request: any) => void;
   onScheduleMeeting?: (talent: any, request: any, match: any) => void;
   onExtendOffer?: (talent: any, request: any, match: any) => void;
+  /** Opens the interview already running with this candidate. */
+  onViewInterview?: (interview: any) => void;
 }
 
 export default function MatchedTalentPanel({
@@ -34,8 +39,17 @@ export default function MatchedTalentPanel({
   onRequestUpdated,
   onScheduleMeeting,
   onExtendOffer,
+  onViewInterview,
 }: MatchedTalentPanelProps) {
   const [sortOption, setSortOption] = useState<"matchScore" | "vettingScore" | "recent">("matchScore");
+  // The candidate whose profile is open in the drawer, with the role and the
+  // match they are being read against. "View Full Profile" used to be an
+  // anchor whose click handler was alert("Full Profile Modal integration
+  // point") — the one link on the card that opens the thing the client is
+  // deciding on did nothing at all.
+  const [profileTarget, setProfileTarget] = useState<{
+    talent: any; request: any; match: any;
+  } | null>(null);
   const [rejectionModalOpen, setRejectionModalOpen] = useState(false);
   const [rejectionCandidate, setRejectionCandidate] = useState<any>(null);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -215,9 +229,27 @@ export default function MatchedTalentPanel({
                       || String(interview.talentId) === String(talent.id))
                   );
                   const hasCompletedInterview = candidateInterviews.some((interview) =>
-                    String(interview.status).toLowerCase() === 'completed'
+                    normalizeInterviewStage(interview.status) === 'completed'
                   );
                   const isTerminalMatch = ['rejected', 'accepted'].includes(String(match.status).toLowerCase());
+
+                  // An interview already running with this candidate on this
+                  // role. The button used to stay live through all of it, so
+                  // a client who had asked on Monday and heard nothing by
+                  // Wednesday asked again — and again — and operations ended
+                  // up with three requests for one conversation. One is open
+                  // at a time; the button becomes the way to go and look at
+                  // it.
+                  const liveInterview = candidateInterviews
+                    .filter((interview) =>
+                      isOpenInterview(interview.status)
+                      || (isConfirmedInterview(interview.status)
+                        && normalizeInterviewStage(interview.status) !== 'completed')
+                    )
+                    .sort((a: any, b: any) =>
+                      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+                    )[0] || null;
+                  const liveTrail = liveInterview ? interviewTrail(liveInterview.status, 'client') : null;
                   
                   return (
                     <div 
@@ -334,15 +366,34 @@ export default function MatchedTalentPanel({
 
                         {/* Actions */}
                         <div style={{ display: "flex", gap: "12px" }}>
+                          {liveInterview && liveTrail ? (
+                            <button
+                              onClick={() => onViewInterview?.(liveInterview)}
+                              style={{
+                                flex: 1,
+                                background: liveTrail.waitingOn === 'Your move' ? "#FFFBEB" : "#F1F5F9",
+                                color: liveTrail.waitingOn === 'Your move' ? "#92400E" : "#334155",
+                                border: `1px solid ${liveTrail.waitingOn === 'Your move' ? "#FDE68A" : "#E2E8F0"}`,
+                                padding: "10px", borderRadius: "8px", fontSize: "12.5px",
+                                fontWeight: 700, cursor: "pointer", textAlign: "center", lineHeight: 1.35
+                              }}
+                            >
+                              <span style={{ display: "block" }}>Interview · {liveTrail.label}</span>
+                              <span style={{ display: "block", fontSize: "10.5px", fontWeight: 700, opacity: 0.8, marginTop: "2px" }}>
+                                {liveTrail.waitingOn === 'Your move' ? 'Needs your answer →' : 'View status →'}
+                              </span>
+                            </button>
+                          ) : (
                           <button 
                             onClick={() => handleRequestInterview(talent, group.request, match)}
                             disabled={isTerminalMatch}
-                            style={{ flex: 1, background: "#2563EB", color: "#FFF", border: "none", padding: "10px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer", transition: "background 0.2s" }}
-                            onMouseOver={(e) => e.currentTarget.style.background = "#1D4ED8"}
-                            onMouseOut={(e) => e.currentTarget.style.background = "#2563EB"}
+                            style={{ flex: 1, background: isTerminalMatch ? "#CBD5E1" : "#2563EB", color: "#FFF", border: "none", padding: "10px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: isTerminalMatch ? "not-allowed" : "pointer", transition: "background 0.2s" }}
+                            onMouseOver={(e) => { if (!isTerminalMatch) e.currentTarget.style.background = "#1D4ED8"; }}
+                            onMouseOut={(e) => { if (!isTerminalMatch) e.currentTarget.style.background = "#2563EB"; }}
                           >
                             Request Interview
                           </button>
+                          )}
                           <button 
                             onClick={() => openRejection(match, talent, group.request)}
                             disabled={isTerminalMatch}
@@ -363,9 +414,13 @@ export default function MatchedTalentPanel({
                         </div>
                         
                         <div style={{ textAlign: "center", marginTop: "16px" }}>
-                          <a href="#" onClick={(e) => { e.preventDefault(); alert("Full Profile Modal integration point"); }} style={{ color: "#4F46E5", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}>
+                          <button
+                            type="button"
+                            onClick={() => setProfileTarget({ talent, request: group.request, match })}
+                            style={{ background: "transparent", border: "none", color: "#4F46E5", fontSize: "13px", fontWeight: 600, cursor: "pointer", padding: "4px 8px" }}
+                          >
                             View Full Profile →
-                          </a>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -432,6 +487,41 @@ export default function MatchedTalentPanel({
           </div>
         </div>
       )}
+
+      {profileTarget && (() => {
+        // The drawer's button follows the same rule as the card's: one open
+        // interview per candidate per role.
+        const open = interviews.find((interview) =>
+          String(interview.requestId) === String(profileTarget.request?.id)
+          && String(interview.talentId) === String(profileTarget.talent?.id)
+          && (isOpenInterview(interview.status)
+            || (isConfirmedInterview(interview.status)
+              && normalizeInterviewStage(interview.status) !== 'completed'))
+        );
+        const terminal = ['rejected', 'rejected_by_client', 'accepted'].includes(
+          String(profileTarget.match?.status || '').toLowerCase()
+        );
+        return (
+          <TalentProfileDrawer
+            talent={profileTarget.talent}
+            request={profileTarget.request}
+            match={profileTarget.match}
+            onClose={() => setProfileTarget(null)}
+            onRequestInterview={() => {
+              const target = profileTarget;
+              setProfileTarget(null);
+              if (open) {
+                onViewInterview?.(open);
+                return;
+              }
+              handleRequestInterview(target.talent, target.request, target.match);
+            }}
+            interviewDisabled={terminal}
+            interviewDisabledReason="This candidate is no longer open on this role"
+            interviewLabel={open ? `Interview ${interviewTrail(open.status, 'client').label.toLowerCase()} — view it` : undefined}
+          />
+        );
+      })()}
     </div>
   );
 }

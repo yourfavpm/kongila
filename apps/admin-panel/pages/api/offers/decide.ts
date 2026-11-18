@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
+import { getRequestUser, getSupabaseClient } from '@kongila/database';
 
 /**
  * Operations approving, sending, declining or returning a client's offer.
@@ -65,11 +65,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (action === 'approve') {
       patch.status = 'admin_approved';
     } else if (action === 'send') {
-      // Sending the offer is the moment it reaches the candidate, so this is
-      // the last point the compliance gate can stop it.
-      const refusal = await complianceGate('extend_offer', String(offer.talent_id));
-      if (refusal) return res.status(409).json({ error: refusal });
-
+      // Mandatory documents are enforced when the candidate accepts. They
+      // should not prevent the client/admin from completing the offer flow.
       const days = Number(responseDays) > 0 ? Number(responseDays) : DEFAULT_RESPONSE_DAYS;
       patch.status = 'sent_to_talent';
       patch.sent_to_talent_at = now;

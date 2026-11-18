@@ -32,8 +32,33 @@ export default function MyCompanyPanel({ currentUser, organizations, clientProfi
 
     (async () => {
       try {
-        const res = await apiFetch('/api/company');
-        const body = await res.json().catch(() => ({}));
+        let res = await apiFetch('/api/company');
+        let body = await res.json().catch(() => ({}));
+
+        // A previous signup could create the Auth account but fail partway
+        // through client provisioning. Session restoration still lets that
+        // authenticated client into the portal, so repair the missing company
+        // profile on demand before presenting an error. The endpoint verifies
+        // the bearer token and only provisions the caller's own client role.
+        if (res.status === 404 && currentUser?.role === 'client') {
+          const provisionRes = await apiFetch('/api/account/provision', {
+            method: 'POST',
+            body: JSON.stringify({
+              role: 'client',
+              name: currentUser.name,
+              email: currentUser.email,
+              companyName: currentUser.companyName
+            })
+          });
+          const provision = await provisionRes.json().catch(() => ({}));
+          if (!provisionRes.ok || !provision?.ok) {
+            throw new Error(provision?.error || body?.error || 'Could not finish setting up your company profile.');
+          }
+
+          res = await apiFetch('/api/company');
+          body = await res.json().catch(() => ({}));
+        }
+
         if (cancelled) return;
         if (!res.ok) {
           setLoadError(body?.error || `Could not load your company (${res.status}).`);

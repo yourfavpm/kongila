@@ -19,13 +19,9 @@
 --     is_mandatory and friends). Those are the document versioning and
 --     e-signature feature, not a reconciliation. They belong with that work,
 --     designed as a whole rather than bolted on one column at a time.
---   service_requests — not fixed, retired instead. The portals store the whole
---     request in talent_requests.payload; service_requests was a second, older
---     shape that every write failed against (missing NOT NULL title, four
---     columns that do not exist, two CHECK constraints narrower than the
---     product). @kongila/database now reads and writes talent_requests only.
---     The table is left in place rather than dropped, so nothing is lost if a
---     row turns up in it. Dropping it is a separate, later decision.
+--   service_requests — retained as legacy data, but no longer referenced by
+--     active offer creation. Migration 2026-11-18 repoints offers.request_id
+--     to the active talent_requests rows without deleting legacy offers.
 
 -- ── notifications.title ──────────────────────────────────────────────────────
 -- All 17 notification inserts in the product write a title, and both portals

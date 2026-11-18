@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
+import { getRequestUser, getSupabaseClient } from '@kongila/database';
 import { hasOfferCapacity, requestedHeadcount } from '@kongila/workflows';
 import { requestTitle } from '@kongila/shared-types';
 
@@ -147,12 +147,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(409).json({ error: 'A completed interview is required before an offer can be created' });
     }
 
-    // Validate compliance only after confirming the caller owns this
-    // request and candidate association, so this endpoint cannot be used to
-    // probe another candidate's compliance state.
-    const refusal = await complianceGate('extend_offer', String(talentId));
-    if (refusal) return res.status(409).json({ error: refusal });
-
     const roleTitle = requestTitle({
       ...(request.payload || {}),
       title: request.payload?.title || request.title
@@ -234,6 +228,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (error) {
       console.error('[api/offers] insert failed:', error.message);
+      if (error.code === '23503' && String(error.message).includes('offers_request_id_fkey')) {
+        return res.status(503).json({
+          error: 'Offer storage is still linked to the legacy request table. Apply the offers request-reference database migration, then retry.'
+        });
+      }
       return res.status(500).json({ error: `Could not create the offer: ${error.message}` });
     }
 

@@ -837,6 +837,7 @@ export interface Notification {
   message: string;
   read: boolean;
   createdAt: string;
+  module?: string;
   category?: 'Requests' | 'Matches' | 'Interviews' | 'Contracts' | 'Billing' | 'Messages' | 'Marketing' | 'System';
   sourceRecordId?: string;
 }
@@ -1225,6 +1226,7 @@ export interface Interview {
   id: string;
   requestId?: string;
   matchId?: string;
+  clientId?: string;
   talentId: string;
   talentName: string;
   talentAvatar?: string;
@@ -1234,6 +1236,7 @@ export interface Interview {
   time: string;
   scheduledTime?: string;
   scheduledTimezone?: string;
+  durationMinutes?: number;
   talentTimezone?: string;
   rescheduledFrom?: string;
   /**
@@ -1260,6 +1263,7 @@ export interface Interview {
   googleCalendarEventId?: string;
   googleCalendarLink?: string;
   rescheduleRequested?: boolean;
+  rescheduleRequestedBy?: 'talent' | 'client' | 'admin' | null;
   rescheduleReason?: string;
   proposedNewDate?: string;
   proposedNewTime?: string;

@@ -1,6 +1,7 @@
 import type { AppProps } from 'next/app';
 import Head from 'next/head';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import '../styles/globals.css';
 import '../styles/brand.css';
 import '../styles/workforce-platform.css';
@@ -42,9 +43,37 @@ export default function App({ Component, pageProps }: AppProps) {
         />
       </Head>
       <ToastProvider>
+        <RouteProgressFeedback />
         <Component {...pageProps} />
       </ToastProvider>
     </>
+  );
+}
+
+/** Immediate, consistent acknowledgement while a client-side route loads. */
+function RouteProgressFeedback() {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    const start = () => setPending(true);
+    const finish = () => setPending(false);
+    router.events.on('routeChangeStart', start);
+    router.events.on('routeChangeComplete', finish);
+    router.events.on('routeChangeError', finish);
+    return () => {
+      router.events.off('routeChangeStart', start);
+      router.events.off('routeChangeComplete', finish);
+      router.events.off('routeChangeError', finish);
+    };
+  }, [router.events]);
+
+  if (!pending) return null;
+  return (
+    <div className="kongila-route-progress" role="status" aria-live="polite">
+      <span />
+      <span className="kongila-sr-only">Loading the next page</span>
+    </div>
   );
 }
 

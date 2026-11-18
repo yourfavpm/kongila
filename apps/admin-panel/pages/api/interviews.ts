@@ -146,7 +146,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       rescheduleRequestedBy: row.reschedule_requested_by,
       rescheduleRequestedAt: row.reschedule_requested_at,
       proposedTime: row.proposed_time,
-      proposedTimezone: row.proposed_timezone
+      proposedTimezone: row.proposed_timezone,
+      // The candidate's counter-offer, as a date and a time. The board shows
+      // what they proposed next to the request, and without these two it had
+      // the flag and nothing to put beside it.
+      proposedNewDate: row.proposed_new_date,
+      proposedNewTime: row.proposed_new_time,
+      // Every time the client said would work, best first. Operations picks
+      // one of these when they put the interview to the candidate, which is
+      // the whole point of their review step.
+      proposedSlots: Array.isArray(row.proposed_slots) ? row.proposed_slots : [],
+      confirmedSlot: row.confirmed_slot,
+      revealedToTalentAt: row.revealed_to_talent_at,
+      talentDeclineReason: row.talent_decline_reason,
+      talentTimezone: row.talent_timezone,
+      clientTimezone: row.client_timezone
     })));
   }
 

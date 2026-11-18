@@ -223,7 +223,13 @@ test('every new template renders an action button when given a URL', () => {
     'work_simulation_marked', 'vetting_stage_result', 'vetting_complete',
     'submitted_to_client', 'talent_hired', 'invoice_issued', 'invoice_overdue',
     'payout_sent', 'payout_failed', 'contract_renewal_due', 'contract_terminated',
-    'contract_voided', 'sla_breach', 'client_at_risk', 'sourcing_required'
+    'contract_voided', 'sla_breach', 'client_at_risk', 'sourcing_required',
+    'interview_requested', 'interview_request_sent', 'interview_request_declined',
+    'interview_sent_to_talent',
+    'interview_invitation', 'interview_confirmed', 'interview_declined_by_talent',
+    'interview_new_time_proposed', 'interview_counter_declined',
+    'interview_reschedule_waiting_on_client', 'interview_reschedule_submitted',
+    'interview_reschedule_request_declined'
   ] as const;
 
   for (const event of withButtons) {
@@ -241,5 +247,69 @@ test('a template with no action URL does not print an empty link', () => {
     assert.ok(!/: *$/m.test(content.body.trim()), `${event} left a dangling label`);
     assert.ok(!content.body.includes('undefined'), `${event} leaked "undefined"`);
     assert.ok(!content.subject.includes('undefined'), `${event} leaked "undefined" into the subject`);
+  }
+});
+
+test('a new request has one notice for the client and a different one for operations', () => {
+  // These were the same event. Operations received the client's receipt, so
+  // an operator reading it saw a confirmation of somebody else's request, and
+  // the client who filed it was told nothing.
+  const client = buildNotification('request_received', { roleTitle: 'Backend Engineer' });
+  assert.match(client.subject, /^We have your request/);
+  assert.match(client.body, /Your request for Backend Engineer is with our talent team/);
+
+  const ops = buildNotification('new_request_for_ops', {
+    roleTitle: 'Backend Engineer',
+    companyName: 'Horizon Fintech'
+  });
+  assert.match(ops.subject, /^New request/);
+  assert.match(ops.body, /Horizon Fintech has filed a request for Backend Engineer/);
+  assert.ok(!/your request/i.test(ops.body), 'the operations notice reads as if it were the client\'s');
+  assert.ok(ALL_NOTIFICATION_EVENTS.includes('new_request_for_ops'));
+});
+
+test('every step of an interview has its own notice, addressed to the right reader', () => {
+  // These were one event. Operations, the client and the candidate were all
+  // sent "an interview has been proposed", which was true for exactly one of
+  // the three and told none of them what they had to do next.
+  const ctx = {
+    talentName: 'Ada Nwosu',
+    companyName: 'Horizon Fintech',
+    roleTitle: 'Backend Engineer',
+    when: 'Tue 24 Nov, 15:00 WAT'
+  };
+
+  const ops = buildNotification('interview_requested', ctx);
+  assert.match(ops.body, /Horizon Fintech has asked to interview Ada Nwosu/);
+  assert.match(ops.body, /put it to the candidate, or decline it/);
+
+  const receipt = buildNotification('interview_request_sent', ctx);
+  assert.match(receipt.body, /is with your Kongila team/);
+  assert.match(receipt.body, /do not need to contact them yourself/);
+
+  const invite = buildNotification('interview_invitation', ctx);
+  assert.match(invite.body, /accept it, propose a time that suits you better, or turn it down/);
+  assert.match(invite.body, /Nothing is in your diary until you answer/);
+
+  // Asserted on meaning rather than exact phrasing: this copy gets reworded,
+  // and a test that breaks on a comma is a test people start ignoring.
+  const counter = buildNotification('interview_new_time_proposed', ctx);
+  assert.match(counter.body, /Ada Nwosu/);
+  assert.match(counter.body, /accept or decline/i);
+  assert.ok(
+    /not be moved|unless you accept|confirmed on the spot/i.test(counter.body),
+    'the client is not told whether answering actually changes anything'
+  );
+
+  const confirmed = buildNotification('interview_confirmed', ctx);
+  assert.match(confirmed.body, /confirmed by both sides/);
+
+  // Nobody is told an interview is on before both sides have agreed one.
+  for (const event of ['interview_requested', 'interview_request_sent', 'interview_invitation'] as const) {
+    const content = buildNotification(event, ctx);
+    assert.ok(
+      !/confirmed by both sides|is confirmed\b/.test(content.body),
+      `${event} tells the reader the interview is on before anyone agreed`
+    );
   }
 });

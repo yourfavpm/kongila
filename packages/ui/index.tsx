@@ -81,12 +81,13 @@ export interface NeonButtonProps {
   onClick?: () => void;
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
   disabled?: boolean;
+  loading?: boolean;
   style?: React.CSSProperties;
   type?: 'button' | 'submit' | 'reset';
 }
 
 export const NeonButton: React.FC<NeonButtonProps> = ({ 
-  children, onClick, variant = 'primary', disabled = false, style, type = 'button' 
+  children, onClick, variant = 'primary', disabled = false, loading = false, style, type = 'button' 
 }) => {
   const getColors = () => {
     switch (variant) {
@@ -132,7 +133,8 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       style={{
         padding: '12px 24px',
         borderRadius: '10px',
@@ -141,9 +143,9 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
         background: colors.bg,
         border: variant === 'primary' ? 'none' : `1px solid ${colors.border}`,
         color: colors.color,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        boxShadow: variant === 'primary' && !disabled ? `0px 4px 12px ${colors.shadow}` : 'none',
-        opacity: disabled ? 0.5 : 1,
+        cursor: disabled || loading ? 'wait' : 'pointer',
+        boxShadow: variant === 'primary' && !disabled && !loading ? `0px 4px 12px ${colors.shadow}` : 'none',
+        opacity: disabled && !loading ? 0.5 : 1,
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
         outline: 'none',
         display: 'inline-flex',
@@ -175,6 +177,7 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
         }
       }}
     >
+      {loading && <span aria-hidden="true" style={{ width: 15, height: 15, flex: '0 0 15px', border: '2px solid currentColor', borderRightColor: 'transparent', borderRadius: '50%', animation: 'kongila-button-spin .7s linear infinite' }} />}
       {children}
     </button>
   );
@@ -507,3 +510,131 @@ export const ToastProvider: React.FC<{children: React.ReactNode}> = ({ children 
 }
 
 export const useToast = () => React.useContext(ToastContext);
+
+// ─── Where an interview has got to ───────────────────────────────────────────
+//
+// An interview with a matched candidate is not a booking somebody makes. It
+// travels: the client asks, operations reviews it and puts it to the
+// candidate, the candidate accepts or proposes another time, and a proposed
+// time goes back to the client. Three portals show the same interview, and
+// before this each of them showed a bare status string — "Proposed",
+// "talent_accepted" — which told nobody whose move it was.
+//
+// This is the picture of that journey, and it is deliberately presentational:
+// it takes the steps already worked out and draws them. The stages themselves
+// live in @kongila/workflows, so there is one definition of the flow rather
+// than one per portal, and this package does not need to depend on it.
+
+export interface InterviewTrailStep {
+  label: string;
+  state: 'done' | 'current' | 'upcoming' | 'stopped';
+}
+
+export interface InterviewStatusTrailProps {
+  steps: InterviewTrailStep[];
+  /** What is happening now, in a sentence the reader can act on. */
+  detail?: string;
+  /** Whose move it is, labelled for whoever is looking at it. */
+  waitingOn?: string | null;
+  compact?: boolean;
+}
+
+const TRAIL_COLOURS: Record<InterviewTrailStep['state'], { dot: string; text: string; line: string }> = {
+  done: { dot: '#13866F', text: '#0F172A', line: '#13866F' },
+  current: { dot: '#1455C0', text: '#0F172A', line: '#E2E8F0' },
+  upcoming: { dot: '#CBD5E1', text: '#94A3B8', line: '#E2E8F0' },
+  stopped: { dot: '#BD4D58', text: '#B91C1C', line: '#E2E8F0' }
+};
+
+export const InterviewStatusTrail: React.FC<InterviewStatusTrailProps> = ({
+  steps,
+  detail,
+  waitingOn,
+  compact = false
+}) => {
+  if (!steps || steps.length === 0) return null;
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
+        {steps.map((step, index) => {
+          const state: InterviewTrailStep['state'] = step.state || 'upcoming';
+          const colour = TRAIL_COLOURS[state] ?? TRAIL_COLOURS.upcoming;
+          const isLast = index === steps.length - 1;
+          return (
+            <div
+              key={`${step.label}-${index}`}
+              style={{ flex: isLast ? '0 0 auto' : 1, display: 'flex', alignItems: 'flex-start', minWidth: 0 }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                <span
+                  aria-hidden
+                  style={{
+                    width: state === 'current' ? '13px' : '10px',
+                    height: state === 'current' ? '13px' : '10px',
+                    borderRadius: '50%',
+                    background: colour.dot,
+                    boxShadow: state === 'current' ? `0 0 0 4px ${colour.dot}22` : 'none',
+                    flexShrink: 0,
+                    marginTop: state === 'current' ? 0 : '1px'
+                  }}
+                />
+                {!compact && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: state === 'current' ? 800 : 600,
+                      color: colour.text,
+                      textAlign: 'center',
+                      lineHeight: 1.35,
+                      maxWidth: '96px'
+                    }}
+                  >
+                    {step.label}
+                  </span>
+                )}
+              </div>
+              {!isLast && (
+                <span
+                  aria-hidden
+                  style={{
+                    flex: 1,
+                    height: '2px',
+                    background: colour.line,
+                    margin: state === 'current' ? '6px 6px 0' : '5px 6px 0',
+                    borderRadius: '2px',
+                    minWidth: '12px'
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {(detail || waitingOn) && (
+        <div style={{ marginTop: compact ? '8px' : '12px' }}>
+          {waitingOn && (
+            <span
+              style={{
+                display: 'inline-block',
+                padding: '3px 9px',
+                borderRadius: '999px',
+                background: '#EFF5FD',
+                color: '#1455C0',
+                fontSize: '11px',
+                fontWeight: 800,
+                marginRight: '8px'
+              }}
+            >
+              {waitingOn}
+            </span>
+          )}
+          {detail && (
+            <span style={{ fontSize: '12.5px', color: '#475569', lineHeight: 1.55 }}>{detail}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};

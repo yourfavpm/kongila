@@ -267,12 +267,14 @@ create table talent_skill_assessments (
 -- REQUESTS
 --
 -- Three request tables. talent_requests is what the portals use and stores the
--- whole request in a jsonb payload. service_requests is legacy but offers
--- references it. client_requests appears unused. See NOTES.
+-- whole request in a jsonb payload. service_requests is legacy; offers point
+-- to the text key derived from talent_requests.id. client_requests appears
+-- unused. See NOTES.
 -- ============================================================================
 
 create table talent_requests (
   id                  uuid primary key default uuid_generate_v4(),
+  id_text             text generated always as (id::text) stored unique,
   client_id           text not null,
   service_type        text not null,
   payload             jsonb not null,
@@ -403,7 +405,7 @@ create table interviews (
 
 create table offers (
   id                        varchar(255) primary key default (gen_random_uuid())::text,
-  request_id                varchar(255),
+  request_id                text,
   match_id                  varchar(255),
   client_id                 varchar(255),
   talent_id                 varchar(255),
@@ -946,8 +948,8 @@ create table remotan_agent_logs (
 --
 -- Added after all tables exist. Note the inconsistencies carried over from the
 -- live schema: offers.talent_id points at users while contracts.talent_id
--- points at talent_profiles, and offers.request_id points at service_requests
--- while request_activity_logs.request_id points at talent_requests.
+-- points at talent_profiles. Request references use talent_requests.id_text
+-- so the text-based workflow ids target the active request rows.
 -- matches and interviews have no foreign keys at all. See NOTES.
 -- ============================================================================
 
@@ -999,7 +1001,7 @@ alter table offers
   add constraint offers_client_id_fkey foreign key (client_id) references users(id) on delete cascade,
   add constraint offers_talent_id_fkey foreign key (talent_id) references users(id) on delete cascade,
   add constraint offers_match_id_fkey foreign key (match_id) references matches(id) on delete cascade,
-  add constraint offers_request_id_fkey foreign key (request_id) references service_requests(id) on delete cascade;
+  add constraint offers_request_id_fkey foreign key (request_id) references talent_requests(id_text) on delete cascade;
 
 alter table contracts
   add constraint contracts_client_id_fkey foreign key (client_id) references users(id) on delete cascade,
@@ -1216,10 +1218,9 @@ alter table remotan_agent_logs enable row level security;
 --
 -- THREE REQUEST TABLES (day 5)
 --   talent_requests   used by the client and admin portals; the entire request
---                     lives in a jsonb payload column, so nothing can be
---                     filtered, sorted or reported on in the database
---   service_requests  legacy, but offers.request_id references it, so it
---                     cannot simply be dropped
+--                     lives in a jsonb payload column, with id_text provided
+--                     as a stable text FK target for workflow records
+--   service_requests  legacy and no longer referenced by active workflows
 --   client_requests   no code references it at all
 --
 -- TWO TALENT TABLES (day 5)

@@ -53,13 +53,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ interview: moved.data, warnings: moved.warnings });
   }
 
+  // Closing an interview out: it took place, or it did not. The client is
+  // notified either way, because the decision that follows a held interview
+  // is theirs and they cannot make it until they know it is over.
   if (body.action === 'complete') {
     const done = await completeInterview(actor, {
       interviewId: body.interviewId,
-      outcome: body.outcome
+      held: body.held !== false,
+      outcome: body.outcome,
+      note: body.note
     });
     if (!done.ok) return res.status(done.status).json({ error: done.error });
-    return res.status(200).json({ interview: done.data });
+    return res.status(200).json({ interview: done.data, warnings: done.warnings });
   }
 
   const result = await scheduleInterview(actor, {

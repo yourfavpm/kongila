@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, notifyAdmins, notifyUsers } from '@kongila/database';
+import { getRequestUser, getSupabaseClient, notifyAdmins, notifyUsers, getTalentComplianceStatus } from '@kongila/database';
 import { matchingProgressStatus } from '@kongila/workflows';
 
 /**
@@ -164,6 +164,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // ── Accept ───────────────────────────────────────────────────────────────
+    const compliance = await getTalentComplianceStatus(String(actor.talentProfileId || offer.talent_id));
+    if (!compliance.ok || !compliance.data) {
+      return res.status(compliance.status).json({ error: compliance.error || 'Could not verify your required documents.' });
+    }
+    if (!compliance.data.compliant) {
+      return res.status(409).json({
+        error: 'Sign your pending mandatory documents before accepting this offer.',
+        code: 'MANDATORY_DOCUMENTS_PENDING',
+        pendingDocuments: compliance.data.outstanding.map((document: any) => ({
+          id: document.id,
+          name: document.name || document.type || 'Required document'
+        }))
+      });
+    }
+
     const { data: accepted, error: acceptError } = await supabase
       .from('offers')
       .update({ status: 'accepted', accepted_at: now, updated_at: now })
@@ -211,7 +226,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         rate_type: offer.payment_model === 'hourly' ? 'Hourly' : 'Monthly',
         rate_amount: offer.proposed_rate_usd,
         start_date: offer.proposed_start_date,
-        status: 'pending'
+        // 'pending' is not a signing state. The enum models the two parties
+        // signing — pending_signatures → client_signed / talent_signed →
+        // fully_signed — and a contract written as 'pending' never appeared
+        // to either of them as something waiting for their signature, so
+        // every placement needed an operator to chase it by hand.
+        status: 'pending_signatures',
+        entry_point: offer.entry_point || null,
+        auto_generated: true
       })
       .select()
       .single();

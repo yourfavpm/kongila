@@ -159,7 +159,7 @@ export default function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           </div>
 
           <div style={{ marginTop: '8px' }}>
-            <NeonButton type="submit" disabled={isLoading} style={{ width: '100%', justifyContent: 'center' }}>
+            <NeonButton type="submit" loading={isLoading} style={{ width: '100%', justifyContent: 'center' }}>
               {isLoading ? 'Authenticating...' : 'Sign In'}
             </NeonButton>
           </div>

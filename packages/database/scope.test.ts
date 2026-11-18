@@ -48,3 +48,95 @@ test('talent sees contact details for their assigned manager, but not the operat
     role: 'talent_manager', isKongilaContact: true
   });
 });
+
+test('a client sees the shortlist on their own request, whichever id it was written against', () => {
+  // Matches, interviews and offers are all written against talent_requests.id.
+  // The snapshot used to expose payload.id as the request's id, so this set
+  // never matched and operations' shortlist was filtered out of the client's
+  // own dashboard.
+  const db = {
+    talents: [
+      { id: 'talent-1', name: 'Ada' },
+      { id: 'talent-2', name: 'Chidi' }
+    ],
+    clientRequests: [
+      { id: 'row-1', rowId: 'row-1', payloadId: 'payload-1', clientId: 'client-user-1' }
+    ],
+    matches: [
+      { id: 'match-row', requestId: 'row-1', talentId: 'talent-1' },
+      { id: 'match-legacy', requestId: 'payload-1', talentId: 'talent-2' },
+      { id: 'match-other', requestId: 'row-2', talentId: 'talent-3' }
+    ],
+    interviews: [
+      { id: 'iv-row', requestId: 'row-1', talentId: 'talent-1' },
+      { id: 'iv-other', requestId: 'row-2', talentId: 'talent-3' }
+    ]
+  };
+  const actor = {
+    userId: 'client-user-1', email: 'client@example.com', role: 'client',
+    kind: 'client' as const, organizationId: null, talentProfileId: null
+  };
+
+  const scoped = scopeDbForUser(db, actor);
+  assert.deepEqual(scoped.matches.map((m: any) => m.id), ['match-row', 'match-legacy']);
+  assert.deepEqual(scoped.interviews.map((iv: any) => iv.id), ['iv-row']);
+  assert.deepEqual(scoped.talents.map((t: any) => t.id), ['talent-1', 'talent-2']);
+});
+
+test('a candidate on a shortlist can see the request behind it', () => {
+  const db = {
+    talents: [{ id: 'talent-profile-1', userId: 'auth-user-1' }],
+    clientRequests: [
+      { id: 'row-1', rowId: 'row-1', payloadId: 'payload-1', clientId: 'client-user-1', title: 'Backend Engineer' },
+      { id: 'row-2', rowId: 'row-2', payloadId: 'payload-2', clientId: 'client-user-2', title: 'Designer' }
+    ],
+    matches: [{ id: 'match-1', requestId: 'row-1', talentId: 'talent-profile-1' }]
+  };
+  const actor = {
+    userId: 'auth-user-1', email: null, role: 'talent',
+    kind: 'talent' as const, organizationId: null, talentProfileId: 'talent-profile-1'
+  };
+
+  const scoped = scopeDbForUser(db, actor);
+  assert.deepEqual(scoped.clientRequests.map((r: any) => r.id), ['row-1']);
+});
+
+test('a client never receives a way to contact a candidate directly', () => {
+  // Kongila introduces the candidate and holds the conversation. A client who
+  // has the email address or the phone number of someone they have not hired
+  // can step around all of it. The CV goes with them: its header is an email
+  // address, a phone number and usually a home address.
+  const db = {
+    talents: [{
+      id: 'talent-1',
+      name: 'Ada',
+      title: 'Backend Engineer',
+      email: 'ada@example.com',
+      phone: '+234 800 000 0000',
+      linkedinUrl: 'https://linkedin.com/in/ada',
+      linkedIn: 'ada',
+      cvUrl: 'https://files/cv.pdf',
+      cvName: 'ada-cv.pdf',
+      cvSize: 1024,
+      githubUrl: 'https://github.com/ada',
+      portfolioUrl: 'https://ada.dev',
+      bio: 'Six years on payment systems.'
+    }],
+    clientRequests: [{ id: 'row-1', rowId: 'row-1', clientId: 'client-user-1' }],
+    matches: [{ id: 'match-1', requestId: 'row-1', talentId: 'talent-1' }]
+  };
+  const actor = {
+    userId: 'client-user-1', email: 'client@example.com', role: 'client',
+    kind: 'client' as const, organizationId: null, talentProfileId: null
+  };
+
+  const [talent] = scopeDbForUser(db, actor).talents;
+  for (const field of ['email', 'phone', 'linkedinUrl', 'linkedIn', 'cvUrl', 'cvName', 'cvSize']) {
+    assert.equal(talent[field], undefined, `${field} reached the client`);
+  }
+
+  // Work samples stay: they are the evidence the hiring decision rests on.
+  assert.equal(talent.githubUrl, 'https://github.com/ada');
+  assert.equal(talent.portfolioUrl, 'https://ada.dev');
+  assert.equal(talent.bio, 'Six years on payment systems.');
+});

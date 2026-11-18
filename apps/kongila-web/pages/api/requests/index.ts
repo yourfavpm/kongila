@@ -1,5 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, recordAudit, notifyAdmins } from '@kongila/database';
+import {
+  getRequestUser,
+  getSupabaseClient,
+  recordAudit,
+  notifyAdmins,
+  notifyUsers,
+  clientPortalUrl,
+  adminPortalUrl
+} from '@kongila/database';
 import { isSignedHireContract, normalizeRequestStatus } from '@kongila/workflows';
 import {
   requestTitle,
@@ -421,15 +429,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     entityId: String(data[0].id)
   });
 
-  // Operations has to see a new request to act on it. A notification never
-  // fails the request it describes, so warnings go back with the response
-  // rather than turning a saved request into an error.
-  const notified = await notifyAdmins('request_received', {
-    clientName: actor.email || undefined,
-    roleTitle: created.length === 1
-      ? created[0].title
-      : `${created.length} roles: ${created.map((r: any) => r.title).join(', ')}`
+  // Two notices, to two different audiences.
+  //
+  // There used to be one: `request_received` sent to everyone in operations.
+  // `request_received` is the client's receipt — "We have your request for X,
+  // it is with our talent team, we will come back to you with a shortlist" —
+  // so every operator was emailed a confirmation written for somebody else,
+  // and the client who actually filed the request was told nothing at all.
+  // Anyone holding an operations role on an account that is also used as a
+  // client therefore received what reads as a confirmation of another
+  // company's request.
+  //
+  // The client gets their receipt, and operations gets a notice written for
+  // operations. A notification never fails the request it describes, so
+  // warnings go back with the response rather than turning a saved request
+  // into an error.
+  const roleSummary = created.length === 1
+    ? created[0].title
+    : `${created.length} roles: ${created.map((r: any) => r.title).join(', ')}`;
+  const companyName = created[0]?.clientName || undefined;
+  const warnings: string[] = [];
+
+  const clientNotice = await notifyUsers(actor.userId, 'request_received', {
+    roleTitle: roleSummary,
+    actionUrl: clientPortalUrl('/?section=requests')
   });
+  warnings.push(...clientNotice.warnings);
+
+  const opsNotice = await notifyAdmins('new_request_for_ops', {
+    clientName: actor.email || undefined,
+    companyName,
+    roleTitle: roleSummary,
+    actionUrl: adminPortalUrl(`/requests/${data[0].id}`)
+  });
+  warnings.push(...opsNotice.warnings);
 
   return res.status(201).json({
     // The first one, so a caller written against the single-request shape
@@ -437,6 +470,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     request: created[0],
     requests: created,
     requestGroupId: groupId,
-    warnings: notified.warnings
+    warnings
   });
 }

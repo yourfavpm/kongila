@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { ageInvoices, checkDocumentExpiry } from '@kongila/database';
+import { ageInvoices, checkDocumentExpiry, activateDueContracts } from '@kongila/database';
 
 /**
  * The nightly pass.
@@ -75,5 +75,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     documents = { error: error?.message || 'The expiry pass threw.' };
   }
 
-  return res.status(200).json({ ranAt: now.toISOString(), invoices, documents, warnings });
+  // Contracts both sides signed ahead of time, whose start date has now
+  // arrived. Without this they waited at 'fully_signed' for ever and every
+  // count of active placements was short.
+  let contracts: any = null;
+  try {
+    const result = await activateDueContracts();
+    contracts = { activated: result.activated };
+    warnings.push(...(result.warnings || []));
+  } catch (error: any) {
+    contracts = { error: error?.message || 'The contract activation pass threw.' };
+  }
+
+  return res.status(200).json({ ranAt: now.toISOString(), invoices, documents, contracts, warnings });
 }

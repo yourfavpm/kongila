@@ -3,6 +3,8 @@ import { requestTitle, requestHeadcount } from '@kongila/shared-types';
 import { apiFetch } from '../lib/apiFetch';
 import { uploadFile } from '../lib/uploadFile';
 import { viewerTimeZone, wallClockToUtc, interviewInstant, formatForBothParties, formatInstantInZone, countUnreadMessages, countUnreadNotifications, countUnreadByModule } from '@kongila/utils';
+import { isOpenInterview, isConfirmedInterview, normalizeInterviewStage } from '@kongila/workflows';
+import { interviewTrail } from '../lib/interviewTrail';
 import React, { useState, useEffect } from "react";
 import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton } from "@kongila/ui";
@@ -12,7 +14,8 @@ import MyCompanyPanel from "./MyCompanyPanel";
 import MyRequestsPanel from "./MyRequestsPanel";
 import MatchedTalentPanel from "./MatchedTalentPanel";
 import ClientInterviewsPanel from "./ClientInterviewsPanel";
-import ScheduleInterviewModal from "./ScheduleInterviewModal";
+import RequestInterviewDrawer from "./RequestInterviewDrawer";
+import TalentProfileDrawer from "./TalentProfileDrawer";
 import MyTeamPanel from "./MyTeamPanel";
 import ClientSettingsPanel from "./ClientSettingsPanel";
 import ClientNotificationsPanel from "./ClientNotificationsPanel";
@@ -267,6 +270,18 @@ type ClientSection =
   | 'support';
 
 const CLIENT_SECTIONS: ClientSection[] = ['dashboard', 'company', 'requests', 'radar', 'scheduling', 'contracts', 'billing', 'remotan', 'messaging', 'notifications', 'profile', 'support'];
+
+/** Which screen each kind of notification belongs to, in this portal's names. */
+const CLIENT_NOTIFICATION_SECTIONS: Record<string, ClientSection> = {
+  account: 'notifications',
+  requests: 'requests',
+  matches: 'radar',
+  interviews: 'scheduling',
+  offers: 'radar',
+  contracts: 'contracts',
+  finance: 'billing',
+  vetting: 'radar'
+};
 
 const NAV_ITEMS: { id: ClientSection; label: string }[] = [
   { id: 'dashboard',     label: 'Home/Overview' },
@@ -582,27 +597,18 @@ export default function ClientDashboard({
   const [detailsViewRequestId, setDetailsViewRequestId] = useState<
     string | null
   >(null);
-  const [showRequestInterviewModal, setShowRequestInterviewModal] =
-    useState(false);
-  const [requestInterviewTarget, setRequestInterviewTarget] = useState<{
-    matchId: string;
-    talentName: string;
-    talentId: string;
-    requestId: string;
-  } | null>(null);
-  const [requestInterviewForm, setRequestInterviewForm] = useState({
-    date: "",
-    time: "10:00",
-    duration: "45",
-    notes: "",
-  });
 
   // Notifications and Messages badge calculations
   const effectiveNotifications = notifications || [];
   const unreadNotifsCount = countUnreadNotifications(effectiveNotifications);
   // Was a keyword search over the title and message, so a notification that
   // happened to mention another section counted against the wrong badge.
-  const unreadByModule = countUnreadByModule(effectiveNotifications);
+  // The client portal's own names for its screens. The counts used to come
+  // back keyed by the candidate portal's names — `interviews`, `opportunities`
+  // — and this portal's nav ids are `scheduling` and `radar`, so every
+  // interview notification counted against a section that does not exist here
+  // and the Interviews badge read zero however many were waiting behind it.
+  const unreadByModule = countUnreadByModule(effectiveNotifications, CLIENT_NOTIFICATION_SECTIONS);
   // Was messages.filter(m => !m.read). A message row carries isRead, so the
   // badge counted every message ever sent, including the client's own.
   const unreadMessagesCount = countUnreadMessages(messages, currentUser?.id);
@@ -620,6 +626,7 @@ export default function ClientDashboard({
     startDate: "",
     notes: "",
   });
+  const [offerFeedback, setOfferFeedback] = useState<string | null>(null);
 
   // Invoices & Re-hiring States
   const [showAllInvoicesModal, setShowAllInvoicesModal] = useState(false);
@@ -657,94 +664,21 @@ export default function ClientDashboard({
       return;
     }
 
-    setRequestInterviewTarget({
+    // One way in, one screen.
+    //
+    // There were two: this opened a date-and-time form built inline here,
+    // while the shortlist opened ScheduleInterviewModal. Two screens for the
+    // same action, posting different fields to the same route, and a client
+    // got whichever one they happened to reach. Both are now the request
+    // drawer, which also says what happens to the request after they send it.
+    setScheduleModalData({
+      talent: (talents || []).find((t: any) => String(t.id) === String(talentId))
+        || { id: talentId, name: talentName },
+      request: activeRequest,
       matchId,
-      talentId,
-      talentName,
-      requestId: activeRequest.id,
     });
-    setRequestInterviewForm((f) => ({
-      ...f,
-      date: new Date(Date.now() + 86400000 * 2).toISOString().split("T")[0],
-    }));
-    setShowRequestInterviewModal(true);
   };
 
-  const submitInterviewRequest = async () => {
-    if (
-      !requestInterviewTarget ||
-      !requestInterviewForm.date ||
-      !requestInterviewForm.time
-    ) {
-      alert("Please select proposed date and time.");
-      return;
-    }
-
-    const activeRequest =
-      requests.find((r) => r.id === requestInterviewTarget.requestId) ||
-      selectedRequest;
-    if (!activeRequest) return;
-
-    try {
-      // Through the server. A browser insert could not check whether either
-      // party was already booked, could not email the candidate, and wrote
-      // nothing to the audit log. The route does all three, and refuses a
-      // clash with a 409 rather than quietly double-booking someone.
-      const clientZone = viewerTimeZone();
-      const talentZone = (requestInterviewTarget as any)?.talentTimezone
-        || (talents || []).find((t: any) => t.id === requestInterviewTarget?.talentId)?.timezone
-        || null;
-
-      const ivResponse = await apiFetch('/api/interviews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: requestInterviewTarget.requestId,
-          matchId: requestInterviewTarget.matchId,
-          talentId: requestInterviewTarget.talentId,
-          talentName: requestInterviewTarget.talentName,
-          talentAvatar: talents.find((t) => t.id === requestInterviewTarget.talentId)?.avatar || '',
-          clientName: currentUser?.companyName || currentUser?.name || 'Client',
-          title: `Interview: ${requestInterviewTarget.talentName} for ${requestTitle(activeRequest)}`,
-          date: requestInterviewForm.date,
-          time: requestInterviewForm.time,
-          durationMinutes: Number(requestInterviewForm.duration),
-          timezone: clientZone,
-          clientTimezone: clientZone,
-          talentTimezone: talentZone,
-          notes: requestInterviewForm.notes
-        })
-      });
-
-      const ivPayload = await ivResponse.json().catch(() => ({}));
-      if (!ivResponse.ok) throw new Error(ivPayload?.error || `Could not request the interview (${ivResponse.status}).`);
-
-      if (setInterviews) setInterviews([...interviews, ivPayload.interview]);
-      if (setMatches) {
-        setMatches(matches.map((match) =>
-          match.id === requestInterviewTarget.matchId
-            ? { ...match, status: 'shortlisted' }
-            : match
-        ));
-      }
-
-      setShowRequestInterviewModal(false);
-      setRequestInterviewTarget(null);
-      setRequestInterviewForm({
-        date: "",
-        time: "10:00",
-        duration: "45",
-        notes: "",
-      });
-
-      alert(
-        `Interview request sent for ${requestInterviewTarget.talentName}. The candidate must confirm the proposed time.`,
-      );
-      if (ivPayload.warnings?.length) alert(ivPayload.warnings.join('\n'));
-    } catch (error: any) {
-      alert(error?.message || "Failed to request the interview. Please try again.");
-    }
-  };
 
   const submitRehireRequest = async () => {
     if (
@@ -962,6 +896,99 @@ export default function ClientDashboard({
     }
   };
 
+  /**
+   * Passing on a candidate after the interview.
+   *
+   * Same route as rejecting one from the shortlist, because it is the same
+   * decision arriving later — operations acts on the reason either way, and
+   * a rejection with no reason tells them nothing about what to source next.
+   */
+  const handleRejectCandidateFromInterview = async (match: any, interview: any) => {
+    const reason = window.prompt(
+      `Why is ${interview?.talentName || 'this candidate'} not the right fit? Your Kongila team uses this to refine the search.`,
+      ''
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert('A reason is needed so your team knows what to look for instead.');
+      return;
+    }
+    try {
+      await handleRejectCandidate(match, reason.trim());
+    } catch (error: any) {
+      alert(error?.message || 'That could not be saved.');
+    }
+  };
+
+  /**
+   * Interviews the client has already decided on.
+   *
+   * An offer on that role for that candidate, or a match that has closed
+   * either way. Without this the decision prompt would keep asking for an
+   * answer that has already been given.
+   */
+  const decidedInterviewIds = React.useMemo(() => {
+    const decided = new Set<string>();
+    const offeredPairs = new Set<string>();
+    for (const request of requests || []) {
+      for (const offer of ((request as any).offers || [])) {
+        offeredPairs.add(`${request.id}::${offer.talentId ?? offer.talent_id}`);
+      }
+    }
+    for (const interview of interviews || []) {
+      const pair = `${interview.requestId}::${interview.talentId}`;
+      const match = matches.find((m: any) =>
+        String(m.talentId) === String(interview.talentId)
+        && String(m.requestId) === String(interview.requestId)
+      );
+      const matchClosed = ['rejected', 'accepted'].includes(String(match?.status || '').toLowerCase());
+      if (offeredPairs.has(pair) || matchClosed) decided.add(String(interview.id));
+    }
+    return decided;
+  }, [requests, interviews, matches]);
+
+  const submitClientOffer = async (target: any, form: typeof hireForm) => {
+    const offerRequest = target.request
+      || requests.find((request: any) => String(request.id) === String(target.requestId))
+      || selectedRequest;
+    const talentId = target.talentId || target.id;
+    if (!offerRequest?.id || !target.matchId || !talentId) {
+      throw new Error('This offer is missing its role or candidate match. Reopen the candidate from the role and try again.');
+    }
+    if (!form.startDate || !form.salary || Number(form.salary) <= 0) {
+      throw new Error('Enter a valid monthly rate and proposed start date.');
+    }
+
+    const response = await apiFetch('/api/offers', {
+      method: 'POST',
+      body: JSON.stringify({
+        matchId: target.matchId,
+        requestId: offerRequest.id,
+        talentId,
+        proposedRateUsd: Number(form.salary),
+        proposedStartDate: form.startDate,
+        paymentModel: 'flat_rate',
+        paymentPeriod: 'monthly',
+        clientNote: form.notes,
+        entryPoint: target.entryPoint || 'matched_talent_page'
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.ok) throw new Error(result?.error || 'The offer could not be saved.');
+
+    if (onRequestUpdated && result.offer) {
+      onRequestUpdated({
+        ...offerRequest,
+        offers: [...(offerRequest.offers || []), result.offer]
+      });
+    }
+    setShowHireModal(false);
+    setHireTarget(null);
+    setOfferFeedback(result.warnings?.length
+      ? `Offer submitted. ${result.warnings.join(' ')}`
+      : `Offer for ${target.name || target.fullName || 'the candidate'} submitted. Kongila will review the terms and send it to the candidate.`);
+  };
+
   // Dynamic stats calculation from real backend telemetry
   const clientContracts = contracts.filter(
     (c: any) => c.clientId === currentUser?.id,
@@ -1065,6 +1092,26 @@ export default function ClientDashboard({
 
     const clientProfile = myClientProfile;
     const myOrg = myOrganization;
+
+    const importantNotifications = (effectiveNotifications || [])
+      .filter((notification: any) =>
+        String(notification.userId || notification.user_id) === String(currentUser?.id)
+        && !notification.read
+      )
+      .map((notification: any) => {
+        const module = String(notification.module || notification.module_type || '').toLowerCase();
+        const category = String(notification.category || '').toLowerCase();
+        const section = CLIENT_NOTIFICATION_SECTIONS[module]
+          || CLIENT_NOTIFICATION_SECTIONS[category]
+          || (category === 'interviews' ? 'scheduling' : null)
+          || (category === 'billing' ? 'billing' : null);
+        return { ...notification, module, section };
+      })
+      .filter((notification: any) =>
+        notification.section && ['scheduling', 'radar', 'requests', 'contracts', 'billing', 'messaging'].includes(notification.section)
+      )
+      .sort((a: any, b: any) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())
+      .slice(0, 4);
 
     // Active Service Requests widget
     const openRequests = clientRequests.filter(
@@ -1408,6 +1455,38 @@ export default function ClientDashboard({
             </button>
           </div>
         </div>
+
+        {importantNotifications.length > 0 && (
+          <section aria-label="Important notifications" style={{ padding: '18px 20px', borderRadius: '14px', background: '#FFF9ED', border: '1px solid #F3D9A8' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 800, color: '#946200', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Needs your attention</div>
+                <h2 style={{ margin: '3px 0 0', fontSize: '17px', color: '#182B49', fontWeight: 800 }}>Important updates</h2>
+              </div>
+              <button type="button" onClick={() => setActiveSection('notifications')} style={{ border: 0, background: 'transparent', color: '#1455C0', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>All notifications &rarr;</button>
+            </div>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {importantNotifications.map((notification: any) => (
+                <div key={notification.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', padding: '12px 14px', borderRadius: '10px', background: '#FFFFFF', border: '1px solid #F0E3C7' }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ color: '#182B49', fontWeight: 750, fontSize: '14px' }}>{notification.title || 'Kongila update'}</div>
+                    <div style={{ marginTop: '3px', color: '#64748B', fontSize: '13px', lineHeight: 1.45 }}>{notification.message}</div>
+                  </div>
+                  <button type="button" onClick={() => {
+                    if (notification.section) setActiveSection(notification.section);
+                    if (notification.section === 'requests' && notification.sourceRecordId) {
+                      const request = requests.find((item: any) => String(item.id) === String(notification.sourceRecordId));
+                      if (request) setSelectedRequest(request);
+                    }
+                    if (notification.section === 'billing' && notification.sourceRecordId) {
+                      setSelectedInvoice(invoices.find((item: any) => String(item.id) === String(notification.sourceRecordId)) || null);
+                    }
+                  }} style={{ flexShrink: 0, padding: '8px 12px', border: '1px solid #C9D9EF', borderRadius: '8px', background: '#F3F8FF', color: '#1455C0', fontSize: '12px', fontWeight: 750, cursor: 'pointer' }}>Review &rarr;</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ── Who is looking after this account ──────────────────────────────────
             The account manager existed only as a word in a button label, and
@@ -2633,7 +2712,7 @@ export default function ClientDashboard({
                 style={{ fontSize: '12px' }}
               />
             </div>
-            <NeonButton type="submit" disabled={uploadingAttachment} style={{ padding: '12px 24px', height: '48px' }}>
+            <NeonButton type="submit" loading={uploadingAttachment} style={{ padding: '12px 24px', height: '48px' }}>
               {uploadingAttachment ? 'Sending...' : 'Send'}
             </NeonButton>
           </form>
@@ -3895,9 +3974,18 @@ export default function ClientDashboard({
               const requestedInterviews = requestInterviews.filter((interview: any) =>
                 String(interview.talentId) === String(match.talentId)
               );
-              const interviewRequested = requestedInterviews.some((interview: any) =>
-                !['cancelled', 'declined', 'expired'].includes(String(interview.status).toLowerCase())
+              // An interview already running with this candidate on this
+              // role. The button said "Interview Requested" and stayed
+              // clickable, calling the same handler, so a client who had
+              // asked and heard nothing could open the form and send a
+              // second request for the same conversation.
+              const liveInterview = requestedInterviews.find((interview: any) =>
+                isOpenInterview(interview.status)
+                || (isConfirmedInterview(interview.status)
+                  && normalizeInterviewStage(interview.status) !== 'completed')
               );
+              const interviewRequested = Boolean(liveInterview);
+              const liveTrail = liveInterview ? interviewTrail(liveInterview.status, 'client') : null;
               return (
                 <Card
                   key={match.id}
@@ -3983,20 +4071,30 @@ export default function ClientDashboard({
                       {isShortlisted ? "✓ Shortlisted" : "Shortlist"}
                     </button>
                     <button
-                      onClick={() => handleRequestInterviewClick(match.id, match.talentId, talent.name, request)}
+                      onClick={() => {
+                        if (interviewRequested) {
+                          setActiveSection('scheduling');
+                          return;
+                        }
+                        handleRequestInterviewClick(match.id, match.talentId, talent.name, request);
+                      }}
                       disabled={['rejected', 'accepted'].includes(String(match.status).toLowerCase())}
                       style={{
                         padding: "10px 16px",
                         borderRadius: "10px",
-                        border: "1px solid #E2E8F0",
-                        background: interviewRequested ? "#ECFDF5" : "#FFFFFF",
-                        color: interviewRequested ? "#047857" : "#475569",
+                        border: `1px solid ${liveTrail?.waitingOn === 'Your move' ? "#FDE68A" : "#E2E8F0"}`,
+                        background: liveTrail?.waitingOn === 'Your move'
+                          ? "#FFFBEB"
+                          : interviewRequested ? "#ECFDF5" : "#FFFFFF",
+                        color: liveTrail?.waitingOn === 'Your move'
+                          ? "#92400E"
+                          : interviewRequested ? "#047857" : "#475569",
                         fontWeight: 700,
                         cursor: "pointer",
                       }}
                     >
-                      {interviewRequested
-                        ? "Interview Requested"
+                      {liveTrail
+                        ? `Interview · ${liveTrail.label} →`
                         : "Request Interview"}
                     </button>
                     <span
@@ -4104,972 +4202,45 @@ export default function ClientDashboard({
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
         {/* Viewing Talent Profile Detail Modal */}
+        {/* The candidate's profile, as a drawer.
+
+            This was 490 lines of centred modal built inline here, showing a
+            name, a grade, three scores and a skills list. Everything a client
+            weighs a candidate on was missing — work history, rate, notice
+            period, remote setup — and the vetting they had been through was
+            the single word "Vetted" with nothing behind it.
+
+            TalentProfileDrawer shows the whole assessment, stage by stage,
+            with the decision, the score and the assessor's notes. It is a
+            drawer rather than a modal so the shortlist stays on screen and
+            the client can read one candidate after another without losing
+            their place. */}
         {viewingTalentProfile && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(15,23,42,0.6)",
-              backdropFilter: "blur(6px)",
-              zIndex: 1001,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "20px",
+          <TalentProfileDrawer
+            talent={viewingTalentProfile}
+            request={selectedRequest}
+            match={matches.find(
+              (m: any) =>
+                String(m.talentId) === String(viewingTalentProfile.id) &&
+                String(m.requestId) === String(selectedRequest?.id),
+            )}
+            onClose={() => setViewingTalentProfile(null)}
+            onRequestInterview={() => {
+              const match = matches.find(
+                (m: any) =>
+                  String(m.talentId) === String(viewingTalentProfile.id) &&
+                  String(m.requestId) === String(selectedRequest?.id),
+              );
+              setViewingTalentProfile(null);
+              if (match) {
+                handleRequestInterviewClick(
+                  match.id,
+                  viewingTalentProfile.id,
+                  viewingTalentProfile.name,
+                );
+              }
             }}
-          >
-            <div
-              style={{
-                background: "#FFFFFF",
-                borderRadius: "24px",
-                padding: "36px",
-                width: "100%",
-                maxWidth: "640px",
-                boxShadow: "0 25px 80px rgba(0,0,0,0.2)",
-                maxHeight: "90vh",
-                overflowY: "auto",
-                boxSizing: "border-box",
-                position: "relative",
-              }}
-            >
-              <button
-                onClick={() => setViewingTalentProfile(null)}
-                style={{
-                  position: "absolute",
-                  right: "24px",
-                  top: "24px",
-                  background: "#F1F5F9",
-                  border: "none",
-                  borderRadius: "8px",
-                  width: "36px",
-                  height: "36px",
-                  cursor: "pointer",
-                  fontSize: "18px",
-                  color: "#475569",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: "bold",
-                }}
-              >
-                ×
-              </button>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "20px",
-                  alignItems: "center",
-                  marginBottom: "24px",
-                }}
-              >
-                <div
-                  style={{
-                    width: "72px",
-                    height: "72px",
-                    borderRadius: "50%",
-                    background: "#EFF6FF",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#2563EB",
-                    fontWeight: 800,
-                    fontSize: "24px",
-                    border: "3px solid #E2E8F0",
-                    overflow: "hidden",
-                  }}
-                >
-                  {viewingTalentProfile.avatar ? (
-                    <img
-                      src={viewingTalentProfile.avatar}
-                      alt=""
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  ) : (
-                    viewingTalentProfile.name.charAt(0)
-                  )}
-                </div>
-                <div>
-                  <h2
-                    style={{
-                      fontSize: "22px",
-                      fontWeight: 900,
-                      color: "#0F172A",
-                      margin: "0 0 4px 0",
-                    }}
-                  >
-                    {viewingTalentProfile.name}
-                  </h2>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                      alignItems: "center",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "13px",
-                        color: "#2563EB",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {viewingTalentProfile.title}
-                    </span>
-                    <span
-                      style={{
-                        width: "4px",
-                        height: "4px",
-                        borderRadius: "50%",
-                        background: "#94A3B8",
-                      }}
-                    />
-                    <span style={{ fontSize: "12px", color: "#64748B" }}>
-                      {viewingTalentProfile.location ||
-                        viewingTalentProfile.timezone}
-                    </span>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    gap: "4px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontWeight: 900,
-                      fontSize: "18px",
-                      color: "#10B981",
-                    }}
-                  >
-                    {viewingTalentProfile.grade} Grade
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: "#10B981",
-                      fontWeight: 700,
-                    }}
-                  >
-                    Vetted Talent Profile
-                  </span>
-                </div>
-              </div>
-
-              {/* Bio & Details */}
-              <div style={{ marginBottom: "24px" }}>
-                <h3
-                  style={{
-                    fontSize: "14px",
-                    fontWeight: 800,
-                    color: "#334155",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Executive Summary
-                </h3>
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: "#475569",
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  {viewingTalentProfile.bio ||
-                    "Highly accomplished operational talent with comprehensive expertise in enterprise delivery management, team coordination, and system integrations."}
-                </p>
-              </div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "20px",
-                  marginBottom: "24px",
-                }}
-              >
-                <div
-                  style={{
-                    background: "#F8FAFC",
-                    padding: "16px",
-                    borderRadius: "12px",
-                    border: "1px solid #F1F5F9",
-                  }}
-                >
-                  <h3
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 800,
-                      color: "#64748B",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      margin: "0 0 12px 0",
-                    }}
-                  >
-                    Key Metrics
-                  </h3>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "8px",
-                      fontSize: "13px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Experience</span>
-                      <strong style={{ color: "#1E293B" }}>
-                        {viewingTalentProfile.experienceYears || 5} Years
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Expected Salary</span>
-                      <strong style={{ color: "#1E293B" }}>
-                        ${viewingTalentProfile.salaryExpectation || 4500}/mo
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Availability</span>
-                      <strong style={{ color: "#10B981" }}>
-                        {viewingTalentProfile.availability || 100}% Immediate
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Vetting Status</span>
-                      <strong style={{ color: "#2563EB" }}>
-                        {viewingTalentProfile.vettingStatus || "Vetted"}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    background: "#F8FAFC",
-                    padding: "16px",
-                    borderRadius: "12px",
-                    border: "1px solid #F1F5F9",
-                  }}
-                >
-                  <h3
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 800,
-                      color: "#64748B",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      margin: "0 0 12px 0",
-                    }}
-                  >
-                    Technical Vetting Scores
-                  </h3>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "8px",
-                      fontSize: "13px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Technical Fit</span>
-                      <strong style={{ color: "#1E293B" }}>
-                        {formatVettingScore(viewingTalentProfile.vettingScores?.technical)}
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Behavioral Fit</span>
-                      <strong style={{ color: "#1E293B" }}>
-                        {formatVettingScore(viewingTalentProfile.vettingScores?.behavioral)}
-                      </strong>
-                    </div>
-                    {/* The Communication row was removed on 2 Nov 2026.
-                          Nothing ever scored it, so it fell through to a
-                          hardcoded 95% shown to clients as a vetting result.
-                          Communication is assessed inside the behavioural
-                          interview, which is already shown above. */}
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ color: "#64748B" }}>Remote Readiness</span>
-                      <strong style={{ color: "#10B981" }}>
-                        {formatVettingScore(viewingTalentProfile.vettingScores?.remoteReadiness)}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Workspace Infrastructure */}
-              <div
-                style={{
-                  background: "#F8FAFC",
-                  padding: "16px",
-                  borderRadius: "12px",
-                  border: "1px solid #F1F5F9",
-                  marginBottom: "24px",
-                }}
-              >
-                <h3
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 800,
-                    color: "#64748B",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    margin: "0 0 12px 0",
-                  }}
-                >
-                  Workspace Infrastructure
-                </h3>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "14px",
-                    fontSize: "12px",
-                    color: "#475569",
-                  }}
-                >
-                  <div>
-                    <span
-                      style={{
-                        display: "block",
-                        color: "#94A3B8",
-                        fontWeight: 700,
-                        fontSize: "10px",
-                        textTransform: "uppercase",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      Devices
-                    </span>
-                    <strong>
-                      {viewingTalentProfile.devices ||
-                        "MacBook Pro M3, Dual 4K Monitors"}
-                    </strong>
-                  </div>
-                  <div>
-                    <span
-                      style={{
-                        display: "block",
-                        color: "#94A3B8",
-                        fontWeight: 700,
-                        fontSize: "10px",
-                        textTransform: "uppercase",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      Internet
-                    </span>
-                    <strong>
-                      {viewingTalentProfile.internetQuality ||
-                        "Fiber Optic High-Speed (100 Mbps+)"}
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Skills Pills */}
-              <div style={{ marginBottom: "32px" }}>
-                <h3
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 800,
-                    color: "#64748B",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "10px",
-                  }}
-                >
-                  Key Technical Expertise
-                </h3>
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  {(viewingTalentProfile.skills || []).map((sk: string) => (
-                    <span
-                      key={sk}
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 700,
-                        background: "#EFF6FF",
-                        color: "#2563EB",
-                        padding: "4px 10px",
-                        borderRadius: "6px",
-                      }}
-                    >
-                      {sk}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: "12px" }}>
-                <button
-                  onClick={() => setViewingTalentProfile(null)}
-                  style={{
-                    flex: 1,
-                    padding: "12px",
-                    borderRadius: "10px",
-                    border: "1px solid #E2E8F0",
-                    background: "#FFFFFF",
-                    fontWeight: 700,
-                    fontSize: "13px",
-                    color: "#475569",
-                    cursor: "pointer",
-                  }}
-                >
-                  Close Profile
-                </button>
-                <button
-                  onClick={() => {
-                    const match = matches.find(
-                      (m) =>
-                        m.talentId === viewingTalentProfile.id &&
-                        m.requestId === activeRequest.id,
-                    );
-                    if (match) {
-                      handleRequestInterviewClick(match.id, viewingTalentProfile.id, viewingTalentProfile.name);
-                    }
-                    setViewingTalentProfile(null);
-                  }}
-                  style={{
-                    flex: 2,
-                    padding: "12px",
-                    borderRadius: "10px",
-                    border: "none",
-                    background: "#2563EB",
-                    fontWeight: 800,
-                    fontSize: "13px",
-                    color: "#FFFFFF",
-                    cursor: "pointer",
-                  }}
-                >
-                  📅 Request Coordination Interview
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Hire Candidate / Job Offer Modal */}
-        {showHireModal && hireTarget && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(15,23,42,0.6)",
-              backdropFilter: "blur(6px)",
-              zIndex: 1000,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "20px",
-            }}
-          >
-            <div
-              style={{
-                background: "#FFFFFF",
-                borderRadius: "20px",
-                padding: "36px",
-                width: "100%",
-                maxWidth: "500px",
-                boxShadow: "0 24px 80px rgba(0,0,0,0.15)",
-                boxSizing: "border-box",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "24px",
-                }}
-              >
-                <div>
-                  <h2
-                    style={{
-                      fontSize: "20px",
-                      fontWeight: 900,
-                      color: "#0F172A",
-                      margin: "0 0 4px 0",
-                    }}
-                  >
-                    Generate Job Offer
-                  </h2>
-                  <p style={{ fontSize: "12px", color: "#64748B", margin: 0 }}>
-                    Deploy EOR contract proposal for {hireTarget.name}
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowHireModal(false);
-                    setHireTarget(null);
-                  }}
-                  style={{
-                    background: "#F1F5F9",
-                    border: "none",
-                    borderRadius: "8px",
-                    width: "36px",
-                    height: "36px",
-                    cursor: "pointer",
-                    fontSize: "16px",
-                    color: "#475569",
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "16px",
-                }}
-              >
-                <div>
-                  <label style={labelStyle}>Proposed Start Date *</label>
-                  <input
-                    type="date"
-                    style={inputStyle}
-                    value={hireForm.startDate}
-                    min={new Date().toISOString().split("T")[0]}
-                    onChange={(e) =>
-                      setHireForm((f) => ({ ...f, startDate: e.target.value }))
-                    }
-                  />
-                </div>
-
-                <div>
-                  <label style={labelStyle}>
-                    Monthly Retainer Rate (USD) *
-                  </label>
-                  <input
-                    type="number"
-                    style={inputStyle}
-                    value={hireForm.salary}
-                    onChange={(e) =>
-                      setHireForm((f) => ({ ...f, salary: e.target.value }))
-                    }
-                    placeholder="e.g. 4500"
-                  />
-                </div>
-
-                <div>
-                  <label style={labelStyle}>
-                    Offer Letter Notes / Custom Clauses
-                  </label>
-                  <textarea
-                    style={{
-                      ...inputStyle,
-                      minHeight: "80px",
-                      resize: "vertical",
-                    }}
-                    placeholder="Mention specific milestones, benefits, or custom terms..."
-                    value={hireForm.notes}
-                    onChange={(e) =>
-                      setHireForm((f) => ({ ...f, notes: e.target.value }))
-                    }
-                  />
-                </div>
-
-                <div
-                  style={{
-                    background: "#F0FDF4",
-                    border: "1px solid #BBF7D0",
-                    borderRadius: "10px",
-                    padding: "12px 16px",
-                    display: "flex",
-                    gap: "10px",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span style={{ fontSize: "14px" }}>🛡️</span>
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#166534",
-                      margin: 0,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    By extending this offer, Kongila will draft a localized
-                    employment contract compliant with all EOR tax and labor
-                    frameworks.
-                  </p>
-                </div>
-
-                <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
-                  <button
-                    onClick={() => {
-                      setShowHireModal(false);
-                      setHireTarget(null);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "12px",
-                      borderRadius: "10px",
-                      border: "1px solid #E2E8F0",
-                      background: "#FFFFFF",
-                      fontWeight: 700,
-                      fontSize: "13px",
-                      color: "#475569",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!hireForm.startDate || !hireForm.salary) {
-                        alert("Please fill in start date and monthly rate.");
-                        return;
-                      }
-
-                      const offerRequest = hireTarget.request || activeRequest;
-                      if (!offerRequest?.id || !hireTarget.matchId || !hireTarget.talentId) {
-                        alert("Open this candidate from a specific role request before creating an offer.");
-                        return;
-                      }
-
-                      try {
-                        // One server-side call. It authorises the request
-                        // against this client's organisation, writes the
-                        // contract, and reports honestly. Nothing below runs
-                        // unless the contract actually saved.
-                        // Creates an offer, not a contract. The contract is
-                        // created when the candidate accepts, so it always
-                        // has an agreement behind it.
-                        const res = await apiFetch('/api/offers', {
-                          method: 'POST',
-                          body: JSON.stringify({
-                            matchId: hireTarget.matchId,
-                            requestId: offerRequest.id,
-                            talentId: hireTarget.talentId,
-                            proposedRateUsd: Number(hireForm.salary),
-                            proposedStartDate: hireForm.startDate,
-                            paymentModel: 'flat_rate',
-                            paymentPeriod: 'monthly',
-                            clientNote: hireForm.notes,
-                            entryPoint: 'matched_talent_page'
-                          })
-                        });
-                        const result = await res.json();
-                        if (!res.ok || !result?.ok) {
-                          throw new Error(result?.error || 'The offer could not be saved.');
-                        }
-
-                        if (onRequestUpdated && result.offer) {
-                          onRequestUpdated({
-                            ...offerRequest,
-                            offers: [...(offerRequest.offers || []), result.offer]
-                          });
-                        }
-                        setShowHireModal(false);
-                        setHireTarget(null);
-
-                        // Secondary effects that did not land are named,
-                        // rather than hidden behind a success message.
-                        if (result.warnings?.length) {
-                          alert(
-                            `Offer extended to ${hireTarget.name}, but some steps did not complete:\n\n` +
-                              result.warnings.join('\n')
-                          );
-                        } else {
-                          alert(
-                            `Offer for ${hireTarget.name} submitted. Kongila will review the terms and send it to the candidate.`,
-                          );
-                        }
-                      } catch (err: any) {
-                        alert(`Failed to extend offer. ${err?.message || 'Please try again.'}`);
-                        console.error(err);
-                      }
-                    }}
-                    style={{
-                      flex: 2,
-                      padding: "12px",
-                      borderRadius: "10px",
-                      border: "none",
-                      background: "#10B981",
-                      fontWeight: 800,
-                      fontSize: "13px",
-                      color: "#FFFFFF",
-                      cursor: "pointer",
-                    }}
-                  >
-                    💼 Extend Retainer Offer
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Request Interview Modal */}
-        {showRequestInterviewModal && requestInterviewTarget && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(15,23,42,0.6)",
-              backdropFilter: "blur(6px)",
-              zIndex: 1000,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "20px",
-            }}
-          >
-            <div
-              style={{
-                background: "#FFFFFF",
-                borderRadius: "20px",
-                padding: "36px",
-                width: "100%",
-                maxWidth: "500px",
-                boxShadow: "0 24px 80px rgba(0,0,0,0.15)",
-                boxSizing: "border-box",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "24px",
-                }}
-              >
-                <div>
-                  <h2
-                    style={{
-                      fontSize: "20px",
-                      fontWeight: 900,
-                      color: "#0F172A",
-                      margin: "0 0 4px 0",
-                    }}
-                  >
-                    Request Interview
-                  </h2>
-                  <p style={{ fontSize: "12px", color: "#64748B", margin: 0 }}>
-                    Proposed scheduling for {requestInterviewTarget.talentName}
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowRequestInterviewModal(false);
-                    setRequestInterviewTarget(null);
-                  }}
-                  style={{
-                    background: "#F1F5F9",
-                    border: "none",
-                    borderRadius: "8px",
-                    width: "36px",
-                    height: "36px",
-                    cursor: "pointer",
-                    fontSize: "16px",
-                    color: "#475569",
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "16px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "14px",
-                  }}
-                >
-                  <div>
-                    <label style={labelStyle}>Proposed Date *</label>
-                    <input
-                      type="date"
-                      style={inputStyle}
-                      value={requestInterviewForm.date}
-                      min={new Date().toISOString().split("T")[0]}
-                      onChange={(e) =>
-                        setRequestInterviewForm((f) => ({
-                          ...f,
-                          date: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Proposed Time *</label>
-                    <input
-                      type="time"
-                      style={inputStyle}
-                      value={requestInterviewForm.time}
-                      onChange={(e) =>
-                        setRequestInterviewForm((f) => ({
-                          ...f,
-                          time: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={labelStyle}>Duration</label>
-                  <select
-                    style={inputStyle}
-                    value={requestInterviewForm.duration}
-                    onChange={(e) =>
-                      setRequestInterviewForm((f) => ({
-                        ...f,
-                        duration: e.target.value,
-                      }))
-                    }
-                  >
-                    <option value="30">30 minutes</option>
-                    <option value="45">45 minutes</option>
-                    <option value="60">60 minutes</option>
-                    <option value="90">90 minutes</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={labelStyle}>Agenda / Message for Admin</label>
-                  <textarea
-                    style={{
-                      ...inputStyle,
-                      minHeight: "80px",
-                      resize: "vertical",
-                    }}
-                    placeholder="Topics you would like to cover, specific technologies, etc."
-                    value={requestInterviewForm.notes}
-                    onChange={(e) =>
-                      setRequestInterviewForm((f) => ({
-                        ...f,
-                        notes: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-
-                <div
-                  style={{
-                    background: "#F0F9FF",
-                    border: "1px solid #BAE6FD",
-                    borderRadius: "10px",
-                    padding: "12px 16px",
-                    display: "flex",
-                    gap: "10px",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span style={{ fontSize: "14px" }}>💬</span>
-                  <p
-                    style={{
-                      fontSize: "11px",
-                      color: "#0369A1",
-                      margin: 0,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    Our operations team will review this slot with{" "}
-                    <strong>{requestInterviewTarget.talentName}</strong>,
-                    confirm availability, and secure the calendar booking.
-                  </p>
-                </div>
-
-                <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
-                  <button
-                    onClick={() => {
-                      setShowRequestInterviewModal(false);
-                      setRequestInterviewTarget(null);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "12px",
-                      borderRadius: "10px",
-                      border: "1px solid #E2E8F0",
-                      background: "#FFFFFF",
-                      fontWeight: 700,
-                      fontSize: "13px",
-                      color: "#475569",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={submitInterviewRequest}
-                    style={{
-                      flex: 2,
-                      padding: "12px",
-                      borderRadius: "10px",
-                      border: "none",
-                      background: "#2563EB",
-                      fontWeight: 800,
-                      fontSize: "13px",
-                      color: "#FFFFFF",
-                      cursor: "pointer",
-                    }}
-                  >
-                    🚀 Submit Proposal
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          />
         )}
 
         {/* Header */}
@@ -5566,7 +4737,14 @@ export default function ClientDashboard({
                           ) && (
                             <button
                               onClick={() => {
-                                setHireTarget({ ...cand, request: activeRequest, requestId: activeRequest.id });
+                                setHireTarget({
+                                  ...cand,
+                                  request: activeRequest,
+                                  requestId: activeRequest.id,
+                                  matchId: cand.matchId,
+                                  talentId: cand.talentId,
+                                  entryPoint: 'post_interview'
+                                });
                                 setHireForm({
                                   salary: activeRequest.budget
                                     ? String(activeRequest.budget)
@@ -6891,7 +6069,14 @@ export default function ClientDashboard({
                                       setMessages={setMessages}
                                       onSignContract={onSignContract}
                                       onExtendOffer={(talent, request, match) => {
-                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
+                                        setHireTarget({
+                                          ...talent,
+                                          request,
+                                          requestId: request.id,
+                                          matchId: match.id,
+                                          talentId: match.talentId || talent.id,
+                                          entryPoint: 'matched_talent_page'
+                                        });
                                         setHireForm({
                                           salary: String(request.budgetMaxUsd || request.budget || 4500),
                                           startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
@@ -6917,8 +6102,16 @@ export default function ClientDashboard({
                                       setMatches={setMatches}
                                       onRequestUpdated={onRequestUpdated}
                                       onScheduleMeeting={(talent, req, match) => setScheduleModalData({ talent, request: req, matchId: match?.id })}
+                                      onViewInterview={() => setActiveSection('scheduling')}
                                       onExtendOffer={(talent, request, match) => {
-                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
+                                        setHireTarget({
+                                          ...talent,
+                                          request,
+                                          requestId: request.id,
+                                          matchId: match.id,
+                                          talentId: match.talentId || talent.id,
+                                          entryPoint: 'matched_talent_page'
+                                        });
                                         setHireForm({
                                           salary: String(request.budgetMaxUsd || request.budget || 4500),
                                           startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
@@ -6940,6 +6133,54 @@ export default function ClientDashboard({
                                         } else {
                                           alert("Missing talent or request data for rescheduling.");
                                         }
+                                      }}
+                                      // The interviews the client has already
+                                      // acted on: an offer exists on that
+                                      // request for that candidate, or the
+                                      // match is closed either way. Without
+                                      // this the prompt would keep asking for
+                                      // a decision already made.
+                                      decidedInterviewIds={decidedInterviewIds}
+                                      onMakeOffer={(iv) => {
+                                        const talent = talents.find((t: any) => String(t.id) === String(iv.talentId) || String(t.userId || t.user_id) === String(iv.talentId));
+                                        const match = matches.find((m: any) => String(m.id) === String(iv.matchId))
+                                          || matches.find((m: any) => String(m.requestId) === String(iv.requestId) && (String(m.talentId) === String(iv.talentId) || String(m.talentId) === String(talent?.id)));
+                                        const resolvedTalent = talent
+                                          || talents.find((t: any) => String(t.id) === String(match?.talentId));
+                                        const request = requests.find((r: any) => String(r.id) === String(iv.requestId))
+                                          || requests.find((r: any) => String(r.id) === String(match?.requestId));
+                                        if (!resolvedTalent || !request) {
+                                          setOfferFeedback('Could not open this offer: the candidate or role is no longer available.');
+                                          return;
+                                        }
+                                        setHireTarget({
+                                          ...resolvedTalent,
+                                          request,
+                                          requestId: request.id,
+                                          matchId: match?.id || iv.matchId,
+                                          talentId: match?.talentId || iv.talentId || resolvedTalent.id,
+                                          // Recorded on the offer, so the
+                                          // board can tell a post-interview
+                                          // offer from a cold one.
+                                          entryPoint: 'post_interview'
+                                        });
+                                        setHireForm({
+                                          salary: String(request.budgetMaxUsd || request.budget || 4500),
+                                          startDate: new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0],
+                                          notes: ''
+                                        });
+                                        setShowHireModal(true);
+                                      }}
+                                      onPassCandidate={(iv) => {
+                                        const match = matches.find((m: any) =>
+                                          String(m.talentId) === String(iv.talentId)
+                                          && String(m.requestId) === String(iv.requestId)
+                                        );
+                                        if (!match) {
+                                          alert('That candidate could not be found on this role.');
+                                          return;
+                                        }
+                                        handleRejectCandidateFromInterview(match, iv);
                                       }}
                                     />;
       case 'contracts':
@@ -7537,14 +6778,23 @@ export default function ClientDashboard({
                 position: "relative",
               }}
             >
-              <div
+              <button
+                type="button"
                 onClick={() => setActiveSection("messaging")}
+                aria-label={
+                  unreadMessagesCount > 0
+                    ? `Messages, ${unreadMessagesCount} unread`
+                    : "Messages"
+                }
                 style={{
                   position: "relative",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
-                  color: "#6B7A99",
+                  color: activeSection === "messaging" ? "#0047CC" : "#6B7A99",
+                  background: "none",
+                  border: "none",
+                  padding: 0,
                 }}
               >
                 <svg
@@ -7579,15 +6829,29 @@ export default function ClientDashboard({
                     {unreadMessagesCount}
                   </span>
                 )}
-              </div>
+              </button>
 
-              <div
+              {/* The bell. It was a div with a pointer cursor and no click
+                  handler, so it looked like a button, counted unread
+                  notifications, and did nothing when anyone pressed it —
+                  including by keyboard, which could not reach it at all. */}
+              <button
+                type="button"
+                onClick={() => setActiveSection("notifications")}
+                aria-label={
+                  unreadNotifsCount > 0
+                    ? `Notifications, ${unreadNotifsCount} unread`
+                    : "Notifications"
+                }
                 style={{
                   position: "relative",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
-                  color: "#6B7A99",
+                  color: activeSection === "notifications" ? "#0047CC" : "#6B7A99",
+                  background: "none",
+                  border: "none",
+                  padding: 0,
                 }}
               >
                 <svg
@@ -7623,7 +6887,7 @@ export default function ClientDashboard({
                     {unreadNotifsCount}
                   </span>
                 )}
-              </div>
+              </button>
             </div>
 
             {/* Profile badge */}
@@ -7680,6 +6944,22 @@ export default function ClientDashboard({
           {renderSection()}
         </main>
       </div>
+
+      {showHireModal && hireTarget && (
+        <ClientOfferModal
+          target={hireTarget}
+          form={hireForm}
+          setForm={setHireForm}
+          onClose={() => { setShowHireModal(false); setHireTarget(null); }}
+          onSubmit={() => submitClientOffer(hireTarget, hireForm)}
+        />
+      )}
+      {offerFeedback && (
+        <div role="status" aria-live="polite" style={{ position: 'fixed', right: '24px', bottom: '24px', zIndex: 1400, maxWidth: 'min(460px, calc(100vw - 32px))', padding: '14px 18px', borderRadius: '12px', background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', boxShadow: '0 12px 30px rgba(15,23,42,0.16)', display: 'flex', alignItems: 'flex-start', gap: '12px', fontSize: '13px', lineHeight: 1.5 }}>
+          <span style={{ flex: 1 }}>{offerFeedback}</span>
+          <button type="button" onClick={() => setOfferFeedback(null)} aria-label="Dismiss offer update" style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>×</button>
+        </div>
+      )}
 
       {/* The client's signing modal. It was passed in as a prop and never
           rendered, so the client half of a countersigned contract did not
@@ -9055,16 +8335,85 @@ export default function ClientDashboard({
         </div>
       )}
       {scheduleModalData && (
-        <ScheduleInterviewModal 
+        <RequestInterviewDrawer
           currentUser={currentUser}
           request={scheduleModalData.request}
           talent={scheduleModalData.talent}
           matchId={scheduleModalData.matchId}
           interviews={interviews}
-          setInterviews={setInterviews}
           onClose={() => setScheduleModalData(null)}
+          onRequested={(interview) => {
+            if (interview && setInterviews) setInterviews([...interviews, interview]);
+          }}
         />
       )}
+    </div>
+  );
+}
+
+function ClientOfferModal({
+  target,
+  form,
+  setForm,
+  onClose,
+  onSubmit
+}: {
+  target: any;
+  form: { salary: string; startDate: string; notes: string };
+  setForm: React.Dispatch<React.SetStateAction<{ salary: string; startDate: string; notes: string }>>;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const submit = async () => {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await onSubmit();
+    } catch (err: any) {
+      setError(err?.message || 'The offer could not be submitted. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(15,23,42,0.56)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="client-offer-title" style={{ width: '100%', maxWidth: '520px', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5EAF1', borderRadius: '16px', padding: 'clamp(20px, 4vw, 32px)', boxShadow: '0 24px 80px rgba(15,23,42,0.22)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '22px' }}>
+          <div>
+            <div style={{ marginBottom: '6px', color: '#1455C0', fontSize: '11px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Offer proposal</div>
+            <h2 id="client-offer-title" style={{ fontSize: '22px', fontWeight: 850, color: '#14213D', margin: 0 }}>Make an offer</h2>
+            <p style={{ fontSize: '13px', lineHeight: 1.5, color: '#64748B', margin: '6px 0 0' }}>Propose terms for {target.name || target.fullName || 'this professional'}. Kongila will review the offer before it is sent.</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} aria-label="Close offer form" style={{ flexShrink: 0, width: '36px', height: '36px', border: '1px solid #E5EAF1', borderRadius: '9px', background: '#F8FAFC', color: '#475569', fontSize: '20px', cursor: busy ? 'not-allowed' : 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <div>
+            <label htmlFor="client-offer-start-date" style={labelStyle}>Proposed start date *</label>
+            <input id="client-offer-start-date" type="date" min={new Date().toISOString().split('T')[0]} value={form.startDate} onChange={(event) => setForm(current => ({ ...current, startDate: event.target.value }))} style={inputStyle} />
+          </div>
+          <div>
+            <label htmlFor="client-offer-monthly-rate" style={labelStyle}>Monthly rate (USD) *</label>
+            <input id="client-offer-monthly-rate" type="number" min="1" step="1" value={form.salary} onChange={(event) => setForm(current => ({ ...current, salary: event.target.value }))} placeholder="e.g. 4500" style={inputStyle} />
+          </div>
+          <div>
+            <label htmlFor="client-offer-notes" style={labelStyle}>Offer notes or custom terms</label>
+            <textarea id="client-offer-notes" value={form.notes} onChange={(event) => setForm(current => ({ ...current, notes: event.target.value }))} rows={4} placeholder="Add any terms or context for your Kongila team." style={{ ...inputStyle, resize: 'vertical' }} />
+          </div>
+        </div>
+
+        {error && <div role="alert" style={{ marginTop: '16px', padding: '11px 13px', borderRadius: '9px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: '13px', lineHeight: 1.45 }}>{error}</div>}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '22px' }}>
+          <button type="button" onClick={onClose} disabled={busy} style={{ padding: '11px 16px', border: '1px solid #D7DFEA', borderRadius: '9px', background: '#FFFFFF', color: '#475569', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>Cancel</button>
+          <button type="button" onClick={submit} disabled={busy} style={{ minWidth: '150px', padding: '11px 18px', border: 0, borderRadius: '9px', background: busy ? '#6687C6' : '#1455C0', color: '#FFFFFF', fontWeight: 800, cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Submitting…' : 'Submit offer'}</button>
+        </div>
+      </section>
     </div>
   );
 }

@@ -73,6 +73,15 @@ const MODULE_ALIASES: Record<string, string> = {
   vetting: 'vetting_progress'
 };
 
+/** The module each keyword guess stands for, so the guess can be re-aliased. */
+const FALLBACK_TO_MODULE: Record<string, string> = {
+  interviews: 'interviews',
+  contracts: 'contracts',
+  opportunities: 'matches',
+  vetting_progress: 'vetting',
+  requests: 'requests'
+};
+
 const KEYWORD_FALLBACK: Array<[RegExp, string]> = [
   [/interview/i, 'interviews'],
   [/contract/i, 'contracts'],
@@ -84,8 +93,18 @@ const KEYWORD_FALLBACK: Array<[RegExp, string]> = [
   [/request/i, 'requests']
 ];
 
+/**
+ * `aliases` maps a notification's module to the id of the screen that shows
+ * it. The default is the candidate portal's naming, which is where this
+ * started, and the client portal calls the same screens something else: its
+ * interviews live under `scheduling` and its matches under `radar`. So every
+ * interview notification counted against a section id that portal does not
+ * have, and the Interviews badge was permanently zero while notifications
+ * piled up behind it. A portal whose names differ passes its own map.
+ */
 export function countUnreadByModule(
-  notifications: any[] | null | undefined
+  notifications: any[] | null | undefined,
+  aliases: Record<string, string> = MODULE_ALIASES
 ): Record<string, number> {
   const counts: Record<string, number> = {};
 
@@ -93,11 +112,17 @@ export function countUnreadByModule(
     if (!isUnreadNotification(notification)) continue;
 
     const moduleType = notification.module ?? notification.module_type ?? notification.moduleType;
-    let section = moduleType ? MODULE_ALIASES[String(moduleType)] : undefined;
+    let section = moduleType ? aliases[String(moduleType)] : undefined;
 
     if (!section) {
       const text = `${notification.title || ''} ${notification.message || ''}`;
-      section = KEYWORD_FALLBACK.find(([pattern]) => pattern.test(text))?.[1];
+      const guessed = KEYWORD_FALLBACK.find(([pattern]) => pattern.test(text))?.[1];
+      // The fallback guesses in the default vocabulary, so it is translated
+      // too. Without this an older row with no module_type counted against
+      // the wrong id on any portal using its own names.
+      section = guessed
+        ? (aliases === MODULE_ALIASES ? guessed : (FALLBACK_TO_MODULE[guessed] ? aliases[FALLBACK_TO_MODULE[guessed]] : undefined))
+        : undefined;
     }
 
     if (section) counts[section] = (counts[section] || 0) + 1;
@@ -105,3 +130,6 @@ export function countUnreadByModule(
 
   return counts;
 }
+
+/** Exposed so a portal can start from the default naming and adjust it. */
+export const NOTIFICATION_MODULE_ALIASES = MODULE_ALIASES;

@@ -7,7 +7,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton } from '@kongila/ui';
 import { formatCurrency, formatDate, getGradeColor, viewerTimeZone, wallClockToUtc, TIMEZONE_OPTIONS } from '@kongila/utils';
-import { generateNDATemplate, generateContractTemplate } from '@kongila/contracts';
 import { 
   TalentProfile, ServiceRequest, Match, Contract, ServiceType, calculateTalentProfileCompletion, hasCoreTalentProfileChanges
 } from '@kongila/shared-types';
@@ -178,6 +177,8 @@ export default function KongilaWeb({
   const [interviews, setInterviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+  const sessionRestoreRef = useRef<((existingSession?: Session | null) => Promise<void>) | null>(null);
+  const sessionRestoreStartedRef = useRef(false);
   // True once the first database load has come back, successfully or not.
   // Both dashboards used to render the instant the user was known, with
   // every list still empty, so a signed-in person's first sight of their
@@ -417,7 +418,15 @@ export default function KongilaWeb({
     });
     const result = await res.json().catch(() => ({}));
     if (!res.ok || !result?.ok) {
-      triggerBanner(result?.error || 'Could not record your response.', 'error');
+      const pendingNames = Array.isArray(result?.pendingDocuments)
+        ? result.pendingDocuments.map((document: any) => document.name).filter(Boolean).join(', ')
+        : '';
+      triggerBanner(
+        result?.code === 'MANDATORY_DOCUMENTS_PENDING' && pendingNames
+          ? `Before accepting, open Documents and sign: ${pendingNames}.`
+          : result?.error || 'Could not record your response.',
+        'error'
+      );
       return false;
     }
     if (result.warnings?.length) {
@@ -472,8 +481,10 @@ export default function KongilaWeb({
     // Only values this page already understands are accepted, and the query
     // is stripped afterwards so a refresh does not reopen what the person
     // just closed.
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
+    if (typeof window === 'undefined' || !router.isReady) return;
+    const [currentPath, currentHash = ''] = router.asPath.split('#', 2);
+    const queryString = currentPath.includes('?') ? currentPath.slice(currentPath.indexOf('?') + 1) : '';
+    const params = new URLSearchParams(queryString);
     if (params.has('invite')) return; // the invitation flow owns that case
 
     const view = params.get('view');
@@ -499,10 +510,13 @@ export default function KongilaWeb({
       // parameters are durable route state and must survive sign-in/refresh.
       for (const key of ['view', 'role', 'intake', 'workspace']) params.delete(key);
       const query = params.toString();
-      const clean = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
-      window.history.replaceState(window.history.state, '', clean);
+      const clean = `${router.pathname}${query ? `?${query}` : ''}${currentHash ? `#${currentHash}` : ''}`;
+      // Use the Next router so its route state stays in sync with the address
+      // bar. This also handles CTAs clicked while the homepage is already
+      // mounted (where the initial useState props do not run a second time).
+      void router.replace(clean, undefined, { shallow: true, scroll: false });
     }
-  }, []);
+  }, [router.isReady, router.asPath, router.pathname]);
 
   useEffect(() => {
     // Invitations arrive as one signed token. The organisation and permission
@@ -726,10 +740,37 @@ export default function KongilaWeb({
         setNotifications(dbData.notifications || []);
         setRehireRequests(dbData.rehireRequests || []);
         setSupportTickets(supportBody.tickets || dbData.supportTickets || []);
-        // Interviews come from the scoped resource API. This used to select
-        // the whole interviews table with the anon key, so every caller
-        // received every interview on the platform.
-        setInterviews(dbData.interviews || []);
+        // Interviews, from their own authenticated route first.
+        //
+        // They used to come only from the scoped snapshot, which reaches a
+        // client's interviews through `clientRequests` — so an interview was
+        // visible only if the request behind it resolved through that one
+        // path, and when it did not the Interviews screen was empty with
+        // nothing on it to say why. /api/interviews reads the table directly
+        // and scopes by the company that owns the request, the same shape
+        // /api/requests already uses.
+        //
+        // The snapshot stays as the fallback, merged by id, so a row either
+        // source has still appears.
+        const interviewResponse = activeUser?.role === 'client' || activeUser?.role === 'talent'
+          ? await apiFetch('/api/interviews').catch(() => null)
+          : null;
+        const interviewBody = interviewResponse?.ok
+          ? await interviewResponse.json().catch(() => ({}))
+          : {};
+        const mergedInterviews = new Map<string, any>();
+        for (const interview of (dbData.interviews || [])) {
+          if (interview?.id) mergedInterviews.set(String(interview.id), interview);
+        }
+        for (const interview of (interviewBody.interviews || [])) {
+          if (interview?.id) {
+            mergedInterviews.set(String(interview.id), {
+              ...mergedInterviews.get(String(interview.id)),
+              ...interview
+            });
+          }
+        }
+        setInterviews(Array.from(mergedInterviews.values()));
 
         setDocuments(dbData.documents || []);
         setRequestActivityLogs(dbData.requestActivityLogs || []);
@@ -934,11 +975,44 @@ export default function KongilaWeb({
       }
     };
 
-    initSession();
+    // The public homepage must not wait for (or automatically enter) a saved
+    // portal session. Resolve a session only when the URL explicitly asks for
+    // an authenticated/registration flow. The standalone /login page performs
+    // its own check when a visitor chooses to sign in.
+    const params = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+    const explicitWorkspaceEntry = Boolean(
+      params.has('portal') ||
+      params.get('workspace') === '1' ||
+      params.get('view') === 'login' ||
+      params.get('view') === 'signup' ||
+      params.has('authView') ||
+      params.get('intake') === '1' ||
+      params.has('invite') ||
+      initialAuthView ||
+      initialClientIntakeActive ||
+      initialWorkspaceTransition ||
+      initialInviteTransition
+    );
+    sessionRestoreRef.current = initSession;
+    if (explicitWorkspaceEntry) {
+      sessionRestoreStartedRef.current = true;
+      void initSession();
+    } else {
+      // Render the marketing site directly. A later explicit sign-in or
+      // service-request action can still resolve an existing session.
+      setSessionInitialized(true);
+      setLoading(false);
+    }
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
+        // A background sign-out in another tab must not replace a public
+        // marketing page with the sign-in screen. Only react when this tab
+        // intentionally entered auth/workspace, or had an active portal user.
+        if (!sessionRestoreStartedRef.current && !currentUserRef.current) return;
         currentUserRef.current = null;
         setCurrentUser(null);
         setAuthView('login');
@@ -947,6 +1021,10 @@ export default function KongilaWeb({
       }
 
       if (event === 'SIGNED_IN' && session) {
+        // Supabase can emit auth events while a public page is open (for
+        // example, from another tab). A valid session alone is not a request
+        // to leave the marketing site; only restore it after explicit intent.
+        if (!sessionRestoreStartedRef.current && !currentUserRef.current) return;
         // Defer async work so we don't call getSession while the auth lock is held.
         setTimeout(() => {
           void initSession(session);
@@ -1023,6 +1101,31 @@ export default function KongilaWeb({
       supabase.removeChannel(msgsChannel);
     };
   }, []);
+
+  // The homepage stays public until the visitor explicitly enters an auth,
+  // intake, invitation, or protected workspace flow. CTAs on the homepage
+  // update this page's state without remounting it, so start restoration here
+  // for those client-side transitions as well as for direct URLs.
+  useEffect(() => {
+    if (!router.isReady) return;
+    const explicitWorkspaceEntry = Boolean(
+      authView ||
+      clientIntakeActive ||
+      router.query.portal ||
+      router.query.workspace === '1' ||
+      router.query.invite
+    );
+    if (!explicitWorkspaceEntry) {
+      sessionRestoreStartedRef.current = false;
+      return;
+    }
+    if (sessionRestoreStartedRef.current) return;
+
+    sessionRestoreStartedRef.current = true;
+    setSessionInitialized(false);
+    setLoading(true);
+    void sessionRestoreRef.current?.();
+  }, [router.isReady, router.query.portal, router.query.workspace, router.query.invite, authView, clientIntakeActive]);
 
   // A portal section in the URL is a protected deep link. Keep the neutral
   // loader visible while restoring the session, then send signed-out visitors
@@ -1949,51 +2052,31 @@ export default function KongilaWeb({
   };
 
   // Extend Job Offer (Generate Contract)
-  const handleExtendOffer = async (talent: TalentProfile) => {
+  /**
+   * Making an offer is a request to Kongila, not a contract.
+   *
+   * This used to post straight to /api/contracts: it created a contract the
+   * moment a client pressed the button, set the match to a status the check
+   * constraint does not allow, and opened an NDA modal — all without the
+   * offers table, without anyone at Kongila seeing the commercial terms, and
+   * without the candidate being asked. Kongila is the employer of record, so
+   * a contract that nobody here approved is a contract Kongila is bound by on
+   * terms it never read.
+   *
+   * The offers table models the real sequence, and the enum has said so all
+   * along: submitted → admin_approved → sent_to_talent → accepted, and only
+   * then a contract. The client dashboard's own offer form posts to
+   * /api/offers and does exactly that, so this hands over to it rather than
+   * keeping a second, quieter way to hire somebody.
+   */
+  const handleExtendOffer = (talent: TalentProfile) => {
     if (!selectedRequest || !currentUser) return;
-
-    const contractResponse = await apiFetch('/api/contracts', {
-      method: 'POST',
-      body: JSON.stringify({
-        talentId: talent.id,
-        requestId: selectedRequest.id,
-        serviceType: selectedRequest.serviceType,
-        roleTitle: selectedRequest.roleDescription || selectedRequest.title || 'Role',
-        startDate: selectedRequest.startDate,
-        budget: selectedRequest.budget
-      })
-    });
-    const contractBody = await contractResponse.json().catch(() => ({}));
-    const insertedContract = contractBody.contract;
-    if (!contractResponse.ok || !insertedContract) {
-      console.error('Failed to create contract', contractBody.error);
-      triggerBanner('Failed to generate contract.', 'error');
-      return;
-    }
-
-    // Update match status to offer extended
-    const updatedMatches = matches.map(m => 
-      (m.requestId === selectedRequest.id && m.talentId === talent.id) 
-        ? { ...m, status: 'Offer Extended' as const } 
-        : m
+    setSelectedTalent(talent);
+    setActiveTab('client');
+    triggerBanner(
+      `Open ${talent.name} on the role to send an offer — your Kongila team reviews the terms before the candidate sees them.`,
+      'info'
     );
-
-    // Update request status to Onboarding
-    const updatedRequests = requests.map(r => 
-      r.id === selectedRequest.id ? { ...r, status: 'Candidates Ready' as const } : r
-    );
-
-    const ndaText = generateNDATemplate(talent.name, currentUser ? `${currentUser.name} (${currentUser.companyName || 'Unknown Company'})` : 'Guest Client');
-    setActiveNDA(ndaText);
-    setSigningContractId(insertedContract.id);
-
-    // Same again: this posted matches with status 'Offer Extended', which
-    // matches_status_check does not allow, alongside the browser's copy of
-    // talents, clientRequests and contracts. /api/contracts records the
-    // offer and the audit entry.
-    setMatches(updatedMatches);
-    setRequests(updatedRequests);
-    setShowSignModal(true);
   };
 
   /**
@@ -2307,12 +2390,6 @@ export default function KongilaWeb({
         {/* ====================================================================== */}
         {/* MARKETING HUB & HERO (Shown if not logged in AND not inside intake/auth) */}
         {/* ====================================================================== */}
-        {!sessionInitialized && !authView && !clientIntakeActive && !routeTransitionPending && (
-          <div className="route-transition-loader">
-            <MascotLoader variant="page" message="Restoring your Kongila session…" />
-          </div>
-        )}
-
         {!sessionInitialized && authView && !clientIntakeActive && !routeTransitionPending && (
           <div className="route-transition-loader">
             <MascotLoader variant="page" message="Preparing your Kongila experience…" />
@@ -2325,7 +2402,7 @@ export default function KongilaWeb({
           </div>
         )}
 
-        {sessionInitialized && !currentUser && !authView && !clientIntakeActive && !routeTransitionPending && !router.query.portal && (
+        {!currentUser && !authView && !clientIntakeActive && !routeTransitionPending && !router.query.portal && !router.query.invite && (
           /* The public site.
            *
              The marketing pages used to live here as roughly nine hundred lines
@@ -4154,6 +4231,16 @@ export default function KongilaWeb({
             conversations={conversations}
             messages={messages}
             notifications={notifications}
+            // Never passed, and `interviews?: any[]` on the other side meant
+            // nothing complained: the component defaulted it to [] and every
+            // screen that reads it went quietly blank. That is the empty
+            // Interviews module, the empty Interviews tab under a request,
+            // and the Request Interview button that stayed live after a
+            // client had already asked, because the check it makes is
+            // "is there an interview for this pair" against an array that
+            // was always empty.
+            interviews={interviews}
+            setInterviews={setInterviews}
             onSignOut={handleSignOut}
             setActiveTab={setActiveTab}
             setClientIntakeActive={setClientIntakeActive}

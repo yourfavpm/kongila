@@ -1,4 +1,6 @@
 /* Shared authenticated product interface for talent, client, and admin. */
+@keyframes kongila-button-spin { to { transform: rotate(360deg); } }
+
 :root {
   --dash-canvas: #f3f6fa;
   --dash-surface: #ffffff;
@@ -40,6 +42,11 @@
 .dashboard-shell :where(button, a),
 .admin-dashboard-shell :where(button, a) {
   transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.dashboard-shell button:not(:disabled):active,
+.admin-dashboard-shell button:not(:disabled):active {
+  transform: translateY(1px) scale(.99);
 }
 
 .dashboard-shell .dashboard-content-area,
@@ -217,3 +224,4 @@
 @media (prefers-reduced-motion: reduce) {
   .dashboard-shell *, .admin-dashboard-shell * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+

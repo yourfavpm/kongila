@@ -79,3 +79,37 @@ test('rows with no module fall back to keywords', () => {
 test('read notifications count towards nothing', () => {
   assert.deepEqual(countUnreadByModule([{ read: true, module_type: 'interviews' }]), {});
 });
+
+test('a portal that names its screens differently still gets its badges', () => {
+  // The client portal calls its interviews screen "scheduling" and its
+  // matches screen "radar". The counts came back keyed by the candidate
+  // portal's names, so every interview notification landed on a section id
+  // the client portal does not have, and the Interviews badge read zero
+  // however many were waiting.
+  const notifications = [
+    { read: false, module_type: 'interviews', title: 'Interview invitation' },
+    { read: false, module_type: 'interviews', title: 'Interview confirmed' },
+    { read: false, module_type: 'matches', title: 'Candidates ready' },
+    { read: true, module_type: 'interviews', title: 'Already read' }
+  ];
+
+  const clientAliases = { interviews: 'scheduling', matches: 'radar', requests: 'requests' };
+  const counts = countUnreadByModule(notifications, clientAliases);
+  assert.equal(counts.scheduling, 2);
+  assert.equal(counts.radar, 1);
+  assert.equal(counts.interviews, undefined);
+
+  // The default is unchanged, so the candidate portal is untouched.
+  const defaults = countUnreadByModule(notifications);
+  assert.equal(defaults.interviews, 2);
+  assert.equal(defaults.opportunities, 1);
+});
+
+test('an older row with no module_type lands on the right screen too', () => {
+  // The keyword fallback guesses in the default vocabulary, so it has to be
+  // translated as well, or a row written before module_type existed counts
+  // against a section id the portal does not have.
+  const notifications = [{ read: false, title: 'Your interview is confirmed', message: '' }];
+  const counts = countUnreadByModule(notifications, { interviews: 'scheduling' });
+  assert.equal(counts.scheduling, 1);
+});

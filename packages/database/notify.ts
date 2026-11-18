@@ -203,7 +203,25 @@ export async function notifyUsers(
     .filter(Boolean) as any[];
 
   if (inAppRows.length > 0) {
-    const { error } = await supabase.from('notifications').insert(inAppRows);
+    let { error } = await supabase.from('notifications').insert(inAppRows);
+    // `source_record_id` links a row back to the record it is about, and the
+    // live notifications table has no such column. PostgREST rejects the
+    // whole batch when one column is unknown, so a single call site passing
+    // it meant none of those notifications were stored at all. The link is
+    // worth less than the notification: retry without it.
+    if (error && /source_record_id/.test(error.message || '')) {
+      const withoutSource = inAppRows.map((row: any) => {
+        const { source_record_id: _ignored, ...rest } = row;
+        return rest;
+      });
+      ({ error } = await supabase.from('notifications').insert(withoutSource));
+      if (!error) {
+        warnings.push(
+          'Stored without a link back to the record: the notifications table has no '
+          + 'source_record_id column.'
+        );
+      }
+    }
     if (error) warnings.push(`In-app notification failed: ${error.message}`);
     else delivered += inAppRows.length;
   }

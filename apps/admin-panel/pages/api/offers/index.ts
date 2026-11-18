@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { getRequestUser, getSupabaseClient, getTalentComplianceStatus } from '@kongila/database';
 
 /**
  * The offer queue operations work from.
@@ -64,11 +64,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     const now = Date.now();
+    const complianceByTalent = new Map<string, any>();
+    await Promise.all(talentIds.map(async (talentId) => {
+      const result = await getTalentComplianceStatus(String(talentId));
+      complianceByTalent.set(String(talentId), result.ok && result.data
+        ? { pendingMandatoryDocuments: result.data.outstanding.map((doc: any) => ({ id: doc.id, name: doc.name || doc.type || 'Required document' })) }
+        : { pendingMandatoryDocuments: null, complianceStatusError: result.error || 'Could not load required-document status.' });
+    }));
+
     return res.status(200).json({
       offers: rows.map((offer: any) => ({
         ...offer,
         talentName: talentName.get(String(offer.talent_id)) || 'Unknown candidate',
         clientName: orgForUser.get(String(offer.client_id)) || 'Unknown company',
+        ...(complianceByTalent.get(String(offer.talent_id)) || { pendingMandatoryDocuments: [] }),
         isOverdue:
           offer.status === 'sent_to_talent' &&
           offer.talent_response_deadline &&
