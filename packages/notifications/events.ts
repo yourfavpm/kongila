@@ -27,6 +27,11 @@ export type NotificationEvent =
   | 'operator_account_restored'
   // Request
   | 'request_received'
+  | 'support_ticket_opened'
+  | 'support_ticket_opened_for_ops'
+  | 'support_ticket_reply'
+  | 'support_ticket_reply_for_ops'
+  | 'support_ticket_resolved'
   // The same arrival, read by operations rather than by the client.
   | 'new_request_for_ops'
   | 'candidates_ready'
@@ -369,6 +374,71 @@ export function buildNotification(
           ctx, 'View your request'
         ) + `\n\n${SIGN_OFF}`,
         inApp: `Request received: ${role}. Our team is sourcing candidates.`
+      };
+
+    case 'support_ticket_opened':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `We received your support request: ${role}`,
+        body: withAction(
+          `${hi}\n\nYour support request has been received. Our team will review it and follow up through your Kongila account.` +
+          (ctx.reason ? `\n\nYour message: ${ctx.reason}` : ''),
+          ctx, 'View support'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Support request received: ${role}.`
+      };
+
+    case 'support_ticket_opened_for_ops':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `New support ticket: ${role}`,
+        body: withAction(
+          `${hi}\n\nA ${ctx.clientName || ctx.talentName || 'Kongila'} user opened a support ticket.` +
+          (ctx.reason ? `\n\nMessage: ${ctx.reason}` : ''),
+          ctx, 'Open support tickets'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `New support ticket: ${role}.`
+      };
+
+    case 'support_ticket_reply':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `An update on your support ticket: ${role}`,
+        body: withAction(
+          `${hi}\n\nKongila Support replied to your ticket.` +
+          (ctx.reason ? `\n\n${ctx.reason}` : ''),
+          ctx, 'View support conversation'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Kongila Support replied to: ${role}.`
+      };
+
+    case 'support_ticket_reply_for_ops':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `New reply on support ticket: ${role}`,
+        body: withAction(
+          `${hi}\n\nA user replied to a support ticket.` +
+          (ctx.reason ? `\n\n${ctx.reason}` : ''),
+          ctx, 'Open support tickets'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `New reply on support ticket: ${role}.`
+      };
+
+    case 'support_ticket_resolved':
+      return {
+        module: 'requests',
+        alsoInApp: true,
+        subject: `Your support ticket was resolved: ${role}`,
+        body: withAction(
+          `${hi}\n\nYour support ticket has been marked resolved. If you still need help, reply in the support conversation.` +
+          (ctx.reason ? `\n\n${ctx.reason}` : ''),
+          ctx, 'View support'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Support ticket resolved: ${role}.`
       };
 
     case 'new_request_for_ops':
@@ -1252,7 +1322,9 @@ export const ALL_NOTIFICATION_EVENTS: NotificationEvent[] = [
   // all_candidates_rejected had a template and was never in this list, so
   // anything iterating the events — settings screens, tests — did not know
   // it existed.
-  'request_received', 'new_request_for_ops', 'candidates_ready', 'all_candidates_rejected',
+  'request_received', 'support_ticket_opened', 'support_ticket_opened_for_ops',
+  'support_ticket_reply', 'support_ticket_reply_for_ops', 'support_ticket_resolved',
+  'new_request_for_ops', 'candidates_ready', 'all_candidates_rejected',
   'client_call_requested', 'client_call_responded', 'client_call_scheduled',
   'request_message_from_admin', 'request_message_from_client',
   'interview_requested', 'interview_request_sent', 'interview_request_declined',

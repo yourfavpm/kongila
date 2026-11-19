@@ -244,9 +244,20 @@ export async function sendEmail(options: SendEmailOptions): Promise<DispatchResu
 
     if (!response.ok) {
       const error = payload?.message || `Resend returned ${response.status}`;
-      console.error(`[notifications] email to ${String(options.to)} failed: ${error}`);
+      const deployment = process.env.VERCEL_PROJECT_PRODUCTION_URL || 'local-or-unidentified';
+      const environment = process.env.VERCEL_ENV || 'local';
+      console.error(`[notifications] Resend rejected email (${deployment}, ${environment}): ${error}`);
       return { success: false, configured: true, channel: 'Email', dispatchedAt, error };
     }
+
+    // A 2xx response means Resend accepted the message, not necessarily that
+    // it reached the recipient's inbox. Keep a safe delivery breadcrumb in
+    // Vercel Runtime Logs without logging recipient addresses or message text.
+    const deployment = process.env.VERCEL_PROJECT_PRODUCTION_URL || 'local-or-unidentified';
+    const environment = process.env.VERCEL_ENV || 'local';
+    console.info(
+      `[notifications] Resend accepted email (${deployment}, ${environment}); id=${payload?.id || 'unavailable'}`
+    );
 
     return {
       success: true,

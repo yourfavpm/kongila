@@ -20,7 +20,7 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { notifyUsers, notifyAdmins } from './notify';
+import { adminPortalUrl, clientPortalUrl, notifyUsers, notifyAdmins, talentPortalUrl } from './notify';
 
 export interface SupportResult<T = any> {
   ok: boolean;
@@ -133,11 +133,23 @@ export async function createTicket(
 
   const ticket = rowToTicket(created || row);
 
-  // Operations is told. Nothing used to tell them, so a ticket sat unread.
-  const notified = await notifyAdmins('request_received', {
-    roleTitle: `Support: ${ticket.subject}`,
-    reason: ticket.description || undefined
-  }, { inAppOnly: true });
+  // Send a receipt to the person who raised it and an actionable notice to
+  // operations. These used to be in-app-only, so there was no email at all
+  // when a client or talent opened a support ticket.
+  const requesterNotice = await notifyUsers(actor.userId, 'support_ticket_opened', {
+    roleTitle: ticket.subject,
+    reason: ticket.description || undefined,
+    actionUrl: actor.kind === 'talent'
+      ? talentPortalUrl('/?section=support')
+      : clientPortalUrl('/?section=support')
+  });
+  const opsNotice = await notifyAdmins('support_ticket_opened_for_ops', {
+    roleTitle: ticket.subject,
+    reason: ticket.description || undefined,
+    clientName: actor.kind === 'client' ? actor.email || undefined : undefined,
+    talentName: actor.kind === 'talent' ? actor.email || undefined : undefined,
+    actionUrl: adminPortalUrl('/?tab=support')
+  });
 
   await recordAudit(actor, {
     action: 'Raise Support Ticket',
@@ -146,7 +158,12 @@ export async function createTicket(
     entityId: ticket.id
   });
 
-  return { ok: true, status: 201, data: ticket, warnings: notified.warnings };
+  return {
+    ok: true,
+    status: 201,
+    data: ticket,
+    warnings: [...requesterNotice.warnings, ...opsNotice.warnings]
+  };
 }
 
 // ─── Reading ─────────────────────────────────────────────────────────────────
@@ -269,16 +286,23 @@ export async function replyToTicket(
   if (isSupport) {
     const recipient = await ticketRecipientUserId(ticket);
     if (recipient) {
-      const result = await notifyUsers(recipient, 'request_received', {
+      const result = await notifyUsers(recipient, 'support_ticket_reply', {
         roleTitle: `Support: ${ticket.subject}`,
-        reason: 'Support has replied to your ticket.'
+        reason: input.text.trim(),
+        actionUrl: ticket.talent_id
+          ? talentPortalUrl('/?section=support')
+          : clientPortalUrl('/?section=support')
       });
       warnings.push(...result.warnings);
     }
   } else {
-    const result = await notifyAdmins('request_received', {
-      roleTitle: `Support reply: ${ticket.subject}`
-    }, { inAppOnly: true });
+    const result = await notifyAdmins('support_ticket_reply_for_ops', {
+      roleTitle: `Support: ${ticket.subject}`,
+      reason: input.text.trim(),
+      clientName: actor.kind === 'client' ? actor.email || undefined : undefined,
+      talentName: actor.kind === 'talent' ? actor.email || undefined : undefined,
+      actionUrl: adminPortalUrl('/?tab=support')
+    });
     warnings.push(...result.warnings);
   }
 
@@ -315,9 +339,11 @@ export async function setTicketStatus(
   const warnings: string[] = [];
   const recipient = await ticketRecipientUserId(ticket);
   if (input.status === 'Resolved' && recipient) {
-    const result = await notifyUsers(recipient, 'request_received', {
+    const result = await notifyUsers(recipient, 'support_ticket_resolved', {
       roleTitle: `Support: ${ticket.subject}`,
-      reason: 'Your ticket has been marked resolved.'
+      actionUrl: ticket.talent_id
+        ? talentPortalUrl('/?section=support')
+        : clientPortalUrl('/?section=support')
     });
     warnings.push(...result.warnings);
   }
