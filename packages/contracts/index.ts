@@ -63,4 +63,29 @@ By clicking "Sign and Deploy Contract", the contractor accepts all Terms of Use.
 
 // The document a candidate is actually asked to sign, and the check that
 // stops them signing one whose terms do not exist.
-export * from './document';
+// document.ts has a renderTemplate of its own, for the older single-document
+// signing path, and defaultTemplates.ts has the one new contracts are
+// rendered with. Both cannot be re-exported under the same name, and the
+// ambiguity was a build error. The older one stays internal to document.ts,
+// which is its only caller.
+export {
+  buildContractDocument,
+  contractCoverSheet,
+  templateFields,
+  unfilledFields,
+  MINIMUM_TERMS_LENGTH,
+  type ContractDocument,
+  type ContractFacts
+} from './document';
+
+// ─── The templates the platform ships with ───────────────────────────────────
+//
+// The two generators above are the originals: they name two different
+// companies, reference Remotan, and carry no IP, termination, liability,
+// data protection or governing law clause between them. They are kept only
+// so an old contract generated from one still renders.
+//
+// New contracts come from the four templates in defaultTemplates.ts, which
+// are restored into the template manager and edited there.
+export * from './defaultTemplates';
+export * from './html';

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, recordAudit } from '@kongila/database';
+import { requirePermission, getRequestUser, getSupabaseClient, recordAudit, signDbFileUrls } from '@kongila/database';
 
 /**
  * Universal compliance documents.
@@ -23,7 +23,7 @@ import { getRequestUser, getSupabaseClient, recordAudit } from '@kongila/databas
 const TYPES = ['CV', 'portfolio', 'NDA', 'agreement', 'certification', 'IT_Ethics_Policy'];
 
 /** What may be changed through this route. Not user_id, not status. */
-const EDITABLE = ['name', 'type', 'is_mandatory', 'description', 'file_url', 'file_name'];
+const EDITABLE = ['name', 'type', 'is_mandatory', 'description', 'file_url', 'file_name', 'file_size_bytes'];
 
 function toDocument(row: any) {
   return {
@@ -37,6 +37,7 @@ function toDocument(row: any) {
     description: row.description,
     fileUrl: row.file_url,
     fileName: row.file_name,
+    fileSizeBytes: row.file_size_bytes || 0,
     uploadedAt: row.uploaded_at,
     updatedAt: row.updated_at
   };
@@ -49,6 +50,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[api/compliance] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:compliance' : 'compliance.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const supabase = getSupabaseClient();
 
@@ -57,11 +64,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data, error } = await supabase
       .from('documents')
       .select('*')
-      .eq('is_hidden', false)
+      .is('user_id', null)
       .order('uploaded_at', { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json((data || []).map(toDocument));
+    const visibleRows = (data || []).filter((row: any) => row.is_hidden !== true);
+    const docIds = visibleRows.map((row: any) => String(row.id));
+    const { data: signatures, error: signatureError } = docIds.length
+      ? await supabase.from('document_signatures').select('document_id, talent_id, signed_at').in('document_id', docIds)
+      : { data: [], error: null };
+    if (signatureError) return res.status(500).json({ error: `Could not load document signatures: ${signatureError.message}` });
+    const signedIds = new Map<string, string[]>();
+    for (const signature of signatures || []) {
+      const key = String(signature.document_id);
+      signedIds.set(key, [...(signedIds.get(key) || []), String(signature.talent_id)]);
+    }
+    const signed = await signDbFileUrls({ documents: visibleRows.map((row: any) => ({ ...toDocument(row), signedByTalentIds: signedIds.get(String(row.id)) || [] })) });
+    return res.status(200).json(signed.documents);
   }
 
   // ── Create ────────────────────────────────────────────────────────────────
@@ -85,6 +104,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(422).json({ error: 'A mandatory document applies to everyone, so it has no owner.' });
     }
 
+    if (isMandatory && !body.fileUrl) return res.status(422).json({ error: 'Upload the PDF that talents need to review and sign.' });
+
     const { data, error } = await supabase
       .from('documents')
       .insert({
@@ -96,6 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         description: body.description ? String(body.description) : null,
         file_url: body.fileUrl ? String(body.fileUrl) : null,
         file_name: body.fileName ? String(body.fileName) : null,
+        file_size_bytes: Number(body.fileSizeBytes) || null,
         status: 'pending_signature',
         is_hidden: false,
         is_current: true,
@@ -131,7 +153,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       is_mandatory: updates.isMandatory,
       description: updates.description,
       file_url: updates.fileUrl,
-      file_name: updates.fileName
+      file_name: updates.fileName,
+      file_size_bytes: updates.fileSizeBytes
     };
 
     const patch: Record<string, unknown> = {};
@@ -139,9 +162,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (value === undefined) continue;
       if (EDITABLE.includes(field)) patch[field] = value;
     }
+    if (updates.isMandatory !== undefined) patch.is_template = Boolean(updates.isMandatory);
 
     if (patch.type !== undefined && !TYPES.includes(String(patch.type))) {
       return res.status(422).json({ error: `A document is one of: ${TYPES.join(', ')}.` });
+    }
+    if (updates.isMandatory === true && updates.fileUrl === undefined) {
+      const { data: existing } = await supabase.from('documents').select('file_url').eq('id', String(id)).maybeSingle();
+      if (!existing?.file_url) return res.status(422).json({ error: 'Upload the PDF that talents need to review and sign before making this mandatory.' });
     }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ error: 'Nothing to change.' });

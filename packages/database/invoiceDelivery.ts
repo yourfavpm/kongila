@@ -25,6 +25,7 @@ import {
   DEFAULT_PAYMENT_TERMS_DAYS
 } from '@kongila/workflows';
 import { buildInvoicePdf, sendEmail, emailIsConfigured } from '@kongila/notifications';
+import { canManageContractInvoice } from './invoiceAccess';
 
 export interface DeliveryResult<T = any> {
   ok: boolean;
@@ -36,11 +37,6 @@ export interface DeliveryResult<T = any> {
 
 function fail(status: number, error: string): DeliveryResult {
   return { ok: false, status, error };
-}
-
-function canIssue(actor: Actor): boolean {
-  return actor.kind === 'admin'
-    && (actor.role === 'super_admin' || actor.role === 'finance');
 }
 
 function monthOf(date: Date): string {
@@ -85,6 +81,30 @@ async function assignNumberAndDueDate(invoice: any, issuedAt: Date) {
   };
 }
 
+/** "2026-01" as "January 2026", for a human reading a bill. */
+function monthLabel(period: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(period || ''));
+  if (!match) return String(period || '');
+  const months = ['January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+  const index = Number(match[2]) - 1;
+  return months[index] ? `${months[index]} ${match[1]}` : period;
+}
+
+/**
+ * What the invoice is for, when nothing was stored.
+ *
+ * Invoices written before the description column existed have none, and an
+ * invoice whose only explanation is a service-line slug is one the client
+ * has to ring somebody about.
+ */
+function describeInvoice(invoice: any): string | null {
+  const line = String(invoice?.service_line || '').replace(/_/g, ' ').trim();
+  if (!line) return null;
+  if (invoice?.period) return `${line} services for ${monthLabel(invoice.period)}`;
+  return `${line} fee`;
+}
+
 async function invoicePdfFor(invoice: any): Promise<Buffer> {
   const supabase = getSupabaseClient();
 
@@ -98,8 +118,44 @@ async function invoicePdfFor(invoice: any): Promise<Buffer> {
     .from('client_profiles').select('organization_id').eq('user_id', invoice.client_id).maybeSingle();
 
   const { data: org } = profile?.organization_id
-    ? await supabase.from('organizations').select('name').eq('id', profile.organization_id).maybeSingle()
+    ? await supabase
+        .from('organizations')
+        .select('name, country, contact_email')
+        .eq('id', profile.organization_id)
+        .maybeSingle()
     : { data: null };
+
+  // The parts of a split payment, so the invoice can say what is due now and
+  // what follows. A missing table is not an error: it means this database
+  // has not had the billing terms migration run yet, and the invoice falls
+  // back to one amount on one date, which is what it did before.
+  const { data: instalmentRows } = await supabase
+    .from('invoice_instalments')
+    .select('sequence, label, percent, amount, due_date')
+    .eq('invoice_id', invoice.id)
+    .order('sequence');
+
+  const instalments = (instalmentRows || []).map((row: any) => ({
+    label: row.label || `Instalment ${row.sequence}`,
+    dueDate: String(row.due_date || '').slice(0, 10),
+    amount: Number(row.amount || 0),
+    percent: row.percent == null ? undefined : Number(row.percent)
+  }));
+
+  // Who is issuing it. Blank rather than invented: an invoice carrying a
+  // made-up registration number is worse than one carrying none.
+  const issuerKeys = ['contracting_entity_name', 'contracting_entity_address',
+                      'contracting_entity_email', 'contracting_entity_registration'];
+  const { data: issuerRows } = await supabase
+    .from('platform_settings')
+    .select('key, value')
+    .in('key', issuerKeys);
+
+  const issuer: Record<string, string | null> = {};
+  for (const row of issuerRows || []) {
+    const text = row?.value == null ? null : String(row.value).replace(/^"|"$/g, '');
+    issuer[row.key] = text && text.trim() ? text.trim() : null;
+  }
 
   // Set in platform_settings. Absent means absent: the PDF says payment
   // details will follow rather than printing a plausible account number.
@@ -116,6 +172,15 @@ async function invoicePdfFor(invoice: any): Promise<Buffer> {
     paymentTerms: describeTerms(invoice.payment_terms_days),
     currency: invoice.currency || 'USD',
     clientName: org?.name || 'Client',
+    clientAddress: org?.country || null,
+    serviceDescription: invoice.description || describeInvoice(invoice),
+    periodLabel: invoice.period ? monthLabel(invoice.period) : null,
+    reference: invoice.contract_id || null,
+    instalments,
+    issuerName: issuer.contracting_entity_name,
+    issuerAddress: issuer.contracting_entity_address,
+    issuerEmail: issuer.contracting_entity_email,
+    issuerRegistration: issuer.contracting_entity_registration,
     lines: (lines || []).map((line: any) => ({
       description: line.description,
       quantity: Number(line.quantity || 1),
@@ -170,13 +235,19 @@ export async function sendInvoice(
   input: { invoiceId: string }
 ): Promise<DeliveryResult> {
   if (!actor) return fail(401, 'Not authenticated.');
-  if (!canIssue(actor)) return fail(403, 'Only a super admin or finance can send an invoice.');
+  if (actor.kind !== 'admin') return fail(403, 'Only operators can send an invoice.');
 
   const supabase = getSupabaseClient();
   const { data: invoice } = await supabase
     .from('invoices').select('*').eq('id', input.invoiceId).maybeSingle();
 
   if (!invoice) return fail(404, 'That invoice does not exist.');
+  const { data: contract } = invoice.contract_id
+    ? await supabase.from('contracts').select('client_id').eq('id', invoice.contract_id).maybeSingle()
+    : { data: null };
+  if (!contract || !(await canManageContractInvoice(actor, contract))) {
+    return fail(403, 'You can send invoices only for client accounts assigned to you.');
+  }
   if (['paid', 'void'].includes(String(invoice.status).toLowerCase())) {
     return fail(409, `That invoice is ${invoice.status} and cannot be sent.`);
   }

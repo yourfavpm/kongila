@@ -274,6 +274,15 @@ export async function updateTalentProfile(
     await ensureVettingPipeline(id);
   }
 
+  if (actor.role === 'talent_manager') {
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('talent_profiles').select('talent_manager_id').eq('id', id).maybeSingle();
+    if (assignmentError) return fail(500, `Could not verify the talent assignment: ${assignmentError.message}`);
+    if (String(assignment?.talent_manager_id || '') !== String(actor.userId)) {
+      return fail(404, 'That talent is not assigned to your portfolio.');
+    }
+  }
+
   const warnings: string[] = [];
 
   // A vetted candidate changing something their classification rests on.
@@ -303,6 +312,7 @@ export async function updateTalentProfile(
       }
 
       const told = await notifyTalentManagers('profile_rereview_required', {
+        talentId: id,
         talentName: existing.full_name || id,
         reason: `Changed ${changedCoreFields.join(', ')}.`,
         actionUrl: adminPortalUrl(`/talents/${id}`)

@@ -76,6 +76,7 @@ export default function RequestInterviewDrawer({
   // inside the scrolling body, below the time picker, where nobody looked —
   // which reads exactly like a form still waiting to be filled in.
   const [sent, setSent] = useState<any | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const talentTimezone = talent?.timezone || talent?.timeZone || null;
 
@@ -191,6 +192,10 @@ export default function RequestInterviewDrawer({
 
       onRequested?.(payload.interview);
       setSent(payload.interview || {});
+      // A request that saved but could not be emailed is not the same as one
+      // that went out, and the client is the person who finds out the hard
+      // way. The route already reports it; nothing used to read it.
+      setWarnings(Array.isArray(payload.warnings) ? payload.warnings : []);
     } catch (err: any) {
       setError(err?.message || 'The request could not be sent.');
     } finally {
@@ -296,6 +301,21 @@ export default function RequestInterviewDrawer({
                   ))}
                 </ol>
               </div>
+
+              {warnings.length > 0 && (
+                <div style={{
+                  padding: '13px 15px', borderRadius: '12px', background: '#FFFBEB',
+                  border: '1px solid #FDE68A', fontSize: '12.5px', color: '#92400E', lineHeight: 1.55
+                }}>
+                  <strong style={{ display: 'block', marginBottom: '4px' }}>
+                    Your request is saved, but one thing did not go through:
+                  </strong>
+                  {warnings.join(' ')}
+                  <div style={{ marginTop: '6px' }}>
+                    Your Kongila team can still see the request. Tell them if you do not hear back.
+                  </div>
+                </div>
+              )}
 
               <div>
                 <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>

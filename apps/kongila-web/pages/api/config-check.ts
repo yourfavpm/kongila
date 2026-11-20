@@ -46,6 +46,13 @@ const REQUIRED = {
   links: ['NEXT_PUBLIC_SITE_URL', 'NEXT_PUBLIC_ADMIN_URL']
 };
 
+/**
+ * Not required, but reported, because a feature that quietly does nothing is
+ * the hardest kind to diagnose. Drafting hides its own button when the key is
+ * absent; this says why.
+ */
+const OPTIONAL = ['OPENAI_API_KEY'];
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -72,6 +79,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const emailReady = emailConfigurationMissing().length === 0;
+  const optional = Object.fromEntries(OPTIONAL.map(name => [name, describe(name)]));
+  const aiReady = Boolean(process.env.OPENAI_API_KEY?.trim());
 
   return res.status(200).json({
     // Which deployment answered. With several Vercel projects on one
@@ -84,9 +93,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       project: process.env.VERCEL_PROJECT_PRODUCTION_URL || null
     },
     emailReady,
+    aiReady,
     missing,
     suspect,
     groups,
+    optional,
     meaning: missing.length === 0 && suspect.length === 0
       ? 'This server can see everything it needs. If a feature still says it is not configured, it is not this server answering that request.'
       : missing.length > 0

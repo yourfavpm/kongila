@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, getSupabaseClient, getRequestUser } from '@kongila/database';
+import { readDbAsync, getSupabaseClient, requirePermission, getRequestUser } from '@kongila/database';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Admin portal route. A talent or client session is a valid session and
@@ -11,6 +11,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn('[api/assessments] refused ' + actor.kind + ' ' + actor.userId);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:assessments' : 'talent.assess');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const rawDb = await readDbAsync();
   const db = rawDb as any;

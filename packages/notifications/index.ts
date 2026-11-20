@@ -346,3 +346,4 @@ export async function sendWhatsAppNotification(
 // The invoice PDF, and the small writer behind it.
 export * from './pdf.ts';
 export * from './invoicePdf.ts';
+export * from './contractPdf.ts';

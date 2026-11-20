@@ -1,10 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  requirePermission,
   getRequestUser,
   listFees,
   setFee,
   previewInvoices,
   generateInvoiceDrafts,
+  updateDraftInvoice,
   listInvoices,
   listPayouts,
   approvePayouts,
@@ -36,6 +38,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[api/finance] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const { action } = (req.body || {}) as Record<string, any>;
+  const invoiceAction = req.method === 'POST' && ['update_draft_invoice', 'send_invoice'].includes(action);
+  const invoicePermissionRefusal = invoiceAction ? requirePermission(actor, 'invoices.manage') : null;
+  const financePermissionRefusal = invoiceAction ? requirePermission(actor, 'finance.manage') : null;
+  const refused = req.method === 'GET'
+    ? requirePermission(actor, 'view:finance')
+    : invoiceAction
+      ? (invoicePermissionRefusal && financePermissionRefusal ? invoicePermissionRefusal : null)
+      : requirePermission(actor, 'finance.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   if (req.method === 'GET') {
     const view = String(req.query.view || 'invoices');
@@ -59,10 +75,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (req.method === 'POST') {
-    const { action } = req.body || {};
-
     const result = action === 'set_fee' ? await setFee(actor, req.body)
       : action === 'generate' ? await generateInvoiceDrafts(actor)
+      : action === 'update_draft_invoice' ? await updateDraftInvoice(actor, req.body)
       : action === 'approve_payouts' ? await approvePayouts(actor, req.body)
       : action === 'settle_payout' ? await settlePayout(actor, req.body)
       : action === 'mark_invoice_paid' ? await markInvoicePaid(actor, req.body)

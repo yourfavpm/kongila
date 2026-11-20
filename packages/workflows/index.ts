@@ -338,6 +338,8 @@ export * from './matchStatus';
 // case throughout and the column takes none of those values. Covered
 // by contractStatus.test.ts.
 export * from './contractStatus';
+export * from './contractDocuments';
+export * from './feeRules';
 
 // Where an offer has got to, and whose move it is. offer_status_enum has
 // modelled Kongila's approval sitting between the client and the candidate

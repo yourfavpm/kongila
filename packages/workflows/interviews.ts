@@ -319,6 +319,42 @@ export type InterviewStage =
   | 'completed'
   | 'expired';
 
+/**
+ * Who an interview is actually between.
+ *
+ * Two different things share this table. A **client** interview is a client
+ * meeting a candidate they were matched with: it hangs off a role request,
+ * and the client is the one who decides about times. A **vetting** interview
+ * is Kongila assessing a candidate — the behavioural interview in the vetting
+ * pipeline — and there is no client in it at all.
+ *
+ * `interviews.client_id` is NOT NULL, so a vetting interview has to name
+ * somebody, and the operator who scheduled it stands in. That is sound for
+ * the diary and the foreign key, and it is why everything that asked "does
+ * this interview have a client?" got the wrong answer: a candidate asking to
+ * move a behavioural interview was treated as proposing a new time to a
+ * client who does not exist. It was labelled as waiting on that client, and
+ * operations could not approve it, because the code had already decided the
+ * client had to answer first.
+ *
+ * The honest discriminator is the role request. A client interview always has
+ * one; a vetting interview never does.
+ */
+export type InterviewParty = 'client' | 'vetting';
+
+export function interviewParty(interview: any): InterviewParty {
+  if (!interview) return 'client';
+  const requestId = interview.requestId ?? interview.request_id;
+  const matchId = interview.matchId ?? interview.match_id;
+  if (requestId || matchId) return 'client';
+  return 'vetting';
+}
+
+/** True when there is a real client who gets a say in the timing. */
+export function hasClientCounterparty(interview: any): boolean {
+  return interviewParty(interview) === 'client';
+}
+
 export type InterviewEvent =
   | 'client_requests'
   | 'admin_opens'
@@ -492,8 +528,41 @@ const STAGE_DESCRIPTIONS: Record<InterviewStage, InterviewStageDescription> = {
   expired: { label: 'Expired', waitingOn: null, detail: 'Nobody answered in time and the slot lapsed.', tone: 'dead' }
 };
 
-export function describeInterviewStage(stage: InterviewStage | string): InterviewStageDescription {
-  return STAGE_DESCRIPTIONS[normalizeInterviewStage(String(stage))];
+/**
+ * Vetting has no client, so the three stages that name one are reworded
+ * rather than left saying an interview is waiting on somebody who is not in
+ * it. Everything else reads the same either way.
+ */
+const VETTING_OVERRIDES: Partial<Record<InterviewStage, InterviewStageDescription>> = {
+  client_requested: {
+    label: 'Being arranged',
+    waitingOn: 'admin',
+    detail: 'Your Kongila team is arranging this interview.',
+    tone: 'pending'
+  },
+  talent_countered: {
+    label: 'New time proposed',
+    waitingOn: 'admin',
+    detail: 'You proposed a different time. Your Kongila team will confirm it or suggest another.',
+    tone: 'active'
+  },
+  talent_declined: {
+    label: 'Declined',
+    waitingOn: 'admin',
+    detail: 'This interview was turned down. Your Kongila team will be in touch.',
+    tone: 'dead'
+  }
+};
+
+export function describeInterviewStage(
+  stage: InterviewStage | string,
+  party: InterviewParty = 'client'
+): InterviewStageDescription {
+  const normalized = normalizeInterviewStage(String(stage));
+  if (party === 'vetting' && VETTING_OVERRIDES[normalized]) {
+    return VETTING_OVERRIDES[normalized] as InterviewStageDescription;
+  }
+  return STAGE_DESCRIPTIONS[normalized];
 }
 
 /** The happy path, for the progress trail on every portal. */

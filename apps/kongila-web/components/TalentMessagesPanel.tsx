@@ -30,8 +30,8 @@ export default function TalentMessagesPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Filter conversations relevant to this talent
-  const myConversations = conversations.filter(c => 
-    c.type === 'talent_admin' && c.participantIds.includes(currentUser?.id)
+  const myConversations = conversations.filter(c =>
+    ['talent_admin', 'engagement'].includes(String(c.type)) && c.participantIds.includes(currentUser?.id)
   ).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   useEffect(() => {
@@ -149,7 +149,7 @@ export default function TalentMessagesPanel({
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {myConversations.length === 0 ? (
             <div style={{ padding: '32px 20px', textAlign: 'center', color: '#64748B', fontSize: '14px' }}>
-              No messages yet.<br/>Conversations will appear here when an admin reaches out.
+              No messages yet.<br/>Conversations with your Kongila team and engagement contacts will appear here.
             </div>
           ) : (
             myConversations.map(conv => {

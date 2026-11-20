@@ -20,10 +20,13 @@ import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { FALLBACK_RATES, normaliseCurrency, resolveRate, recordMoney } from '@kongila/utils';
-import { notifyAdmins, notifyUsers, notifyFinance, talentPortalUrl, clientPortalUrl } from './notify';
+import { notifyAdmins, notifyUsers, notifyFinance, talentPortalUrl, clientPortalUrl, adminPortalUrl } from './notify';
 import { complianceGate } from './signatureService';
+import { canManageContractInvoice } from './invoiceAccess';
 import {
   planInvoices,
+  draftsForContract,
+  upcomingInvoices,
   describePlan,
   serviceLineOf,
   SERVICE_LINES,
@@ -204,9 +207,16 @@ export async function setFee(
 async function loadBillableContracts() {
   const supabase = getSupabaseClient();
 
-  const { data: contracts, error } = await supabase
-    .from('contracts')
-    .select('*');
+  // Invoices follow active engagements, not signed contracts. Placement is
+  // invoiced at the explicit client-release event, and project work is
+  // invoiced from completed milestones.
+  const { data: assignments, error: assignmentError } = await supabase
+    .from('assignments').select('*').eq('status', 'active')
+    .in('service_line', ['outsourcing', 'managed_workforce']);
+  if (assignmentError) throw new Error(assignmentError.message);
+  const contractIds = [...new Set((assignments || []).map((a: any) => a.contract_id).filter(Boolean))];
+  if (!contractIds.length) return [];
+  const { data: contracts, error } = await supabase.from('contracts').select('*').in('id', contractIds);
   if (error) throw new Error(error.message);
 
   const talentIds = [...new Set((contracts || []).map((c: any) => c.talent_id).filter(Boolean))];
@@ -216,21 +226,33 @@ async function loadBillableContracts() {
 
   const nameOf = new Map((talents || []).map((t: any) => [String(t.id), t.full_name]));
 
-  return (contracts || []).map((c: any) => ({
+  const assignmentByContract = new Map((assignments || []).map((a: any) => [String(a.contract_id), a]));
+  return (contracts || []).map((c: any) => {
+    const assignment: any = assignmentByContract.get(String(c.id));
+    return ({
     id: c.id,
     clientId: c.client_id,
     talentId: c.talent_id,
     talentName: nameOf.get(String(c.talent_id)) || '',
-    serviceType: c.service_type,
+    serviceType: assignment?.service_line || c.service_type,
     status: c.status,
     rateAmount: Number(c.rate_amount || 0),
+    annualSalaryUsd: c.annual_salary_usd == null ? null : Number(c.annual_salary_usd),
+    placementFeePct: c.placement_fee_pct == null ? null : Number(c.placement_fee_pct),
+    paymentSchedule: c.payment_schedule || null,
+    billingDayOfMonth: c.payment_schedule?.billingDayOfMonth || null,
     placementFeeUsd: c.placement_fee_usd == null ? null : Number(c.placement_fee_usd),
     projectFeeUsd: c.project_fee_usd == null ? null : Number(c.project_fee_usd),
     startDate: c.start_date,
     endDate: c.end_date,
     currency: c.currency || 'USD',
     billedThrough: c.billed_through
-  }));
+    ,engagementStatus: assignment?.status,
+    managementPremiumPct: assignment?.management_premium_pct == null ? null : Number(assignment.management_premium_pct),
+    clientFeePctSnapshot: c.client_fee_pct_snapshot == null ? null : Number(c.client_fee_pct_snapshot),
+    talentCommissionPctSnapshot: c.talent_commission_pct_snapshot == null ? null : Number(c.talent_commission_pct_snapshot)
+  });
+  });
 }
 
 /**
@@ -282,7 +304,34 @@ async function writeDraft(draft: InvoiceDraft, now: string): Promise<{ id: strin
   const invoiceMoney = recordMoney(draft.total, draft.currency || 'USD', rateFor(draft.currency || 'USD'));
 
   const invoiceId = newId('inv');
-  const dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  // The due date is the first instalment's, not a flat fourteen days.
+  //
+  // A client paying half on the 1st and half on the 15th has one invoice
+  // with two due dates, and an invoice stamped "due in 14 days" tells them
+  // neither of them. The parts are written to invoice_instalments and the
+  // headline due date is the first one, so a reminder chases the part that
+  // is actually late rather than the whole amount.
+  const instalments = Array.isArray(draft.instalments) && draft.instalments.length > 0
+    ? draft.instalments
+    : [{
+        label: 'Full amount',
+        percent: 100,
+        dueDate: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+        amount: draft.total
+      }];
+
+  const dueDate = new Date(`${instalments[0].dueDate}T00:00:00Z`).toISOString();
+  const laterInstalment = instalments.length > 1 ? instalments[1] : null;
+
+  // What the client reads on the invoice, before any line item. The service
+  // line alone is a slug; this is a sentence.
+  const describeService = () => {
+    const line = String(draft.serviceLine || '').replace(/_/g, ' ');
+    if (draft.period) return `${line} services for ${draft.period}`;
+    if (draft.milestoneId) return `${line} milestone`;
+    return `${line} fee`;
+  };
 
   const { error: invoiceError } = await supabase.from('invoices').insert({
     id: invoiceId,
@@ -291,6 +340,7 @@ async function writeDraft(draft: InvoiceDraft, now: string): Promise<{ id: strin
     contract_id: draft.contractId,
     period: draft.period,
     service_line: draft.serviceLine,
+    platform_margin_usd: draft.platformMargin,
     amount: draft.total,
     subtotal_usd: draft.subtotal,
     tax_amount_usd: 0,
@@ -305,6 +355,14 @@ async function writeDraft(draft: InvoiceDraft, now: string): Promise<{ id: strin
     total_amount_usd: invoiceMoney.amountUsd,
     status: 'draft',
     due_date: dueDate,
+    description: describeService(),
+    milestone_id: draft.milestoneId || null,
+    // What falls due on the headline date, as against the whole invoice.
+    amount_due_now: instalments[0].amount,
+    next_due_date: laterInstalment ? laterInstalment.dueDate : null,
+    next_due_amount: laterInstalment ? laterInstalment.amount : null,
+    // Read by the alert that tells finance another one is coming.
+    is_recurring: draft.recurring ?? Boolean(draft.period),
     created_at: now
   });
 
@@ -329,6 +387,29 @@ async function writeDraft(draft: InvoiceDraft, now: string): Promise<{ id: strin
     }))
   );
   if (lineError) return { error: `invoice written but its lines failed: ${lineError.message}` };
+
+  // The instalments, as rows rather than as a blob, so a part can be marked
+  // paid on its own and an overdue report can name which half is late.
+  const { error: instalmentError } = await supabase.from('invoice_instalments').insert(
+    instalments.map((part, index) => ({
+      id: newId('ins'),
+      invoice_id: invoiceId,
+      sequence: index + 1,
+      label: part.label,
+      percent: part.percent,
+      amount: part.amount,
+      due_date: part.dueDate,
+      status: 'due',
+      created_at: now
+    }))
+  );
+
+  // Not fatal. The invoice is correct and payable either way, and an
+  // environment that has not had the migration run should still be able to
+  // bill rather than failing the whole run over a missing table.
+  if (instalmentError && !/does not exist/i.test(instalmentError.message || '')) {
+    console.warn(`[finance] instalments for ${invoiceId} were not written: ${instalmentError.message}`);
+  }
 
   // The candidate's side of the same period. A placement has none: the
   // client employs them directly.
@@ -443,6 +524,291 @@ export async function generateInvoiceDrafts(
   };
 }
 
+/** Edit the commercial lines on a draft before finance issues it. */
+export async function updateDraftInvoice(actor: Actor, input: {
+  invoiceId: string;
+  lines: Array<{ description: string; quantity: number; unitAmount: number }>;
+}): Promise<FinanceResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  if (actor.kind !== 'admin') return fail(403, 'Only operators can edit a draft invoice.');
+  if (!input.invoiceId || !Array.isArray(input.lines) || input.lines.length === 0) {
+    return fail(422, 'Add at least one invoice line.');
+  }
+  const lines = input.lines.map(line => ({
+    description: String(line.description || '').trim(),
+    quantity: Number(line.quantity),
+    unit_amount: Number(line.unitAmount)
+  }));
+  if (lines.some(line => !line.description || line.description.length > 500
+    || !Number.isFinite(line.quantity) || line.quantity <= 0
+    || !Number.isFinite(line.unit_amount) || line.unit_amount < 0)) {
+    return fail(422, 'Each invoice line needs a description, positive quantity, and non-negative amount.');
+  }
+  const supabase = getSupabaseClient();
+  const { data: invoice } = await supabase.from('invoices').select('contract_id').eq('id', input.invoiceId).maybeSingle();
+  if (!invoice) return fail(404, 'That invoice does not exist.');
+  const { data: contract } = invoice.contract_id
+    ? await supabase.from('contracts').select('client_id').eq('id', invoice.contract_id).maybeSingle()
+    : { data: null };
+  if (!contract || !(await canManageContractInvoice(actor, contract))) {
+    return fail(403, 'You can edit invoices only for client accounts assigned to you.');
+  }
+  const { data, error } = await supabase.rpc('update_draft_invoice', {
+    p_invoice_id: input.invoiceId,
+    p_lines: lines
+  });
+  if (error) return fail(/not found|draft/i.test(error.message) ? 409 : 500, error.message);
+  await recordAudit(actor, {
+    action: 'Edit Draft Invoice',
+    details: `Updated ${lines.length} invoice line(s) on draft ${input.invoiceId}.`,
+    entityType: 'invoice', entityId: input.invoiceId
+  });
+  return { ok: true, status: 200, data };
+}
+
+/**
+ * Writes one draft as an invoice, outside a billing run.
+ *
+ * A delivered milestone and a signed placement each raise a single invoice
+ * at the moment they happen, rather than waiting for the monthly run. They
+ * go through the same writer so the instalments, the description and the
+ * payout are built identically, because two paths producing nearly the same
+ * invoice is how they drift apart.
+ */
+export async function writeMilestoneInvoice(
+  actor: Actor,
+  draft: InvoiceDraft
+): Promise<FinanceResult<{ id: string }>> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  if (actor.kind !== 'admin') return fail(403, 'Only operations raise an invoice.');
+
+  const result = await writeDraft(draft, new Date().toISOString());
+  if ('error' in result) return fail(500, result.error);
+
+  await recordAudit(actor, {
+    action: 'Raise Invoice',
+    details: `${draft.serviceLine} invoice for ${money(draft.total)} on contract ${draft.contractId}.`,
+    entityType: 'invoice',
+    entityId: result.id
+  });
+
+  return { ok: true, status: 201, data: { id: result.id } };
+}
+
+/**
+ * The placement fee invoice, prepared separately from the contract.
+ *
+ * The placement fee invoice is prepared separately from contract delivery.
+ */
+export async function raisePlacementInvoice(
+  actor: Actor,
+  contractId: string
+): Promise<FinanceResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  if (actor.kind !== 'admin') return fail(403, 'Only operators raise an invoice.');
+
+  const supabase = getSupabaseClient();
+  const { data: contract } = await supabase
+    .from('contracts').select('*').eq('id', contractId).maybeSingle();
+
+  if (!contract) return fail(404, 'That contract does not exist.');
+  if (!(await canManageContractInvoice(actor, contract))) {
+    return fail(403, 'You can prepare invoices only for client accounts assigned to you.');
+  }
+
+  const line = serviceLineOf(contract.service_type);
+  if (line !== 'placement') {
+    return fail(409, 'Only a Hire Talent contract is invoiced up front. '
+      + 'Outsourcing and managed teams bill monthly, and a project bills on its milestones.');
+  }
+
+  // Raised once. A second call returns the invoice that already exists
+  // rather than billing the client twice for one placement.
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('id, invoice_number, status')
+    .eq('contract_id', contractId)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    // Keep the contract queue in sync when a draft was raised before this
+    // flag was introduced, and when contract generation retries the action.
+    const { error: stampError } = await supabase.from('contracts')
+      .update({ placement_fee_invoiced_at: contract.placement_fee_invoiced_at || new Date().toISOString() })
+      .eq('id', contractId);
+    return {
+      ok: true,
+      status: 200,
+      data: { id: existing[0].id, invoiceNumber: existing[0].invoice_number, alreadyExisted: true },
+      warnings: [
+        'This placement was already invoiced, so nothing new was raised.',
+        ...(stampError ? [`The invoice exists, but the contract could not be marked as invoiced: ${stampError.message}`] : [])
+      ]
+    };
+  }
+
+  const { fees } = await readFees();
+  const plan = draftsForContract({
+    id: String(contract.id),
+    clientId: String(contract.client_id),
+    talentId: String(contract.talent_id),
+    talentName: contract.talent_name || undefined,
+    serviceType: contract.service_type,
+    // Up front means before the start date, so the status gate that stops a
+    // monthly run billing an unsigned contract does not apply here.
+    status: 'active',
+    rateAmount: contract.rate_amount,
+    annualSalaryUsd: contract.annual_salary_usd,
+    placementFeePct: contract.placement_fee_pct,
+    placementFeeUsd: contract.placement_fee_usd,
+    currency: contract.currency,
+    paymentTermsDays: contract.payment_terms_days,
+    paymentSchedule: contract.payment_schedule,
+    clientFeePctSnapshot: contract.client_fee_pct_snapshot,
+    talentCommissionPctSnapshot: contract.talent_commission_pct_snapshot
+  }, fees, new Date());
+
+  if (plan.drafts.length === 0) {
+    const reason = plan.skipped[0]?.reason
+      || 'The placement fee could not be worked out from this contract.';
+    return fail(422, reason);
+  }
+
+  const result = await writeDraft(plan.drafts[0], new Date().toISOString());
+  if ('error' in result) return fail(500, result.error);
+
+  const { error: stampError } = await supabase.from('contracts')
+    .update({ placement_fee_invoiced_at: new Date().toISOString() })
+    .eq('id', contractId);
+
+  await recordAudit(actor, {
+    action: 'Raise Placement Invoice',
+    details: `Placement invoice draft for ${money(plan.drafts[0].total)} on contract ${contractId}.`,
+    entityType: 'invoice',
+    entityId: result.id
+  });
+
+  return {
+    ok: true,
+    status: 201,
+    data: { id: result.id, total: plan.drafts[0].total },
+    warnings: stampError
+      ? [`The invoice was drafted, but the contract could not be marked as invoiced: ${stampError.message}`]
+      : []
+  };
+}
+
+/** Prepare the next client invoice from an active contract, without sending it. */
+export async function raiseContractInvoice(actor: Actor, contractId: string): Promise<FinanceResult> {
+  if (!actor || actor.kind !== 'admin') return fail(403, 'Only operators can prepare a contract invoice.');
+  const supabase = getSupabaseClient();
+  const { data: contract } = await supabase.from('contracts').select('*').eq('id', contractId).maybeSingle();
+  if (!contract) return fail(404, 'That contract does not exist.');
+  if (!(await canManageContractInvoice(actor, contract))) return fail(403, 'You can prepare invoices only for assigned client accounts.');
+
+  const line = serviceLineOf(contract.service_type);
+  if (line === 'placement') return raisePlacementInvoice(actor, contractId);
+  if (line === 'project') return fail(409, 'Project invoices are prepared from accepted delivery milestones.');
+  if (String(contract.status || '').toLowerCase() !== 'active') {
+    return fail(409, 'A monthly invoice can be prepared after the contract is activated.');
+  }
+
+  const { fees } = await readFees();
+  const plan = draftsForContract({
+    id: String(contract.id), clientId: String(contract.client_id), talentId: String(contract.talent_id),
+    talentName: contract.talent_name || undefined, serviceType: contract.service_type,
+    status: contract.status, engagementStatus: 'active', rateAmount: contract.rate_amount,
+    startDate: contract.start_date, endDate: contract.end_date, billedThrough: contract.billed_through,
+    currency: contract.currency, managementPremiumPct: contract.management_premium_pct,
+    clientFeePctSnapshot: contract.client_fee_pct_snapshot,
+    talentCommissionPctSnapshot: contract.talent_commission_pct_snapshot,
+    paymentTermsDays: contract.payment_terms_days, paymentSchedule: contract.payment_schedule,
+    seats: contract.seats
+  }, fees, new Date());
+  if (!plan.drafts.length) return fail(409, plan.skipped[0]?.reason || 'There is no unbilled month ready for invoicing.');
+
+  const draft = plan.drafts[0];
+  const result = await writeDraft(draft, new Date().toISOString());
+  if ('error' in result) return fail(/already invoiced/.test(result.error) ? 409 : 500, result.error);
+  await recordAudit(actor, {
+    action: 'Prepare Contract Invoice',
+    details: `Prepared ${draft.period} ${line} invoice for ${money(draft.total)} from contract ${contractId}.`,
+    entityType: 'invoice', entityId: result.id
+  });
+  return { ok: true, status: 201, data: { id: result.id, period: draft.period, total: draft.total } };
+}
+
+/**
+ * Tells finance what is about to fall due.
+ *
+ * A recurring engagement stops being invoiced the moment nobody remembers to
+ * run the month, and the first sign is a revenue figure that looks a bit
+ * low. This answers "what should go out in the next few days" rather than
+ * "what is overdue", because overdue is already too late.
+ *
+ * Run from the nightly pass. Safe to run twice: it sends nothing when
+ * nothing is coming, and a single digest rather than one message per
+ * contract, because thirty separate emails on the 28th of every month is how
+ * people build a filter rule.
+ */
+export async function alertUpcomingInvoices(
+  asOf: Date = new Date(),
+  leadDays = 5
+): Promise<{ upcoming: number; warnings: string[] }> {
+  const warnings: string[] = [];
+
+  try {
+    const supabase = getSupabaseClient();
+    const { data: contracts, error } = await supabase
+      .from('contracts')
+      .select('*')
+      .in('status', ['active', 'signed', 'fully_signed']);
+
+    if (error) return { upcoming: 0, warnings: [`Upcoming invoices could not be read: ${error.message}`] };
+
+    const { fees } = await readFees();
+    const billable = (contracts || []).map((contract: any) => ({
+      id: String(contract.id),
+      clientId: String(contract.client_id),
+      talentId: String(contract.talent_id),
+      clientName: contract.client_name || undefined,
+      serviceType: contract.service_type,
+      status: contract.status,
+      rateAmount: contract.rate_amount ?? contract.monthly_rate_usd,
+      startDate: contract.start_date,
+      endDate: contract.end_date,
+      currency: contract.currency,
+      billedThrough: contract.billed_through,
+      seats: contract.seats,
+      paymentSchedule: contract.payment_schedule,
+      paymentTermsDays: contract.payment_terms_days,
+      managementPremiumPct: contract.management_premium_pct,
+      clientFeePctSnapshot: contract.client_fee_pct_snapshot,
+      talentCommissionPctSnapshot: contract.talent_commission_pct_snapshot
+    }));
+
+    const upcoming = upcomingInvoices(billable, fees, asOf, leadDays);
+    if (upcoming.length === 0) return { upcoming: 0, warnings };
+
+    const total = money(upcoming.reduce((sum, entry) => sum + entry.estimatedTotal, 0));
+    const currency = upcoming[0].currency || 'USD';
+    const earliest = upcoming[0].raiseOn;
+
+    const told = await notifyFinance('invoices_due_soon', {
+      itemCount: upcoming.length,
+      amount: `${currency} ${total.toLocaleString('en-US')}`,
+      dueDate: earliest,
+      timeRemaining: `${leadDays} days`,
+      actionUrl: adminPortalUrl('/?tab=finance')
+    });
+    warnings.push(...told.warnings);
+
+    return { upcoming: upcoming.length, warnings };
+  } catch (err: any) {
+    return { upcoming: 0, warnings: [`Upcoming invoices could not be checked: ${err?.message}`] };
+  }
+}
+
 // ─── Reading ─────────────────────────────────────────────────────────────────
 
 /** Invoices this actor may see, with their lines. */
@@ -481,6 +847,7 @@ export async function listInvoices(actor: Actor): Promise<FinanceResult> {
         subtotalUsd: Number(i.subtotal_usd ?? i.amount ?? 0),
         taxAmountUsd: Number(i.tax_amount_usd || 0),
         totalUsd: Number(i.total_usd ?? i.amount ?? 0),
+        platformMarginUsd: i.platform_margin_usd == null ? null : Number(i.platform_margin_usd),
         currency: i.currency || 'USD',
         usdRate: Number(i.usd_rate || 1),
         rateSource: i.rate_source || null,
@@ -863,6 +1230,15 @@ export async function markInvoicePaid(
 
   if (error) return fail(500, error.message);
 
+  // Every outstanding part of a split invoice is settled too, so a partly
+  // paid invoice cannot be left looking overdue after the whole thing was
+  // marked paid.
+  await supabase
+    .from('invoice_instalments')
+    .update({ status: 'paid', paid_at: new Date().toISOString() })
+    .eq('invoice_id', input.invoiceId)
+    .neq('status', 'paid');
+
   await recordAudit(actor, {
     action: 'Mark Invoice Paid',
     details: `${invoice.invoice_number || invoice.id} settled`
@@ -886,18 +1262,15 @@ export async function markInvoicePaid(
     warnings.push(...told.warnings);
   }
 
-  return { ok: true, status: 200, data: { id: input.invoiceId, status: 'paid' }, warnings };
+  // ── A placement starts when it is paid for ────────────────────────────────
+  return {
+    ok: true,
+    status: 200,
+    data: { id: input.invoiceId, status: 'paid' },
+    warnings
+  };
 }
 
-/**
- * Voiding an invoice.
- *
- * The admin panel set this from the browser and posted the whole invoices
- * array back through /api/db, which upserts every row in it, so voiding one
- * invoice rewrote all of them from whatever the screen was holding. A paid
- * invoice cannot be voided; it is reversed with a credit note, which is a
- * conversation with finance, not a dropdown.
- */
 export async function voidInvoice(
   actor: Actor,
   input: { invoiceId: string; reason?: string }

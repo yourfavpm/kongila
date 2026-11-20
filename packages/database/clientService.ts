@@ -70,7 +70,10 @@ export async function listClients(actor: Actor): Promise<ClientResult> {
 
   const userById = new Map<string, any>((users.data || []).map((u: any) => [String(u.id), u]));
 
-  const rows = (orgs.data || []).map((org: any) => {
+  const visibleOrgs = actor.role === 'account_manager'
+    ? (orgs.data || []).filter((org: any) => String(org.account_manager_id || '') === String(actor.userId))
+    : (orgs.data || []);
+  const rows = visibleOrgs.map((org: any) => {
     const memberIds = byOrg.get(String(org.id)) || [];
     const ours = <T extends { client_id?: string | null }>(list: T[] | null) =>
       (list || []).filter(r => memberIds.includes(String(r.client_id)));
@@ -149,6 +152,9 @@ export async function getClient(actor: Actor, organizationId: string): Promise<C
   const { data: org } = await supabase
     .from('organizations').select('*').eq('id', id).maybeSingle();
   if (!org) return fail(404, 'That company does not exist.');
+  if (actor.role === 'account_manager' && String(org.account_manager_id || '') !== String(actor.userId)) {
+    return fail(404, 'That company is not assigned to your account portfolio.');
+  }
 
   const { data: profiles } = await supabase
     .from('client_profiles').select('*').eq('organization_id', id);
@@ -265,7 +271,7 @@ export async function getClient(actor: Actor, organizationId: string): Promise<C
  */
 export async function listAssignableManagers(actor: Actor): Promise<ClientResult> {
   if (!actor) return fail(401, 'Not authenticated.');
-  if (actor.kind !== 'admin') return fail(403, 'Not authorised.');
+  if (actor.kind !== 'admin' || !['super_admin', 'superadmin'].includes(String(actor.role).toLowerCase())) return fail(403, 'Only a super admin may view and assign account managers.');
 
   const supabase = getSupabaseClient();
   const [users, roles, links] = await Promise.all([

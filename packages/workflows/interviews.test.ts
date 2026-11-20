@@ -19,6 +19,8 @@ import {
   isLiveInterview,
   isUpcomingInterviewStatus,
   isPastInterviewStatus,
+  interviewParty,
+  hasClientCounterparty,
   normalizeInterviewStage,
   interviewTransition,
   interviewStageToDb,
@@ -302,4 +304,33 @@ test('a joining link is derived from the interview id, not invented each time', 
   assert.notEqual(room('iv_123_abc'), room('iv_999_xyz'));
   assert.doesNotThrow(() => new URL(room('iv_123_abc')));
   assert.ok(!room('iv_Ada_Nwosu_Backend').includes('Ada'), 'the room name leaks who is meeting');
+});
+
+test('a vetting interview is not mistaken for one a client owns', () => {
+  // interviews.client_id is NOT NULL, so a behavioural interview names the
+  // operator who scheduled it. Everything that asked "does this have a
+  // client?" therefore said yes about an interview with no client in it.
+  const vetting = { id: 'iv1', clientId: 'operator-1', clientName: 'Kongila Vetting Panel' };
+  const clientInterview = { id: 'iv2', clientId: 'client-1', requestId: 'row-1', matchId: 'match-1' };
+
+  assert.equal(interviewParty(vetting), 'vetting');
+  assert.equal(interviewParty(clientInterview), 'client');
+  assert.equal(hasClientCounterparty(vetting), false);
+  assert.equal(hasClientCounterparty(clientInterview), true);
+
+  // snake_case rows read the same, because the service works on raw rows.
+  assert.equal(interviewParty({ request_id: 'row-1', client_id: 'c' }), 'client');
+  assert.equal(interviewParty({ client_id: 'operator-1' }), 'vetting');
+});
+
+test('a candidate moving a vetting interview is not said to be waiting on a client', () => {
+  const asClient = describeInterviewStage('talent_countered', 'client');
+  const asVetting = describeInterviewStage('talent_countered', 'vetting');
+
+  assert.equal(asClient.waitingOn, 'client');
+  assert.equal(asVetting.waitingOn, 'admin');
+  assert.ok(!/client/i.test(asVetting.detail), 'a vetting interview has no client to wait on');
+
+  // The default stays the client reading, so existing callers are unchanged.
+  assert.deepEqual(describeInterviewStage('talent_countered'), asClient);
 });

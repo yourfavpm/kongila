@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, submitCandidates, flagSourcingRequired } from '@kongila/database';
+import { requirePermission, getRequestUser, submitCandidates, flagSourcingRequired } from '@kongila/database';
 
 /**
  * Submitting candidates to a client.
@@ -19,6 +19,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'matching.submit');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const body = (req.body || {}) as Record<string, any>;
   // Flagging a request as needing sourcing comes through here too. It

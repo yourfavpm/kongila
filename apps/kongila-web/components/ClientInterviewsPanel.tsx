@@ -28,19 +28,6 @@ interface ClientInterviewsPanelProps {
   talents: TalentProfile[];
   setInterviews?: (interviews: Interview[]) => void;
   onReschedule?: (interview: Interview) => void;
-  /**
-   * The decision that follows a held interview.
-   *
-   * There was none. An interview ended and the screen went on showing it as
-   * a past event, while the one thing the client was supposed to do next —
-   * offer, or say they are not a fit — lived on a different screen behind a
-   * button that only appeared once somebody had marked the interview
-   * complete. Most never were, so most hires stopped here.
-   */
-  onMakeOffer?: (interview: Interview) => void;
-  onPassCandidate?: (interview: Interview) => void;
-  /** Interview ids the client has already decided on, so the prompt clears. */
-  decidedInterviewIds?: Set<string>;
 }
 
 type TabType = "action" | "upcoming" | "inflight" | "past";
@@ -50,10 +37,7 @@ export default function ClientInterviewsPanel({
   interviews,
   talents,
   setInterviews,
-  onReschedule,
-  onMakeOffer,
-  onPassCandidate,
-  decidedInterviewIds
+  onReschedule
 }: ClientInterviewsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabType>("upcoming");
   const [ratingModalOpen, setRatingModalOpen] = useState(false);
@@ -98,14 +82,6 @@ export default function ClientInterviewsPanel({
   };
 
   const needsAnswer = sortedInterviews.filter(awaitingClientAnswer);
-
-  /** Held, and the client has not said what they want to do about it yet. */
-  const awaitingDecision = (iv: any) =>
-    normalizeInterviewStage(iv.status as string) === 'completed'
-    && Boolean(onMakeOffer)
-    && !(decidedInterviewIds?.has(String(iv.id)));
-
-  const decisionsDue = sortedInterviews.filter(awaitingDecision);
 
   useEffect(() => {
     // Bring a newly arrived talent proposal into view instead of leaving the
@@ -298,52 +274,6 @@ export default function ClientInterviewsPanel({
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "32px", display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* The decision that follows a held interview, put in front of the
-          client rather than left on another screen behind a button that
-          only appeared if somebody had remembered to mark the interview
-          complete. */}
-      {decisionsDue.length > 0 && (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          {decisionsDue.map(iv => (
-            <div
-              key={`decision-${iv.id}`}
-              style={{
-                padding: '18px 20px', borderRadius: '14px', background: '#F0F9FF',
-                border: '1px solid #BAE6FD', display: 'flex', gap: '16px',
-                alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between'
-              }}
-            >
-              <div style={{ minWidth: '260px', flex: 1 }}>
-                <div style={{ fontSize: '11px', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Your decision
-                </div>
-                <div style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', marginTop: '4px' }}>
-                  You interviewed {iv.talentName || 'this candidate'}. What would you like to do?
-                </div>
-                <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px', lineHeight: 1.55 }}>
-                  Make them an offer and your Kongila team will review the terms before the
-                  candidate sees them. Or tell us they are not a fit and we will keep looking.
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={() => onMakeOffer?.(iv)}
-                  style={{ padding: '11px 18px', borderRadius: '10px', border: 'none', background: '#13866F', color: '#FFFFFF', fontSize: '13px', fontWeight: 800, cursor: 'pointer' }}
-                >
-                  Make an offer
-                </button>
-                <button
-                  onClick={() => onPassCandidate?.(iv)}
-                  style={{ padding: '11px 18px', borderRadius: '10px', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#475569', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
-                >
-                  Not a fit
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {feedback && (
         <div role="status" aria-live="polite" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '12px 16px', border: '1px solid #D5E5F5', borderRadius: '10px', background: '#F0F7FF', color: '#17365D', fontSize: '13px' }}>
           <span>{feedback}</span>
@@ -544,7 +474,7 @@ function InterviewCard({
   // string in whatever zone the browser happens to be in.
   const startMs = interviewStartMs(interview);
 
-  const trail = interviewTrail(interview.status, 'client');
+  const trail = interviewTrail(interview.status, 'client', interview);
   const proposed = (interview as any).proposedTime || (interview as any).proposed_time;
   const proposedZone = (interview as any).clientTimezone
     || (interview as any).client_timezone

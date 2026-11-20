@@ -41,6 +41,7 @@ export function isPayrollLine(serviceType?: string | null): boolean {
 
 export interface PayrollContract {
   id: string;
+  assignmentId?: string;
   talentId: string;
   talentName?: string;
   clientId?: string;
@@ -51,10 +52,12 @@ export interface PayrollContract {
   currency?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  talentCommissionPctSnapshot?: number | null;
 }
 
 export interface PayrollEntry {
   contractId: string;
+  assignmentId?: string;
   talentId: string;
   talentName: string;
   clientName: string;
@@ -182,7 +185,8 @@ export function entryFor(
   }
 
   const fee = feeFor(contract.serviceType, fees);
-  if (!feeIsSet(fee)) {
+  const commissionSnapshot = contract.talentCommissionPctSnapshot;
+  if (commissionSnapshot == null && !feeIsSet(fee)) {
     return skip(
       `No talent commission is configured for ${line.replace(/_/g, ' ')}. `
       + 'Set it before approving this run.'
@@ -190,7 +194,9 @@ export function entryFor(
   }
 
   const daysInPeriod = daysInMonth(period);
-  const commissionPct = (fee as ServiceFee).talentCommissionPct as number;
+  const commissionPct = commissionSnapshot == null
+    ? (fee as ServiceFee).talentCommissionPct as number
+    : Number(commissionSnapshot);
 
   const grossAmount = daysWorked === daysInPeriod
     ? money(rate)
@@ -201,6 +207,7 @@ export function entryFor(
   return {
     entry: {
       contractId: contract.id,
+      assignmentId: contract.assignmentId,
       talentId: contract.talentId,
       talentName: name,
       clientName: contract.clientName || '',

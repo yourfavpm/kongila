@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, decideReschedule } from '@kongila/database';
+import { requirePermission, getRequestUser, decideReschedule } from '@kongila/database';
 
 /**
  * Operations approves or refuses a reschedule request.
@@ -18,6 +18,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[interviews/reschedule-decision] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'interviews.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const { approve } = req.body || {};
   if (typeof approve !== 'boolean') {

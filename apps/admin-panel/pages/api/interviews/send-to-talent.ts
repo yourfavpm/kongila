@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, sendInterviewToTalent, declineInterviewRequest } from '@kongila/database';
+import { requirePermission, getRequestUser, sendInterviewToTalent, declineInterviewRequest } from '@kongila/database';
 
 /**
  * Operations answers a client's interview request.
@@ -29,6 +29,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[interviews/send-to-talent] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'interviews.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const body = (req.body || {}) as Record<string, any>;
   if (!body.interviewId) return res.status(400).json({ error: 'interviewId is required.' });

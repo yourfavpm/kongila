@@ -3,7 +3,7 @@ import {
   getRequestUser,
   getSupabaseClient,
   recordAudit,
-  notifyAdmins,
+  notifyRequestOwners,
   notifyUsers,
   clientPortalUrl,
   adminPortalUrl
@@ -456,7 +456,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   });
   warnings.push(...clientNotice.warnings);
 
-  const opsNotice = await notifyAdmins('new_request_for_ops', {
+  const opsNotice = await notifyRequestOwners({
+    assignedAccountManagerId: created[0]?.account_manager_id || created[0]?.assigned_account_manager_id,
+    assignedTalentManagerId: created[0]?.talent_manager_id || created[0]?.assigned_talent_manager_id
+  }, 'new_request_for_ops', {
     clientName: actor.email || undefined,
     companyName,
     roleTitle: roleSummary,

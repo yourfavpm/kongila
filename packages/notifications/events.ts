@@ -17,6 +17,21 @@ export type NotificationEvent =
   | 'email_verification'
   | 'password_reset'
   | 'team_invitation'
+  // An account made with a password rather than a setup link. The password
+  // is never in the email: it goes to whoever created the account, to pass
+  // on however they already pass things on.
+  | 'operator_account_created'
+  // A placement is invoiced with the contract and begins when that invoice
+  // is settled, so this is the moment work actually starts.
+  | 'contract_activated_client'
+  | 'contract_activated_talent'
+  // One digest a few days before a month's recurring invoices fall due.
+  | 'invoices_due_soon'
+  // The moment an engagement starts: the contract is signed, the terms are
+  // settled and somebody has said work begins.
+  | 'engagement_activated'
+  // A direct hire handed over to the client, with its one-time fee invoiced.
+  | 'placement_released'
   | 'account_manager_assigned'
   | 'account_manager_assignment'
   | 'account_manager_removed'
@@ -27,11 +42,6 @@ export type NotificationEvent =
   | 'operator_account_restored'
   // Request
   | 'request_received'
-  | 'support_ticket_opened'
-  | 'support_ticket_opened_for_ops'
-  | 'support_ticket_reply'
-  | 'support_ticket_reply_for_ops'
-  | 'support_ticket_resolved'
   // The same arrival, read by operations rather than by the client.
   | 'new_request_for_ops'
   | 'candidates_ready'
@@ -70,12 +80,14 @@ export type NotificationEvent =
   | 'interview_completed'
   | 'interview_did_not_happen'
   // Offer
+  | 'offer_submitted_for_review'
   | 'offer_extended'
   | 'offer_accepted'
   | 'offer_declined'
   // Contract
   | 'contract_ready'
   | 'contract_signed'
+  | 'contract_signature_recorded'
   | 'contract_renewal_due'
   | 'contract_terminated'
   | 'contract_voided'
@@ -140,6 +152,8 @@ export interface NotificationContext {
   companyName?: string;
   talentName?: string;
   clientName?: string;
+  signerName?: string;
+  bothParties?: boolean;
   stageName?: string;
   reason?: string;
   joiningDetails?: string;
@@ -175,6 +189,14 @@ export interface NotificationContext {
   /** Formatted date the money is or was due. */
   dueDate?: string;
   daysOverdue?: number;
+  /** When an engagement begins, already formatted. */
+  startDate?: string;
+  /** placement, outsourcing, managed_workforce or project. */
+  serviceLine?: string;
+  /** client_managed, kongila_managed or hybrid. */
+  managementMode?: string;
+  /** How many invoices or items a summary covers. */
+  itemCount?: number;
 
   // ── Operations ────────────────────────────────────────────────────────
   /** What was missed, for an SLA breach: "Application Screening". */
@@ -237,6 +259,110 @@ export function buildNotification(
           ctx, 'Reset your password'
         ) + `\n\nIf this was not you, ignore this message and your password stays as it is.\n\n${SIGN_OFF}`,
         inApp: 'Password reset requested.'
+      };
+
+    case 'engagement_activated': {
+      const line = String(ctx.serviceLine || '').replace(/_/g, ' ').trim();
+      const managed = String(ctx.managementMode || '') === 'kongila_managed';
+      return {
+        module: 'contracts',
+        alsoInApp: true,
+        subject: 'The engagement is live',
+        body: withAction(
+          `${hi}\n\nThe engagement is active${line ? ` (${line})` : ''}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}.` +
+          `${ctx.startDate ? ` Work starts ${ctx.startDate}.` : ''}\n\n` +
+          (managed
+            ? 'Kongila is running the day to day. Your supervisor is named in the portal and is ' +
+              'the person to go to when something needs changing.'
+            : 'Everything you need is in the portal: who is working, from when, and who to ' +
+              'speak to if anything needs changing.'),
+          ctx, 'Open the portal'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Engagement active${line ? `: ${line}` : ''}` +
+          `${ctx.startDate ? `, starting ${ctx.startDate}` : ''}.`
+      };
+    }
+
+    case 'placement_released':
+      return {
+        module: 'contracts',
+        alsoInApp: true,
+        subject: 'Direct hire confirmed',
+        body: withAction(
+          `${hi}\n\nThe placement is confirmed${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}, ` +
+          `and the placement fee has been invoiced${ctx.amount ? ` (${ctx.amount})` : ''}.\n\n` +
+          `From here they are employed by the client directly, so Kongila does not run the ` +
+          `engagement or pay them. Your account manager stays available if anything needs ` +
+          `sorting out.`,
+          ctx, 'View in the portal'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: 'Direct hire confirmed and the placement fee invoiced.'
+      };
+
+    case 'invoices_due_soon':
+      return {
+        module: 'finance',
+        alsoInApp: true,
+        subject: `${ctx.itemCount || 'Several'} recurring invoice${ctx.itemCount === 1 ? '' : 's'} fall due shortly`,
+        body: withAction(
+          `${hi}\n\n${ctx.itemCount || 'Several'} recurring invoice${ctx.itemCount === 1 ? '' : 's'}` +
+          `${ctx.amount ? `, ${ctx.amount} in total,` : ''} fall due` +
+          `${ctx.dueDate ? ` from ${ctx.dueDate}` : ''}` +
+          `${ctx.timeRemaining ? `, within the next ${ctx.timeRemaining}` : ''}.\n\n` +
+          `Nothing has gone out yet. Run the billing for the period and review the drafts before ` +
+          `they are sent.`,
+          ctx, 'Open finance'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `${ctx.itemCount || 'Several'} recurring invoice${ctx.itemCount === 1 ? '' : 's'} due`
+          + `${ctx.dueDate ? ` from ${ctx.dueDate}` : ''}.`
+      };
+
+    case 'contract_activated_client':
+      return {
+        module: 'contracts',
+        alsoInApp: true,
+        subject: 'Your placement is confirmed',
+        body: withAction(
+          `${hi}\n\nThank you. We have received payment against ` +
+          `${ctx.reference || 'your invoice'}, and the placement is now confirmed.` +
+          `${ctx.startDate ? `\n\nStart date: ${ctx.startDate}.` : ''}\n\n` +
+          `From here they are your employee directly. Your Kongila account manager stays ` +
+          `available if anything needs sorting out.`,
+          ctx, 'View in your portal'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Placement confirmed${ctx.startDate ? `, starting ${ctx.startDate}` : ''}.`
+      };
+
+    case 'contract_activated_talent':
+      return {
+        module: 'contracts',
+        alsoInApp: true,
+        subject: 'Your contract is now active',
+        body: withAction(
+          `${hi}\n\nYour contract is active.` +
+          `${ctx.startDate ? ` You start on ${ctx.startDate}.` : ''}\n\n` +
+          `Everything you need is in your portal: the signed contract, who you report to, ` +
+          `and how to reach them.`,
+          ctx, 'Open your portal'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `Your contract is active${ctx.startDate ? `, starting ${ctx.startDate}` : ''}.`
+      };
+
+    case 'operator_account_created':
+      return {
+        module: 'account',
+        alsoInApp: false,
+        subject: 'Your Kongila administrator account is ready',
+        body: withAction(
+          `${hi}\n\n${ctx.inviterName || 'A colleague'} has created a Kongila administrator account for you` +
+          `${ctx.roleTitle ? ` as ${ctx.roleTitle}` : ''}.\n\n` +
+          `Sign in with this email address and the temporary password they gave you. ` +
+          `You will be asked to choose your own password straight away.`,
+          ctx, 'Sign in'
+        ) + `\n\nIf you were not expecting this, contact your Kongila administrator ` +
+          `rather than signing in.\n\n${SIGN_OFF}`,
+        inApp: `Your administrator account is ready${ctx.roleTitle ? ` (${ctx.roleTitle})` : ''}.`
       };
 
     case 'team_invitation':
@@ -374,71 +500,6 @@ export function buildNotification(
           ctx, 'View your request'
         ) + `\n\n${SIGN_OFF}`,
         inApp: `Request received: ${role}. Our team is sourcing candidates.`
-      };
-
-    case 'support_ticket_opened':
-      return {
-        module: 'requests',
-        alsoInApp: true,
-        subject: `We received your support request: ${role}`,
-        body: withAction(
-          `${hi}\n\nYour support request has been received. Our team will review it and follow up through your Kongila account.` +
-          (ctx.reason ? `\n\nYour message: ${ctx.reason}` : ''),
-          ctx, 'View support'
-        ) + `\n\n${SIGN_OFF}`,
-        inApp: `Support request received: ${role}.`
-      };
-
-    case 'support_ticket_opened_for_ops':
-      return {
-        module: 'requests',
-        alsoInApp: true,
-        subject: `New support ticket: ${role}`,
-        body: withAction(
-          `${hi}\n\nA ${ctx.clientName || ctx.talentName || 'Kongila'} user opened a support ticket.` +
-          (ctx.reason ? `\n\nMessage: ${ctx.reason}` : ''),
-          ctx, 'Open support tickets'
-        ) + `\n\n${SIGN_OFF}`,
-        inApp: `New support ticket: ${role}.`
-      };
-
-    case 'support_ticket_reply':
-      return {
-        module: 'requests',
-        alsoInApp: true,
-        subject: `An update on your support ticket: ${role}`,
-        body: withAction(
-          `${hi}\n\nKongila Support replied to your ticket.` +
-          (ctx.reason ? `\n\n${ctx.reason}` : ''),
-          ctx, 'View support conversation'
-        ) + `\n\n${SIGN_OFF}`,
-        inApp: `Kongila Support replied to: ${role}.`
-      };
-
-    case 'support_ticket_reply_for_ops':
-      return {
-        module: 'requests',
-        alsoInApp: true,
-        subject: `New reply on support ticket: ${role}`,
-        body: withAction(
-          `${hi}\n\nA user replied to a support ticket.` +
-          (ctx.reason ? `\n\n${ctx.reason}` : ''),
-          ctx, 'Open support tickets'
-        ) + `\n\n${SIGN_OFF}`,
-        inApp: `New reply on support ticket: ${role}.`
-      };
-
-    case 'support_ticket_resolved':
-      return {
-        module: 'requests',
-        alsoInApp: true,
-        subject: `Your support ticket was resolved: ${role}`,
-        body: withAction(
-          `${hi}\n\nYour support ticket has been marked resolved. If you still need help, reply in the support conversation.` +
-          (ctx.reason ? `\n\n${ctx.reason}` : ''),
-          ctx, 'View support'
-        ) + `\n\n${SIGN_OFF}`,
-        inApp: `Support ticket resolved: ${role}.`
       };
 
     case 'new_request_for_ops':
@@ -812,6 +873,20 @@ export function buildNotification(
       };
 
     // ── Offer ───────────────────────────────────────────────────────────────
+    case 'offer_submitted_for_review':
+      return {
+        module: 'offers',
+        alsoInApp: true,
+        subject: `Offer submitted for review${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.clientName || 'A client'} submitted an offer for ${ctx.talentName || 'a candidate'}` +
+          `${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}. Review the proposed terms before sending anything to the candidate.` +
+          (ctx.rateSummary ? `\n\n${ctx.rateSummary}` : ''),
+          ctx, 'Review offer'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `${ctx.clientName || 'A client'} submitted an offer for ${ctx.talentName || 'a candidate'}${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}. Review it before sending to the candidate.`
+      };
+
     case 'offer_extended':
       return {
         module: 'offers',
@@ -898,6 +973,19 @@ export function buildNotification(
           ctx, 'View the contract'
         ) + `\n\n${SIGN_OFF}`,
         inApp: 'Contract signed. Onboarding starts next.'
+      };
+
+    case 'contract_signature_recorded':
+      return {
+        module: 'contracts',
+        alsoInApp: true,
+        subject: `${ctx.signerName || 'A party'} signed${ctx.roleTitle ? ` — ${ctx.roleTitle}` : ''}`,
+        body: withAction(
+          `${hi}\n\n${ctx.signerName || 'A party'} signed the contract${ctx.roleTitle ? ` for ${ctx.roleTitle}` : ''}. ` +
+          (ctx.bothParties ? 'Both parties have now signed; review the contract and continue the activation steps.' : 'The other party still needs to sign.'),
+          ctx, 'Review contract'
+        ) + `\n\n${SIGN_OFF}`,
+        inApp: `${ctx.signerName || 'A party'} signed${ctx.roleTitle ? ` the contract for ${ctx.roleTitle}` : ''}${ctx.bothParties ? '; both signatures are complete.' : '; awaiting the other signature.'}`
       };
 
     // ── Vetting ─────────────────────────────────────────────────────────────
@@ -1322,9 +1410,7 @@ export const ALL_NOTIFICATION_EVENTS: NotificationEvent[] = [
   // all_candidates_rejected had a template and was never in this list, so
   // anything iterating the events — settings screens, tests — did not know
   // it existed.
-  'request_received', 'support_ticket_opened', 'support_ticket_opened_for_ops',
-  'support_ticket_reply', 'support_ticket_reply_for_ops', 'support_ticket_resolved',
-  'new_request_for_ops', 'candidates_ready', 'all_candidates_rejected',
+  'request_received', 'new_request_for_ops', 'candidates_ready', 'all_candidates_rejected',
   'client_call_requested', 'client_call_responded', 'client_call_scheduled',
   'request_message_from_admin', 'request_message_from_client',
   'interview_requested', 'interview_request_sent', 'interview_request_declined',
@@ -1334,8 +1420,8 @@ export const ALL_NOTIFICATION_EVENTS: NotificationEvent[] = [
   'interview_reschedule_request_declined', 'interview_counter_declined',
   'interview_scheduled', 'interview_rescheduled', 'interview_reminder',
   'interview_outcome_due', 'interview_completed', 'interview_did_not_happen',
-  'offer_extended', 'offer_accepted', 'offer_declined',
-  'contract_ready', 'contract_signed', 'contract_renewal_due', 'contract_terminated',
+  'offer_submitted_for_review', 'offer_extended', 'offer_accepted', 'offer_declined',
+  'contract_ready', 'contract_signed', 'contract_signature_recorded', 'contract_renewal_due', 'contract_terminated',
   'contract_voided', 'contract_unsigned_chase', 'compliance_document_expiring',
   'stage_advanced', 'application_rejected',
   'assessment_assigned', 'assessment_marked',

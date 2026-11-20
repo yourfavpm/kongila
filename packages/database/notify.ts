@@ -31,11 +31,7 @@ import {
   type CalendarInvite
 } from '@kongila/notifications';
 
-/** Roles that should see operations notifications. Matches users_role_check. */
-const ADMIN_ROLES = [
-  'super_admin', 'superadmin', 'admin',
-  'account_manager', 'talent_manager', 'ops_manager', 'skill_assessor'
-];
+const SUPER_ADMIN_ROLES = ['super_admin', 'superadmin'];
 
 // ─── Where a notification sends someone ──────────────────────────────────────
 //
@@ -215,12 +211,6 @@ export async function notifyUsers(
         return rest;
       });
       ({ error } = await supabase.from('notifications').insert(withoutSource));
-      if (!error) {
-        warnings.push(
-          'Stored without a link back to the record: the notifications table has no '
-          + 'source_record_id column.'
-        );
-      }
     }
     if (error) warnings.push(`In-app notification failed: ${error.message}`);
     else delivered += inAppRows.length;
@@ -280,17 +270,17 @@ export async function notifyAdmins(
   const { data, error } = await supabase
     .from('users')
     .select('id')
-    .in('role', ADMIN_ROLES);
+    .in('role', SUPER_ADMIN_ROLES);
 
   if (error) return { delivered: 0, warnings: [`Could not find operations users: ${error.message}`] };
   if (!data || data.length === 0) {
-    return { delivered: 0, warnings: ['No operations users exist to notify.'] };
+    return { delivered: 0, warnings: ['No super admin accounts exist to notify.'] };
   }
 
   const excluded = new Set((options.excludeUserIds || []).map(String));
   const recipients = data.map((u: any) => String(u.id)).filter((id: string) => !excluded.has(id));
   if (recipients.length === 0) {
-    return { delivered: 0, warnings: ['No eligible operations users exist to notify.'] };
+    return { delivered: 0, warnings: ['No eligible super admin accounts exist to notify.'] };
   }
 
   return notifyUsers(recipients, event, context, options);
@@ -306,8 +296,8 @@ export async function notifyAdmins(
  * — and sending all of those to everyone is how people learn to ignore the
  * ones meant for them.
  *
- * Falls back to all of operations when nobody holds the named roles, because
- * the alternative is that the notice reaches nobody at all.
+ * Super admins remain informed, while routine notices go only to the
+ * responsible function and are never broadcast to unrelated operators.
  */
 export async function notifyRoles(
   roles: string[],
@@ -319,7 +309,7 @@ export async function notifyRoles(
   if (wanted.length === 0) return notifyAdmins(event, context, options);
 
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase.from('users').select('id').in('role', wanted);
+  const { data, error } = await supabase.from('users').select('id').in('role', [...new Set([...wanted, ...SUPER_ADMIN_ROLES])]);
 
   if (error) {
     return { delivered: 0, warnings: [`Could not find the ${wanted.join(' or ')}: ${error.message}`] };
@@ -328,16 +318,7 @@ export async function notifyRoles(
   const excluded = new Set((options.excludeUserIds || []).map(String));
   const recipients = (data || []).map((u: any) => String(u.id)).filter((id: string) => !excluded.has(id));
 
-  if (recipients.length === 0) {
-    const fallback = await notifyAdmins(event, context, options);
-    return {
-      delivered: fallback.delivered,
-      warnings: [
-        `Nobody holds the role ${wanted.join(' or ')}, so this went to all of operations.`,
-        ...fallback.warnings
-      ]
-    };
-  }
+  if (recipients.length === 0) return notifyAdmins(event, context, options);
 
   return notifyUsers(recipients, event, context, options);
 }
@@ -348,7 +329,21 @@ export async function notifyTalentManagers(
   context: NotificationContext = {},
   options: NotifyOptions = {}
 ): Promise<NotifyResult> {
-  return notifyRoles(['talent_manager', 'ops_manager', 'super_admin'], event, context, options);
+  const supabase = getSupabaseClient();
+  const talentId = String((context as any)?.talentId || (context as any)?.talentProfileId || '').trim();
+  if (!talentId) return notifyAdmins(event, context, options);
+  const { data: talent, error } = await supabase.from('talent_profiles')
+    .select('talent_manager_id, bio').eq('id', talentId).maybeSingle();
+  if (error) return { delivered: 0, warnings: ['Could not resolve the assigned talent manager: ' + error.message] };
+  let managerId = talent?.talent_manager_id ? String(talent.talent_manager_id) : '';
+  if (!managerId && talent?.bio) {
+    try {
+      const parsed = JSON.parse(talent.bio);
+      managerId = String(parsed?.__kongila ? parsed?.telemetry?.talentManagerId || '' : '');
+    } catch { /* Legacy plain-text profile. */ }
+  }
+  const { data: supers } = await supabase.from('users').select('id').in('role', SUPER_ADMIN_ROLES);
+  return notifyUsers([...(managerId ? [managerId] : []), ...(supers || []).map((user: any) => String(user.id))], event, context, options);
 }
 
 /** The people who own a client relationship. */
@@ -357,7 +352,33 @@ export async function notifyAccountManagers(
   context: NotificationContext = {},
   options: NotifyOptions = {}
 ): Promise<NotifyResult> {
-  return notifyRoles(['account_manager', 'ops_manager', 'super_admin'], event, context, options);
+  const supabase = getSupabaseClient();
+  const organizationId = String((context as any)?.organizationId || '').trim();
+  const clientId = String((context as any)?.clientId || '').trim();
+  const requestId = String((context as any)?.requestId || '').trim();
+  let managerId = '';
+  if (organizationId) {
+    const { data } = await supabase.from('organizations').select('account_manager_id').eq('id', organizationId).maybeSingle();
+    managerId = String(data?.account_manager_id || '');
+  } else if (clientId) {
+    const { data: profile } = await supabase.from('client_profiles').select('organization_id').eq('user_id', clientId).maybeSingle();
+    if (profile?.organization_id) {
+      const { data: organization } = await supabase.from('organizations').select('account_manager_id').eq('id', profile.organization_id).maybeSingle();
+      managerId = String(organization?.account_manager_id || '');
+    }
+  } else if (requestId) {
+    const { data: request } = await supabase.from('talent_requests').select('account_manager_id, client_id').eq('id', requestId).maybeSingle();
+    managerId = String(request?.account_manager_id || '');
+    if (!managerId && request?.client_id) {
+      const { data: profile } = await supabase.from('client_profiles').select('organization_id').eq('user_id', request.client_id).maybeSingle();
+      if (profile?.organization_id) {
+        const { data: organization } = await supabase.from('organizations').select('account_manager_id').eq('id', profile.organization_id).maybeSingle();
+        managerId = String(organization?.account_manager_id || '');
+      }
+    }
+  }
+  const { data: supers } = await supabase.from('users').select('id').in('role', SUPER_ADMIN_ROLES);
+  return notifyUsers([...(managerId ? [managerId] : []), ...(supers || []).map((user: any) => String(user.id))], event, context, options);
 }
 
 /** The people who own money. */
@@ -383,7 +404,9 @@ export async function notifyRequestOwners(
     .filter((id): id is string => Boolean(id));
 
   if (owners.length === 0) return notifyAdmins(event, context, options);
-  return notifyUsers(owners, event, context, options);
+  const supabase = getSupabaseClient();
+  const { data: supers } = await supabase.from('users').select('id').in('role', SUPER_ADMIN_ROLES);
+  return notifyUsers([...owners, ...(supers || []).map((user: any) => String(user.id))], event, context, options);
 }
 
 /** Marks notifications read, scoped to their owner so nobody clears another's. */

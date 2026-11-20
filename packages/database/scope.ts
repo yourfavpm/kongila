@@ -21,6 +21,14 @@ export interface RequestActor {
   kind: 'talent' | 'client' | 'admin';
   organizationId: string | null;
   talentProfileId: string | null;
+  /**
+   * What this operator may do, with the super admin's edits applied.
+   *
+   * Resolved once per request, in getRequestUser, so a route checks a list
+   * it already has rather than reading the matrix again. Empty for clients
+   * and candidates, who are scoped by ownership rather than by permission.
+   */
+  permissions?: string[];
 }
 
 const EMPTY: any[] = [];
@@ -203,22 +211,119 @@ function scopeForTalentManager(db: any, actor: RequestActor): any {
   const allTalents = arr(db.talents);
   const mine = allTalents.filter((t: any) => {
     const owner = t?.talentManagerId ? String(t.talentManagerId) : null;
-    return !owner || owner === String(actor.userId);
+    return owner === String(actor.userId);
   });
   const mineIds = new Set(mine.map((t: any) => String(t.id)));
   const keep = (id: unknown) => mineIds.has(String(id));
+  const matches = arr(db.matches).filter((m: any) => keep(m.talentId));
+  const interviews = arr(db.interviews).filter((iv: any) => keep(iv.talentId));
+  const contracts = arr(db.contracts).filter((c: any) => keep(c.talentId));
+  const requestIds = new Set([
+    ...matches.map((m: any) => String(m.requestId)),
+    ...interviews.map((iv: any) => String(iv.requestId))
+  ]);
+  const requests = arr(db.clientRequests).filter((r: any) =>
+    requestIds.has(String(r.id)) || requestIds.has(String(r.rowId)) || requestIds.has(String(r.payloadId))
+  );
+  const conversations = arr(db.conversations).filter((c: any) =>
+    Array.isArray(c.participantIds) && c.participantIds.map(String).includes(String(actor.userId))
+  );
+  const conversationIds = idsOf(conversations);
+  const ticketIds = new Set(arr(db.supportTickets)
+    .filter((ticket: any) => keep(ticket.talentId)).map((ticket: any) => String(ticket.id)));
 
   return {
     ...db,
     talents: mine,
-    interviews: arr(db.interviews).filter((iv: any) => keep(iv.talentId)),
-    matches: arr(db.matches).filter((m: any) => keep(m.talentId)),
+    interviews,
+    matches,
+    contracts,
+    clientRequests: requests,
+    organizations: arr(db.organizations).filter((org: any) => {
+      const clientIds = new Set(arr(db.clientProfiles)
+        .filter((profile: any) => requestIds.has(String(profile.userId)))
+        .map((profile: any) => String(profile.organizationId)));
+      return clientIds.has(String(org.id));
+    }),
+    clientProfiles: arr(db.clientProfiles).filter((profile: any) => requestIds.has(String(profile.userId))),
+    notifications: arr(db.notifications).filter((n: any) => String(n.userId) === String(actor.userId)),
+    conversations,
+    messages: arr(db.messages).filter((m: any) => conversationIds.has(String(m.conversationId))),
+    supportTickets: arr(db.supportTickets).filter((ticket: any) => keep(ticket.talentId)),
+    supportMessages: arr(db.supportMessages).filter((message: any) => ticketIds.has(String(message.ticketId))),
+    documents: arr(db.documents).filter((doc: any) => mine.some((talent: any) => String(talent.userId || talent.id) === String(doc.userId))),
+    assignments: arr(db.assignments).filter((assignment: any) => keep(assignment.talentId)),
+    talentPayouts: arr(db.talentPayouts).filter((payout: any) => keep(payout.talentId)),
+    talentSkills: arr(db.talentSkills).filter((skill: any) => keep(skill.talentId)),
     talentSkillAssessments: arr(db.talentSkillAssessments)
       .filter((a: any) => keep(a.talentId ?? a.talent_id)),
     skillAssessmentResults: arr(db.skillAssessmentResults)
       .filter((r: any) => keep(r.talentId ?? r.talent_id)),
-    workSimulationTasks: arr(db.workSimulationTasks)
-      .filter((w: any) => keep(w.talentId ?? w.talent_id))
+    assessmentAssignments: arr(db.assessmentAssignments).filter((a: any) => keep(a.talentId ?? a.talent_id)),
+    workSimulationTasks: arr(db.workSimulationTasks).filter((w: any) => keep(w.talentId ?? w.talent_id)),
+    performanceReviews: arr(db.performanceReviews).filter((review: any) => keep(review.talentId))
+  };
+}
+
+/** Account managers see only their portfolio and the records attached to it. */
+function scopeForAccountManager(db: any, actor: RequestActor): any {
+  const organizationIds = new Set(arr(db.organizations)
+    .filter((org: any) => String(org.accountManagerId || org.account_manager_id || '') === String(actor.userId))
+    .map((org: any) => String(org.id)));
+  const clientIds = new Set(arr(db.clientProfiles)
+    .filter((profile: any) => organizationIds.has(String(profile.organizationId || profile.organization_id)))
+    .map((profile: any) => String(profile.userId || profile.user_id)));
+  const requests = arr(db.clientRequests).filter((request: any) =>
+    clientIds.has(String(request.clientId || request.client_id))
+    || String(request.assignedAccountManagerId || request.account_manager_id || '') === String(actor.userId)
+  );
+  const requestIds = new Set(requests.flatMap((request: any) =>
+    [request.id, request.rowId, request.payloadId, request.payload?.id].filter(Boolean).map(String)
+  ));
+  const matches = arr(db.matches).filter((match: any) => requestIds.has(String(match.requestId)));
+  const interviews = arr(db.interviews).filter((interview: any) => requestIds.has(String(interview.requestId)));
+  const contracts = arr(db.contracts).filter((contract: any) => clientIds.has(String(contract.clientId)));
+  const talentIds = new Set([
+    ...matches.map((match: any) => String(match.talentId)),
+    ...contracts.map((contract: any) => String(contract.talentId))
+  ]);
+  const invoiceIds = new Set(arr(db.invoices)
+    .filter((invoice: any) => clientIds.has(String(invoice.clientId))).map((invoice: any) => String(invoice.id)));
+  const conversations = arr(db.conversations).filter((conversation: any) =>
+    Array.isArray(conversation.participantIds) && conversation.participantIds.map(String).includes(String(actor.userId))
+  );
+  const conversationIds = idsOf(conversations);
+  const ticketIds = new Set(arr(db.supportTickets)
+    .filter((ticket: any) => clientIds.has(String(ticket.clientId))).map((ticket: any) => String(ticket.id)));
+  const ownTalents = arr(db.talents).filter((talent: any) => talentIds.has(String(talent.id)));
+  const ownTalentIds = new Set(ownTalents.map((talent: any) => String(talent.id)));
+  const ownContracts = new Set(contracts.map((contract: any) => String(contract.id)));
+
+  return {
+    ...db,
+    organizations: arr(db.organizations).filter((org: any) => organizationIds.has(String(org.id))),
+    clientProfiles: arr(db.clientProfiles).filter((profile: any) => clientIds.has(String(profile.userId || profile.user_id))),
+    clientRequests: requests,
+    matches,
+    interviews,
+    contracts,
+    talents: ownTalents,
+    talentSkills: arr(db.talentSkills).filter((row: any) => ownTalentIds.has(String(row.talentId))),
+    talentSkillAssessments: arr(db.talentSkillAssessments).filter((row: any) => ownTalentIds.has(String(row.talentId ?? row.talent_id))),
+    skillAssessmentResults: arr(db.skillAssessmentResults).filter((row: any) => ownTalentIds.has(String(row.talentId ?? row.talent_id))),
+    workSimulationTasks: arr(db.workSimulationTasks).filter((row: any) => ownTalentIds.has(String(row.talentId ?? row.talent_id))),
+    assessmentAssignments: arr(db.assessmentAssignments).filter((row: any) => ownTalentIds.has(String(row.talentId ?? row.talent_id))),
+    documents: arr(db.documents).filter((row: any) => ownTalentIds.has(String(row.talentId))),
+    assignments: arr(db.assignments).filter((row: any) => ownContracts.has(String(row.contractId))),
+    invoices: arr(db.invoices).filter((row: any) => clientIds.has(String(row.clientId))),
+    payments: arr(db.payments).filter((row: any) => invoiceIds.has(String(row.invoiceId))),
+    talentPayouts: arr(db.talentPayouts).filter((row: any) => ownTalentIds.has(String(row.talentId))),
+    supportTickets: arr(db.supportTickets).filter((row: any) => ticketIds.has(String(row.id))),
+    supportMessages: arr(db.supportMessages).filter((row: any) => ticketIds.has(String(row.ticketId))),
+    requestActivityLogs: arr(db.requestActivityLogs).filter((row: any) => requestIds.has(String(row.requestId))),
+    conversations,
+    messages: arr(db.messages).filter((row: any) => conversationIds.has(String(row.conversationId))),
+    notifications: arr(db.notifications).filter((row: any) => String(row.userId) === String(actor.userId))
   };
 }
 
@@ -228,9 +333,7 @@ export function scopeDbForUser(db: any, actor: RequestActor): any {
     const role = normaliseRole(actor.role);
     if (SEES_EVERYTHING.has(role)) return db;
     if (role === 'talent_manager') return scopeForTalentManager(db, actor);
-    // Account managers, finance and assessors keep the view they had. Their
-    // narrowing is a separate piece of work and guessing at it here would
-    // hide records people are using today.
+    if (role === 'account_manager') return scopeForAccountManager(db, actor);
     return db;
   }
   if (actor.kind === 'talent') return scopeForTalent(db, actor);
@@ -307,7 +410,13 @@ function scopeForTalent(db: any, actor: RequestActor) {
 
     talents: ownTalents,
     users: visibleUsers,
-    documents: arr(db.documents).filter((d: any) => String(d.userId) === String(uid)),
+    // Universal mandatory documents must reach the talent workspace so the
+    // talent can review and sign them. Keep personal documents scoped to the
+    // signed-in talent; only ownerless compliance templates are shared.
+    documents: arr(db.documents).filter((d: any) =>
+      String(d.userId) === String(uid)
+      || (!d.userId && Boolean(d.isMandatory) && !d.isHidden)
+    ),
 
     matches: ownMatches,
     interviews: ownInterviews,
@@ -567,4 +676,95 @@ export function filterWritableDb(
   }
 
   return { body, rejected };
+}
+
+// ─── Filtering the snapshot by permission ────────────────────────────────────
+
+/**
+ * Which permission each collection in the snapshot belongs to.
+ *
+ * /api/db hands back about forty collections in one response. It checked
+ * that the caller was an operator and nothing else, so a Finance operator —
+ * who has no candidate screens at all — still received every candidate
+ * profile, every vetting score and every interview in the browser. Hiding
+ * the tab was the only thing stopping them reading it, and the tab was
+ * never what was stopping them.
+ *
+ * Anything not named here is sent to every operator: the reference data
+ * (skills, settings, the tag dictionary) and the things scoped by ownership
+ * rather than by permission (notifications, messages, conversations).
+ */
+const COLLECTION_PERMISSIONS: Record<string, string> = {
+  talents: 'view:talent-pipeline',
+  talentSkills: 'view:talent-pipeline',
+  documents: 'view:talent-pipeline',
+  performanceReviews: 'view:talent-pipeline',
+  classificationEvents: 'view:talent-pipeline',
+
+  assessments: 'view:assessments',
+  assessmentCategories: 'view:assessments',
+  assessmentQuestions: 'view:assessments',
+  assessmentAssignments: 'view:assessments',
+  skillAssessmentResults: 'view:assessments',
+  talentSkillAssessments: 'view:assessments',
+  workSimulationTasks: 'view:assessments',
+
+  organizations: 'view:client-pipeline',
+  clientProfiles: 'view:client-pipeline',
+
+  clientRequests: 'view:hiring-requests',
+  requestActivityLogs: 'view:hiring-requests',
+  rehireRequests: 'view:hiring-requests',
+
+  matches: 'view:matching',
+  interviews: 'view:interviews',
+
+  contracts: 'view:contracts',
+  assignments: 'view:contracts',
+  projects: 'view:contracts',
+  tasks: 'view:contracts',
+
+  invoices: 'view:finance',
+  payments: 'view:finance',
+  talentPayouts: 'view:finance',
+
+  supportTickets: 'view:support',
+  supportMessages: 'view:support',
+
+  auditLogs: 'view:audit',
+  agentLogs: 'view:audit',
+  workflows: 'view:workflows'
+};
+
+/**
+ * Empties the collections this operator has no permission to see.
+ *
+ * Empties rather than deletes: the portals read `db.talents.filter(...)`
+ * in several hundred places, and a missing key is a crash where an empty
+ * list is simply a screen with nothing on it — which is exactly what
+ * somebody without the permission should get.
+ */
+export function filterDbByPermissions(db: any, permissions: string[] | undefined): any {
+  if (!db) return db;
+  const held = new Set(Array.isArray(permissions) ? permissions : []);
+  const filtered: any = { ...db };
+
+  for (const [collection, permission] of Object.entries(COLLECTION_PERMISSIONS)) {
+    if (held.has(permission)) continue;
+    if (Array.isArray(filtered[collection])) filtered[collection] = [];
+  }
+
+  // The operator list is a special case: every portal uses it to put a name
+  // against an id, so it cannot simply be emptied. Only someone who manages
+  // users gets the rows themselves.
+  if (!held.has('users.manage') && Array.isArray(filtered.users)) {
+    filtered.users = filtered.users.map((user: any) => ({
+      id: user?.id,
+      name: user?.name,
+      email: user?.email,
+      role: user?.role
+    }));
+  }
+
+  return filtered;
 }

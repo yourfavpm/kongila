@@ -1,5 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { ageInvoices, checkDocumentExpiry, activateDueContracts } from '@kongila/database';
+import {
+  ageInvoices,
+  checkDocumentExpiry,
+  activateDueContracts,
+  alertUpcomingInvoices
+} from '@kongila/database';
 
 /**
  * The nightly pass.
@@ -87,5 +92,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     contracts = { error: error?.message || 'The contract activation pass threw.' };
   }
 
-  return res.status(200).json({ ranAt: now.toISOString(), invoices, documents, contracts, warnings });
+  // What is about to fall due, so somebody raises it. A recurring
+  // engagement quietly stops being invoiced the moment nobody remembers to
+  // run the month, and the first sign is a revenue figure that looks low.
+  let upcoming: any = null;
+  try {
+    const result = await alertUpcomingInvoices(now);
+    upcoming = { upcoming: result.upcoming };
+    warnings.push(...(result.warnings || []));
+  } catch (error: any) {
+    upcoming = { error: error?.message || 'The upcoming invoice pass threw.' };
+  }
+
+  return res.status(200).json({
+    ranAt: now.toISOString(), invoices, documents, contracts, upcoming, warnings
+  });
 }

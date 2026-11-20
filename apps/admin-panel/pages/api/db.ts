@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { readDbAsync, getRequestUser, signDbFileUrls } from '@kongila/database';
+import { readDbAsync, getRequestUser, signDbFileUrls, filterDbByPermissions, scopeDbForUser } from '@kongila/database';
 
 /**
  * DEPRECATED. Read only, and on its way out.
@@ -57,9 +57,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const data = await readDbAsync();
+
+    // Only the collections this operator may actually see.
+    //
+    // This route checked that the caller was an operator and nothing else,
+    // so a Finance operator with no candidate screens still received every
+    // candidate profile and every vetting score in the browser. Hiding the
+    // tab was the only thing stopping them reading it, and a hidden tab
+    // stops nobody who opens the network panel.
+    const assignedScope = scopeDbForUser(data, actor);
+    const permitted = filterDbByPermissions(assignedScope, actor.permissions);
+
     // Operations see every document, so every link needs signing once the
     // bucket is private.
-    return res.status(200).json(await signDbFileUrls(data));
+    return res.status(200).json(await signDbFileUrls(permitted));
   } catch (e: any) {
     return res.status(500).json({ error: e.message || 'Failed to read database' });
   }

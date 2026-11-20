@@ -20,7 +20,7 @@
 import { getSupabaseClient } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
-import { adminPortalUrl, clientPortalUrl, notifyUsers, notifyAdmins, talentPortalUrl } from './notify';
+import { adminPortalUrl, clientPortalUrl, notifyUsers, notifyAdmins, notifyAccountManagers, notifyTalentManagers, talentPortalUrl } from './notify';
 
 export interface SupportResult<T = any> {
   ok: boolean;
@@ -143,13 +143,21 @@ export async function createTicket(
       ? talentPortalUrl('/?section=support')
       : clientPortalUrl('/?section=support')
   });
-  const opsNotice = await notifyAdmins('support_ticket_opened_for_ops', {
-    roleTitle: ticket.subject,
-    reason: ticket.description || undefined,
-    clientName: actor.kind === 'client' ? actor.email || undefined : undefined,
-    talentName: actor.kind === 'talent' ? actor.email || undefined : undefined,
-    actionUrl: adminPortalUrl('/?tab=support')
-  });
+  const opsNotice = actor.kind === 'talent'
+    ? await notifyTalentManagers('support_ticket_opened_for_ops', {
+      talentId: ticket.talentId,
+      roleTitle: ticket.subject,
+      reason: ticket.description || undefined,
+      talentName: actor.email || undefined,
+      actionUrl: adminPortalUrl('/?tab=support')
+    })
+    : await notifyAccountManagers('support_ticket_opened_for_ops', {
+      clientId: ticket.clientId,
+      roleTitle: ticket.subject,
+      reason: ticket.description || undefined,
+      clientName: actor.email || undefined,
+      actionUrl: adminPortalUrl('/?tab=support')
+    });
 
   await recordAudit(actor, {
     action: 'Raise Support Ticket',
@@ -296,13 +304,16 @@ export async function replyToTicket(
       warnings.push(...result.warnings);
     }
   } else {
-    const result = await notifyAdmins('support_ticket_reply_for_ops', {
+    const context = {
       roleTitle: `Support: ${ticket.subject}`,
       reason: input.text.trim(),
       clientName: actor.kind === 'client' ? actor.email || undefined : undefined,
       talentName: actor.kind === 'talent' ? actor.email || undefined : undefined,
       actionUrl: adminPortalUrl('/?tab=support')
-    });
+    };
+    const result = ticket.talent_id
+      ? await notifyTalentManagers('support_ticket_reply_for_ops', { ...context, talentId: ticket.talent_id })
+      : await notifyAccountManagers('support_ticket_reply_for_ops', { ...context, clientId: ticket.client_id });
     warnings.push(...result.warnings);
   }
 

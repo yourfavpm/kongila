@@ -7,6 +7,8 @@ import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton, AgentBadge, Chip, KongilaLoader, confirmInApp, promptInApp } from '@kongila/ui';
 import UnassignedTalentPrompt from '../components/UnassignedTalentPrompt';
 import ContractsManager from '../components/ContractsManager';
+import EngagementsManager from '../components/EngagementsManager';
+import TemplatesManager from '../components/TemplatesManager';
 import ComplianceManager from '../components/ComplianceManager';
 import FinanceManager from '../components/FinanceManager';
 import AdminLogin from '../components/AdminLogin';
@@ -28,11 +30,10 @@ import AssessmentWizard from '../components/AssessmentWizard';
 import {
   resolveRole,
   isAdminRole,
-  canAccessTab,
-  canManageUsers,
   ADMIN_ROLES,
   ROLE_LABELS,
-  ROLE_DESCRIPTIONS
+  ROLE_DESCRIPTIONS,
+  PERMISSION_GROUPS
 } from '@kongila/auth';
 
 // The role model lives in @kongila/auth, with its own tests. This file used
@@ -48,14 +49,25 @@ const normalizeAdminRole = (role: any) => resolveRole(role) || '';
 // the id from the verified token, refusing a suspended account whose
 // token has not expired yet, and normalising the role. /api/session
 // returns that result, so the browser never touches the users table.
-async function getAdminRoleForSession(_user: any): Promise<string> {
+/**
+ * Who the caller is, and what they may do.
+ *
+ * The permissions come from the server rather than from a table compiled
+ * into this bundle. That is the whole point: a super admin changing what
+ * Finance can see used to have no effect until the next deploy, because the
+ * browser was answering the question from its own copy of the rules.
+ */
+async function getAdminSession(_user: any): Promise<{ role: string; permissions: string[] }> {
   try {
     const res = await apiFetch('/api/session');
-    if (!res.ok) return '';
+    if (!res.ok) return { role: '', permissions: [] };
     const me = await res.json();
-    return normalizeAdminRole(me.role);
+    return {
+      role: normalizeAdminRole(me.role),
+      permissions: Array.isArray(me.permissions) ? me.permissions : []
+    };
   } catch {
-    return '';
+    return { role: '', permissions: [] };
   }
 }
 
@@ -71,6 +83,8 @@ type AdminTab =
   | 'matching'
   | 'offers'
   | 'contracts'
+  | 'engagements'
+  | 'templates'
   | 'compliance'
   | 'assessments'
   | 'support'
@@ -86,7 +100,7 @@ type AdminTab =
   | 'remotan-talent'
   | 'remotan-payroll';
 
-const ADMIN_TABS: AdminTab[] = ['overview', 'talent-pipeline', 'client-pipeline', 'hiring-requests', 'interviews', 'vetting', 'matching', 'offers', 'contracts', 'compliance', 'assessments', 'support', 'audit', 'notifications', 'users', 'messages', 'settings', 'finance', 'payroll', 'remotan-overview', 'remotan-clients', 'remotan-talent', 'remotan-payroll'];
+const ADMIN_TABS: AdminTab[] = ['overview', 'talent-pipeline', 'client-pipeline', 'hiring-requests', 'interviews', 'vetting', 'matching', 'offers', 'contracts', 'engagements', 'templates', 'compliance', 'assessments', 'support', 'audit', 'notifications', 'users', 'messages', 'settings', 'finance', 'payroll', 'remotan-overview', 'remotan-clients', 'remotan-talent', 'remotan-payroll'];
 
 interface SupportTicket {
   id: string;
@@ -121,7 +135,10 @@ interface ComplianceDoc {
   uploadedAt: string;
   adminNotes?: string;
   isMandatory?: boolean;
+  isHidden?: boolean;
+  signedByTalentIds?: string[];
   fileUrl?: string;
+  fileName?: string;
 }
 
 // Removing local Assessment type, importing from shared-types instead
@@ -227,6 +244,8 @@ const KONGILA_NAV = [
   { key: 'interviews', label: 'Interviews' },
   { key: 'offers', label: 'Offer Queue' },
   { key: 'contracts', label: 'Contracts' },
+  { key: 'engagements', label: 'Active Work' },
+  { key: 'templates', label: 'Contract Templates' },
   { key: 'compliance', label: 'Compliance Docs' },
   { key: 'assessments', label: 'Skill Assessments' },
   { key: 'finance', label: 'Financial System' },
@@ -252,6 +271,11 @@ export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   // The signed-in operator's role, which decides every tab they can reach.
   const [currentRole, setCurrentRole] = useState<string>('');
+  // What this operator may do, as the server resolved it for this request.
+  // Everything that shows, hides or refuses reads this, not the role name.
+  const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
+  const can = (permission: string) => currentPermissions.includes(permission);
+  const canSeeTab = (tab: string) => currentPermissions.includes(`view:${tab}`);
   const [currentAdminId, setCurrentAdminId] = useState<string>('');
   const [authChecking, setAuthChecking] = useState(true);
 
@@ -555,7 +579,19 @@ export default function AdminPanel() {
         setAuditLogs(db.auditLogs || []);
         
         setContracts(db.contracts || []);
-        setContractTemplates(db.contractTemplates || []);
+
+        // Templates are deliberately not taken from here.
+        //
+        // /api/db has never returned contractTemplates: the table is not in
+        // readDbAsync's Schema at all. So `db.contractTemplates` is always
+        // undefined, and this line used to set the list to [] on every sync
+        // — on mount, every poll, and on every realtime change to requests
+        // or organisations. The templates screen loaded them from its own
+        // route, showed them, and then had them wiped seconds later, which
+        // is why they kept needing restoring.
+        //
+        // They come from /api/contracts/templates, which is the only thing
+        // that knows about them.
         setAgentLogs(db.agentLogs || []);
         setRehireRequests(db.rehireRequests || []);
         setUsers(db.users || []);
@@ -626,7 +662,7 @@ export default function AdminPanel() {
     sessionCheck.then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
-          const role = await getAdminRoleForSession(session.user);
+          const { role, permissions } = await getAdminSession(session.user);
           // Admin access comes from an existing role in public.users and nothing
           // else. This branch used to auto-provision: any @kongila.co address
           // with no users row was written one with role 'admin' from the
@@ -639,18 +675,21 @@ export default function AdminPanel() {
             // Remembered, because every tab check needs it. The portal used
             // to show the same thirteen tabs to all seven accepted roles.
             setCurrentRole(role);
+            setCurrentPermissions(permissions);
             setCurrentAdminId(session.user.id);
             if (typeof window !== 'undefined') sessionStorage.setItem('kongila_admin_auth', 'true');
           } else {
             await supabase.auth.signOut();
             setIsAuthenticated(false);
             setCurrentRole('');
+            setCurrentPermissions([]);
             setCurrentAdminId('');
             if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
           }
         } else {
           setIsAuthenticated(false);
           setCurrentRole('');
+          setCurrentPermissions([]);
           setCurrentAdminId('');
           if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
         }
@@ -671,23 +710,26 @@ export default function AdminPanel() {
         // can wait on that same auth lock.
         setTimeout(() => {
           void (async () => {
-            const role = await getAdminRoleForSession(session.user);
+            const { role, permissions } = await getAdminSession(session.user);
             // No auto-provisioning here either. See the note on the getSession
             // branch above.
             if (isAdminRole(role)) {
               setIsAuthenticated(true);
               setCurrentRole(role);
+              setCurrentPermissions(permissions);
               setCurrentAdminId(session.user.id);
             } else {
               await supabase.auth.signOut();
               setIsAuthenticated(false);
               setCurrentRole('');
+              setCurrentPermissions([]);
             }
           })();
         }, 0);
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
         setCurrentRole('');
+        setCurrentPermissions([]);
         setCurrentAdminId('');
         if (typeof window !== 'undefined') sessionStorage.removeItem('kongila_admin_auth');
       }
@@ -770,11 +812,17 @@ export default function AdminPanel() {
     } else setActiveTabState('overview');
   }, [router.query.tab]);
 
+  // Land them somewhere they are allowed to be.
+  //
+  // Waits for the permissions to arrive: an empty list on the first render
+  // would bounce every operator to the first tab before the server has said
+  // what they may open.
   useEffect(() => {
-    if (!isAuthenticated || !currentRole || canAccessTab(currentRole, activeTab)) return;
-    const firstAllowed = ADMIN_TABS.find(tab => canAccessTab(currentRole, tab));
+    if (!isAuthenticated || !currentRole || currentPermissions.length === 0) return;
+    if (canSeeTab(activeTab)) return;
+    const firstAllowed = ADMIN_TABS.find(tab => canSeeTab(tab));
     if (firstAllowed) setActiveTab(firstAllowed);
-  }, [isAuthenticated, currentRole, activeTab]);
+  }, [isAuthenticated, currentRole, currentPermissions, activeTab]);
 
   useEffect(() => {
     if (!isAuthenticated || !router.isReady) return;
@@ -892,6 +940,79 @@ export default function AdminPanel() {
   const [inviteRole, setInviteRole] = useState<string>('ops_manager');
   const [inviteBusy, setInviteBusy] = useState(false);
   const [operatorInviteLink, setOperatorInviteLink] = useState('');
+  // How the new operator gets in: a setup link they answer themselves, or a
+  // password set here and changed the first time they sign in.
+  const [inviteMethod, setInviteMethod] = useState<'link' | 'password'>('link');
+  const [invitePassword, setInvitePassword] = useState('');
+  // Shown once, after the account is made. Never stored, never emailed.
+  const [issuedCredential, setIssuedCredential] = useState<{ email: string; password: string } | null>(null);
+
+  // ── Role permissions ────────────────────────────────────────────────────
+  const [permissionCatalogue, setPermissionCatalogue] = useState<any[]>([]);
+  const [rolePermissions, setRolePermissions] = useState<any[]>([]);
+  const [permissionsLoading, setPermissionsLoading] = useState(false);
+  const [editingRole, setEditingRole] = useState<string>('');
+  // The working copy, so nothing is saved until they say so and Cancel
+  // actually cancels.
+  const [draftPermissions, setDraftPermissions] = useState<string[]>([]);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
+
+  const loadRolePermissions = async () => {
+    setPermissionsLoading(true);
+    try {
+      const response = await apiFetch('/api/roles');
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Could not load permissions (${response.status}).`);
+      setPermissionCatalogue(payload.permissions || []);
+      setRolePermissions(payload.roles || []);
+    } catch (err: any) {
+      console.error('[admin] role permissions not loaded:', err);
+      alert(err?.message || 'Could not load permissions.');
+    } finally {
+      setPermissionsLoading(false);
+    }
+  };
+
+  const startEditingRole = (role: string) => {
+    const entry = rolePermissions.find(r => r.role === role);
+    setEditingRole(role);
+    setDraftPermissions([...(entry?.permissions || [])]);
+  };
+
+  const toggleDraftPermission = (key: string) => {
+    setDraftPermissions(current =>
+      current.includes(key) ? current.filter(entry => entry !== key) : [...current, key]
+    );
+  };
+
+  const saveRolePermissions = async (role: string, permissions: string[], action?: 'reset') => {
+    setPermissionsSaving(true);
+    try {
+      const response = await apiFetch('/api/roles', {
+        method: 'POST',
+        body: JSON.stringify(action === 'reset' ? { action: 'reset', role } : { role, permissions })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `That did not save (${response.status}).`);
+
+      if (payload.warnings?.length) alert(payload.warnings.join('\n\n'));
+      setEditingRole('');
+      await loadRolePermissions();
+
+      // If they just changed their own role's permissions, the navigation
+      // they are looking at is now out of date. Re-read rather than let
+      // them click something the server will refuse.
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        const refreshed = await getAdminSession(data.session.user);
+        setCurrentPermissions(refreshed.permissions);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'That did not save.');
+    } finally {
+      setPermissionsSaving(false);
+    }
+  };
 
   const loadOperators = async () => {
     setOperatorsLoading(true);
@@ -918,6 +1039,12 @@ export default function AdminPanel() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `That did not work (${response.status}).`);
       if (payload.setupLink) setOperatorInviteLink(payload.setupLink);
+      // Shown once. There is no second chance to read it, which is the
+      // point: it exists in the browser for as long as this card is open
+      // and nowhere else.
+      if (payload.temporaryPassword) {
+        setIssuedCredential({ email: payload.email || body.email || '', password: payload.temporaryPassword });
+      }
       if (payload.warnings?.length) alert(payload.warnings.join('\n'));
       else alert(successMessage);
       await loadOperators();
@@ -931,16 +1058,34 @@ export default function AdminPanel() {
   const submitInvite = async () => {
     if (!inviteEmail.trim()) return;
     setInviteBusy(true);
+    setIssuedCredential(null);
+
+    const email = inviteEmail.trim();
     const sent = await callUsersApi(
-      { action: 'invite', email: inviteEmail.trim(), name: inviteName.trim(), role: inviteRole },
-      `Operator account created and invitation sent to ${inviteEmail.trim()}. They set their own password from the link.`
+      {
+        action: 'invite',
+        email,
+        name: inviteName.trim(),
+        role: inviteRole,
+        method: inviteMethod,
+        ...(inviteMethod === 'password' && invitePassword.trim()
+          ? { password: invitePassword.trim() }
+          : {})
+      },
+      inviteMethod === 'password'
+        ? `${email} can sign in now. Give them the password below — it is not in their email.`
+        : `Operator account created and invitation sent to ${email}. They set their own password from the link.`
     );
-    if (sent) { setInviteEmail(''); setInviteName(''); }
+
+    if (sent) { setInviteEmail(''); setInviteName(''); setInvitePassword(''); }
     setInviteBusy(false);
   };
 
   useEffect(() => {
-    if (activeTab === 'users' && isAuthenticated) loadOperators();
+    if (activeTab === 'users' && isAuthenticated) {
+      loadOperators();
+      loadRolePermissions();
+    }
   }, [activeTab, isAuthenticated]);
 
   // The operations inbox. The admin portal never read the notifications
@@ -993,7 +1138,11 @@ export default function AdminPanel() {
   // saw one hook fewer than the render before and threw "Rendered more hooks
   // than during the previous render", taking the whole admin console down.
   useEffect(() => {
-    if (activeTab === 'offers' && isAuthenticated) loadOffers();
+    // Contracts needs them too. The contracts screen lists accepted offers
+    // that have no contract yet, and that list was always empty because
+    // offers were only ever loaded when the Offer Queue tab was opened. So
+    // the Generate contract button existed and never had anything to show.
+    if ((activeTab === 'offers' || activeTab === 'contracts') && isAuthenticated) loadOffers();
   }, [activeTab, isAuthenticated]);
 
   // ─── METRICS ────────────────────────────────────────────────────────────────
@@ -1847,7 +1996,16 @@ export default function AdminPanel() {
             }
           : row
       ));
-      if (payload.warnings?.length) console.warn('[interviews]', payload.warnings.join(' '));
+      // Shown, not logged. Every notification in the product reports a
+      // failure as a warning on an action that otherwise succeeded — an
+      // unverified sending domain, an address with no account behind it —
+      // and every caller dropped them into the console. So an invitation
+      // that was never emailed looked exactly like one that was, and the
+      // only way to find out was to ask the candidate.
+      if (payload.warnings?.length) {
+        console.warn('[interviews]', payload.warnings.join(' '));
+        alert(`Saved, but:\n\n${payload.warnings.join('\n')}`);
+      }
     } catch (error: any) {
       console.error('[admin] interview request decision failed:', error);
       alert(error?.message || 'That was not saved.');
@@ -1929,6 +2087,10 @@ export default function AdminPanel() {
           ? { ...row, status: payload.interview?.status || row.status, outcome: payload.interview?.outcome }
           : row
       ));
+      if (payload.warnings?.length) {
+        console.warn('[interviews]', payload.warnings.join(' '));
+        alert(`Saved, but:\n\n${payload.warnings.join('\n')}`);
+      }
     } catch (error: any) {
       console.error('[admin] interview outcome failed:', error);
       alert(error?.message || 'That was not saved.');
@@ -2688,20 +2850,6 @@ export default function AdminPanel() {
                       {offer.client_note_to_admin && (
                         <div style={{ fontSize: '12px', color: '#64748B', marginTop: '6px', fontStyle: 'italic' }}>
                           Client note: {offer.client_note_to_admin}
-                        </div>
-                      )}
-                      {Array.isArray(offer.pendingMandatoryDocuments) && offer.pendingMandatoryDocuments.length > 0 && (
-                        <div style={{ marginTop: '10px', padding: '10px 12px', background: '#FFF7E8', border: '1px solid #F3D7A3', borderRadius: '10px', color: '#7A4B00' }}>
-                          <div style={{ fontSize: '12px', fontWeight: 800 }}>Unsigned mandatory documents</div>
-                          <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                            {offer.pendingMandatoryDocuments.map((doc: any) => doc.name).join(' · ')}
-                          </div>
-                          <div style={{ fontSize: '11px', marginTop: '4px' }}>The talent can accept after signing these in Documents.</div>
-                        </div>
-                      )}
-                      {offer.complianceStatusError && (
-                        <div style={{ fontSize: '12px', color: '#9A3412', marginTop: '8px' }}>
-                          Mandatory document status could not be checked: {offer.complianceStatusError}
                         </div>
                       )}
                       {offer.talent_response_deadline && (
@@ -4580,12 +4728,18 @@ export default function AdminPanel() {
                     {/* Compliance Documents Summary */}
                     <GlassCard style={{ padding: '20px' }}>
                       <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '16px' }}>Compliance Documents</div>
+                      {(() => {
+                        const required = documents.filter(d => !d.userId && d.isMandatory && !d.isHidden);
+                        const signedCount = required.filter(d => d.signedByTalentIds?.includes(selectedTalent.id)).length;
+                        const compliant = signedCount === required.length;
+                        return <div style={{ marginBottom: 12, fontSize: 12, fontWeight: 700, color: compliant ? '#047857' : '#B45309' }}>{signedCount}/{required.length} signed · {compliant ? 'All required documents complete' : 'Signature required'}</div>;
+                      })()}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {documents.filter(d => d.userId === selectedTalent.id || (d.isMandatory && !d.userId)).length === 0 ? (
                           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>No compliance documents assigned.</span>
                         ) : (
                           documents.filter(d => d.userId === selectedTalent.id || (d.isMandatory && !d.userId)).map(doc => {
-                            const isSigned = doc.status === 'signed' || doc.status === 'verified';
+                            const isSigned = doc.status === 'signed' || doc.status === 'verified' || Boolean(doc.signedByTalentIds?.includes(selectedTalent.id));
                             return (
                               <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', background: 'var(--bg-tertiary)', borderRadius: '8px', fontSize: '11px' }}>
                                 <span style={{ fontWeight: 600 }}>{doc.name}</span>
@@ -4728,11 +4882,32 @@ export default function AdminPanel() {
           talents={talents}
           organizations={organizations}
           requests={requests}
+          offers={offers}
+          permissions={currentPermissions}
           auditLogs={auditLogs}
           setContracts={setContracts}
           setContractTemplates={setContractTemplates}
           setAuditLogs={setAuditLogs}
         />
+      );
+
+      // ── ACTIVE WORK ────────────────────────────────────────────────────────
+      // Its own module, not a tab inside Contracts. Contracts is paperwork;
+      // this is the work itself, and an account manager opening it wants
+      // their people rather than a contract queue.
+      case 'engagements': return (
+        <EngagementsManager
+          currentAdminId={currentAdminId}
+          permissions={currentPermissions}
+        />
+      );
+
+      // ── CONTRACT TEMPLATES ─────────────────────────────────────────────────
+      // Lifted out of Contracts. The wording a contract is made of is not the
+      // same job as the queue of contracts already made from it, and hiding
+      // it behind that queue is why nobody could find it.
+      case 'templates': return (
+        <TemplatesManager permissions={currentPermissions} />
       );
 
       // ── FINANCE MANAGER ────────────────────────────────────────────────────
@@ -4746,6 +4921,7 @@ export default function AdminPanel() {
           talents={talents}
           contracts={contracts}
           documents={documents}
+          organizations={organizations}
           syncFromDb={syncFromDb}
         />
       );
@@ -4753,6 +4929,18 @@ export default function AdminPanel() {
       // ── COMPLIANCE DOCS ────────────────────────────────────────────────────
 
       // ── SKILL ASSESSMENTS ──────────────────────────────────────────────────
+      case 'compliance': return (
+        <ComplianceManager
+          documents={documents}
+          talents={talents}
+          auditLogs={auditLogs}
+          setDocuments={setDocuments}
+          setAuditLogs={setAuditLogs}
+          openCreate={showDocModal}
+          onCloseCreate={() => setShowDocModal(false)}
+        />
+      );
+
       case 'assessments': return (
         <div>
           <div className="page-header">
@@ -5460,7 +5648,7 @@ export default function AdminPanel() {
                               saveSetting(setting.key, e.target.value);
                             }
                           }}
-                          disabled={!canManageUsers(currentRole)}
+                          disabled={!can('settings.manage')}
                           className="form-input"
                           style={{ width: '100%', fontSize: '12px', fontFamily: 'monospace' }}
                         />
@@ -5472,7 +5660,7 @@ export default function AdminPanel() {
             );
           })}
 
-          {!canManageUsers(currentRole) && platformSettings.length > 0 && (
+          {!can('settings.manage') && platformSettings.length > 0 && (
             <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               Read only: changing a platform setting needs a super admin.
             </p>
@@ -5485,7 +5673,8 @@ export default function AdminPanel() {
           <div style={{ marginBottom: '20px' }}>
             <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>Users & Roles</h2>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-              Operators are invited by email and set their own password. Nobody types another person's password.
+              Invite an operator by email, or create the account with a password they change the
+              first time they sign in. What each role may do is set below, and enforced on the server.
             </p>
           </div>
 
@@ -5512,6 +5701,7 @@ export default function AdminPanel() {
               <button
                 onClick={submitInvite}
                 disabled={inviteBusy || !inviteEmail.trim()}
+                title={inviteMethod === 'password' ? 'Creates the account immediately' : 'Emails a single-use setup link'}
                 style={{
                   padding: '10px 18px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: 800,
                   cursor: inviteBusy || !inviteEmail.trim() ? 'not-allowed' : 'pointer',
@@ -5525,6 +5715,80 @@ export default function AdminPanel() {
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '10px' }}>
               {ROLE_DESCRIPTIONS[inviteRole as keyof typeof ROLE_DESCRIPTIONS]}
             </div>
+
+            {/* How they get in.
+
+                The link is the safer default: no password ever exists
+                outside the person's own head. The password path is here
+                because invitation emails do not always arrive, and an
+                operator sitting in the room needs to be working now. */}
+            <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px dashed var(--border-glass)' }}>
+              <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={inviteMethod === 'link'}
+                    onChange={() => setInviteMethod('link')}
+                  />
+                  Email them a setup link
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={inviteMethod === 'password'}
+                    onChange={() => setInviteMethod('password')}
+                  />
+                  Set a password now
+                </label>
+
+                {inviteMethod === 'password' && (
+                  <input
+                    type="text"
+                    value={invitePassword}
+                    onChange={e => setInvitePassword(e.target.value)}
+                    placeholder="Leave blank to generate one"
+                    className="form-input"
+                    style={{ fontSize: '13px', minWidth: '260px' }}
+                  />
+                )}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                {inviteMethod === 'password'
+                  ? 'They sign in with this and are made to choose their own password before anything loads. The password is shown to you once and is never emailed.'
+                  : 'They choose their own password from a single-use link. Nobody else ever knows it.'}
+              </div>
+            </div>
+
+            {issuedCredential && (
+              <div style={{ marginTop: '14px', padding: '14px 16px', border: '1px solid #A7D3B0', borderRadius: '10px', background: '#F0FBF3', color: '#14532D', fontSize: '13px' }}>
+                <strong>{issuedCredential.email} can sign in now.</strong>
+                <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <code style={{ fontSize: '15px', fontWeight: 700, letterSpacing: '0.04em', background: '#fff', padding: '7px 12px', borderRadius: '8px', border: '1px solid #A7D3B0' }}>
+                    {issuedCredential.password}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => { void navigator.clipboard?.writeText(issuedCredential.password); }}
+                    className="btn-secondary"
+                    style={{ padding: '7px 10px', fontSize: '12px' }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIssuedCredential(null)}
+                    className="btn-secondary"
+                    style={{ padding: '7px 10px', fontSize: '12px' }}
+                  >
+                    Done
+                  </button>
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                  This is the only time it is shown. Pass it on the way you would pass on any other
+                  credential, and they will be asked to change it immediately.
+                </div>
+              </div>
+            )}
             {operatorInviteLink && (
               <div style={{ marginTop: '14px', padding: '12px 14px', border: '1px solid #F0D28A', borderRadius: '10px', background: '#FFFAEB', color: '#704B0E', fontSize: '12px' }}>
                 <strong>Email could not be delivered.</strong> The operator account exists. Share this single-use setup link securely so they can set their password.
@@ -5593,6 +5857,23 @@ export default function AdminPanel() {
                       >
                         Resend invite
                       </button>
+                      {/* For the operator the setup link cannot help: locked
+                          out, email never arrived, needed working today. */}
+                      <button
+                        onClick={async () => {
+                          if (!await confirmInApp(
+                            `Set a temporary password for ${op.email}? Their current password stops working immediately.`,
+                            'Reset password'
+                          )) return;
+                          await callUsersApi(
+                            { action: 'setPassword', userId: op.id },
+                            `A temporary password was set for ${op.email}.`
+                          );
+                        }}
+                        style={{ fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      >
+                        Reset password
+                      </button>
                       <button
                         onClick={async () => {
                           const next = op.status === 'suspended' ? 'active' : 'suspended';
@@ -5622,6 +5903,170 @@ export default function AdminPanel() {
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '20px' }}>
             Accounts are suspended, never deleted: a deleted operator takes their history out of the audit log with them.
           </p>
+
+          {/* ── What each role may do ──────────────────────────────────────
+              Editable, and checked on the server. Unticking a box here is
+              not a hidden button: the API route that performs the action
+              refuses it. */}
+          <div style={{ marginTop: '36px', paddingTop: '28px', borderTop: '1px solid var(--border-glass)' }}>
+            <div style={{ marginBottom: '18px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>
+                Permissions
+              </h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                What each role may see and do. Changes take effect on the next request, for everyone
+                holding the role, and every change is recorded in the audit log.
+              </p>
+            </div>
+
+            {permissionsLoading && (
+              <div style={{ padding: '20px', color: 'var(--text-secondary)' }}>Loading...</div>
+            )}
+
+            {!permissionsLoading && rolePermissions.map(entry => {
+              const isEditing = editingRole === entry.role;
+              const shown = isEditing ? draftPermissions : entry.permissions;
+              const views = shown.filter((key: string) => key.startsWith('view:')).length;
+              const actions = shown.length - views;
+
+              return (
+                <div
+                  key={entry.role}
+                  style={{
+                    border: '1px solid var(--border-glass)',
+                    borderRadius: '12px',
+                    padding: '16px 18px',
+                    marginBottom: '12px',
+                    background: isEditing ? 'var(--bg-secondary)' : 'transparent'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {entry.label}
+                        {entry.customised && (
+                          <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '999px', background: '#EFF6FF', color: '#1D4ED8', letterSpacing: '0.04em' }}>
+                            CHANGED
+                          </span>
+                        )}
+                        {entry.role === 'super_admin' && (
+                          <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '999px', background: 'var(--bg-tertiary)', color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                            FIXED
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                        {entry.role === 'super_admin'
+                          ? 'Everything, always. Somebody has to be able to get back in.'
+                          : `${views} screen${views === 1 ? '' : 's'} · ${actions} action${actions === 1 ? '' : 's'}`}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      {entry.editable && !isEditing && (
+                        <button
+                          onClick={() => startEditingRole(entry.role)}
+                          className="btn-secondary"
+                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 700 }}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {entry.editable && entry.customised && !isEditing && (
+                        <button
+                          onClick={async () => {
+                            if (!await confirmInApp(
+                              `Put ${entry.label} back to the permissions it shipped with?`,
+                              'Reset permissions'
+                            )) return;
+                            await saveRolePermissions(entry.role, [], 'reset');
+                          }}
+                          className="btn-secondary"
+                          style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 700 }}
+                        >
+                          Reset to default
+                        </button>
+                      )}
+                      {isEditing && (
+                        <>
+                          <button
+                            onClick={() => { setEditingRole(''); setDraftPermissions([]); }}
+                            className="btn-secondary"
+                            style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 700 }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => saveRolePermissions(entry.role, draftPermissions)}
+                            disabled={permissionsSaving}
+                            style={{
+                              padding: '7px 16px', fontSize: '12px', fontWeight: 800, borderRadius: '8px', border: 'none',
+                              cursor: permissionsSaving ? 'wait' : 'pointer',
+                              background: 'var(--kongila-blue)', color: '#fff'
+                            }}
+                          >
+                            {permissionsSaving ? 'Saving...' : 'Save'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {isEditing && (
+                    <div style={{ marginTop: '16px' }}>
+                      {PERMISSION_GROUPS.map(group => {
+                        const inGroup = permissionCatalogue.filter((permission: any) => permission.group === group);
+                        if (!inGroup.length) return null;
+                        return (
+                          <div key={group} style={{ marginBottom: '16px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                              {group.toUpperCase()}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '8px' }}>
+                              {inGroup.map((permission: any) => (
+                                <label
+                                  key={permission.key}
+                                  title={permission.description}
+                                  style={{
+                                    display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                    fontSize: '13px', cursor: 'pointer', padding: '7px 9px',
+                                    borderRadius: '8px',
+                                    border: `1px solid ${permission.escalates ? '#F0D28A' : 'transparent'}`,
+                                    background: permission.escalates ? '#FFFAEB' : 'transparent'
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={draftPermissions.includes(permission.key)}
+                                    onChange={() => toggleDraftPermission(permission.key)}
+                                    style={{ marginTop: '2px' }}
+                                  />
+                                  <span>
+                                    {permission.label}
+                                    {permission.escalates && (
+                                      <span style={{ display: 'block', fontSize: '11px', color: '#92400E', marginTop: '2px' }}>
+                                        Lets this role grant itself everything else.
+                                      </span>
+                                    )}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {!permissionsLoading && rolePermissions.length > 0 && !can('users.manage') && (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                You can see what each role may do, but only an operator who can manage users may change it.
+              </p>
+            )}
+          </div>
         </div>
       );
 
@@ -6136,7 +6581,7 @@ export default function AdminPanel() {
       <div className="sidebar-menu">
         {/* KONGILA Section */}
         <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 8px 6px', marginTop: '4px' }}>KONGILA</div>
-        {KONGILA_NAV.filter(({ key }) => canAccessTab(currentRole, key)).map(({ key, label }) => {
+        {KONGILA_NAV.filter(({ key }) => canSeeTab(key)).map(({ key, label }) => {
           let badge = 0;
           if (key === 'interviews') {
             const rescheduleCount = interviews.filter((iv: any) => iv.rescheduleRequested).length;
@@ -6163,7 +6608,7 @@ export default function AdminPanel() {
 
         {/* REMOTAN Section */}
         <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--accent-teal)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '12px 8px 6px', marginTop: '8px', borderTop: '1px solid var(--border-glass)' }}>REMOTAN</div>
-        {REMOTAN_NAV.filter(({ key }) => canAccessTab(currentRole, key)).map(({ key, label }) => (
+        {REMOTAN_NAV.filter(({ key }) => canSeeTab(key)).map(({ key, label }) => (
           <div key={key} className={`menu-item ${activeTab === key ? 'active' : ''}`} onClick={() => { setActiveTab(key as AdminTab); setMobileSidebarOpen(false); }} style={{ color: activeTab === key ? 'var(--accent-teal)' : undefined, background: activeTab === key ? 'rgba(10,191,188,0.08)' : undefined, borderColor: activeTab === key ? 'rgba(10,191,188,0.2)' : undefined }}>
             <span style={{ fontSize: '15px', display: 'flex', alignItems: 'center' }}>{renderSidebarIcon(key)}</span>
             <span>{label}</span>
@@ -6202,7 +6647,7 @@ export default function AdminPanel() {
   );
 
   // Render check
-  if (isAuthenticated && currentRole && !canAccessTab(currentRole, activeTab)) {
+  if (isAuthenticated && currentRole && currentPermissions.length > 0 && !canSeeTab(activeTab)) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0B0F19)' }}>
         <KongilaLoader text="Checking module access..." />

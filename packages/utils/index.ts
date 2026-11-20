@@ -69,3 +69,8 @@ export * from './unread';
 
 // Currency, and the rate a stored figure was converted at.
 export * from './currency';
+
+// Reading a spreadsheet of roles. Its own file because quoting, escaped
+// quotes and commas inside descriptions are a self-contained problem with
+// its own tests (csvRoles.test.ts, run by `pnpm test`).
+export * from './csvRoles';

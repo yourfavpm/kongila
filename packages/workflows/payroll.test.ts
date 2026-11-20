@@ -107,6 +107,16 @@ test('a full month pays the whole rate less commission', () => {
   assert.equal(entry!.netAmount, 1800);
 });
 
+test('payroll uses the margin snapshot recorded on the contract', () => {
+  const { entry, skip } = entryFor(
+    contract({ talentCommissionPctSnapshot: 0.2 }), '2026-11', fees
+  );
+  assert.equal(skip, null);
+  assert.equal(entry?.commissionPct, 0.2);
+  assert.equal(entry?.commissionAmount, 400);
+  assert.equal(entry?.netAmount, 1600);
+});
+
 test('a partial month is prorated by calendar days', () => {
   // 16 of 30 days on a $2,000 rate.
   const { entry } = entryFor(contract({ startDate: '2026-11-15' }), '2026-11', fees);

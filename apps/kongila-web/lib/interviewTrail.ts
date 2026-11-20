@@ -1,6 +1,7 @@
 import {
   INTERVIEW_TRAIL,
   describeInterviewStage,
+  interviewParty,
   interviewTrailPosition,
   normalizeInterviewStage
 } from '@kongila/workflows';
@@ -40,9 +41,19 @@ export interface InterviewTrail {
   tone: 'pending' | 'active' | 'done' | 'dead';
 }
 
-export function interviewTrail(status: unknown, audience: TrailAudience = 'client'): InterviewTrail {
+export function interviewTrail(
+  status: unknown,
+  audience: TrailAudience = 'client',
+  /**
+   * The interview itself, when the caller has it. A vetting interview has no
+   * client, so its stages are worded differently — without this it is read as
+   * waiting on a client who is not in the conversation.
+   */
+  interview?: any
+): InterviewTrail {
   const stage = normalizeInterviewStage(status as string);
-  const description = describeInterviewStage(stage);
+  const party = interview ? interviewParty(interview) : 'client';
+  const description = describeInterviewStage(stage, party);
   const position = interviewTrailPosition(stage);
   const dead = description.tone === 'dead';
   const waiting = description.waitingOn as 'client' | 'admin' | 'talent' | null;

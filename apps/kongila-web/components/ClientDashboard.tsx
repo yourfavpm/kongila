@@ -10,11 +10,13 @@ import { useRouter } from 'next/router';
 import { GlassCard, Badge, NeonButton } from "@kongila/ui";
 import { supabase } from "../lib/supabaseClient";
 import SmartIntakeForm from "./SmartIntakeForm";
+import BulkRoleImport from "./BulkRoleImport";
 import MyCompanyPanel from "./MyCompanyPanel";
 import MyRequestsPanel from "./MyRequestsPanel";
 import MatchedTalentPanel from "./MatchedTalentPanel";
 import ClientInterviewsPanel from "./ClientInterviewsPanel";
 import RequestInterviewDrawer from "./RequestInterviewDrawer";
+import MakeOfferDrawer from "./MakeOfferDrawer";
 import TalentProfileDrawer from "./TalentProfileDrawer";
 import MyTeamPanel from "./MyTeamPanel";
 import ClientSettingsPanel from "./ClientSettingsPanel";
@@ -574,6 +576,9 @@ export default function ClientDashboard({
 
   // Local Within-Dashboard Smart Intake Wizard State
   const [showIntakeModal, setShowIntakeModal] = useState(false);
+  // Filing a spreadsheet of roles instead of the wizard, for a client
+  // hiring several people at once.
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
   const [intakeStep, setIntakeStep] = useState(1);
   const [intakeForm, setIntakeForm] = useState({
     serviceType: "",
@@ -626,7 +631,6 @@ export default function ClientDashboard({
     startDate: "",
     notes: "",
   });
-  const [offerFeedback, setOfferFeedback] = useState<string | null>(null);
 
   // Invoices & Re-hiring States
   const [showAllInvoicesModal, setShowAllInvoicesModal] = useState(false);
@@ -896,99 +900,6 @@ export default function ClientDashboard({
     }
   };
 
-  /**
-   * Passing on a candidate after the interview.
-   *
-   * Same route as rejecting one from the shortlist, because it is the same
-   * decision arriving later — operations acts on the reason either way, and
-   * a rejection with no reason tells them nothing about what to source next.
-   */
-  const handleRejectCandidateFromInterview = async (match: any, interview: any) => {
-    const reason = window.prompt(
-      `Why is ${interview?.talentName || 'this candidate'} not the right fit? Your Kongila team uses this to refine the search.`,
-      ''
-    );
-    if (reason === null) return;
-    if (!reason.trim()) {
-      alert('A reason is needed so your team knows what to look for instead.');
-      return;
-    }
-    try {
-      await handleRejectCandidate(match, reason.trim());
-    } catch (error: any) {
-      alert(error?.message || 'That could not be saved.');
-    }
-  };
-
-  /**
-   * Interviews the client has already decided on.
-   *
-   * An offer on that role for that candidate, or a match that has closed
-   * either way. Without this the decision prompt would keep asking for an
-   * answer that has already been given.
-   */
-  const decidedInterviewIds = React.useMemo(() => {
-    const decided = new Set<string>();
-    const offeredPairs = new Set<string>();
-    for (const request of requests || []) {
-      for (const offer of ((request as any).offers || [])) {
-        offeredPairs.add(`${request.id}::${offer.talentId ?? offer.talent_id}`);
-      }
-    }
-    for (const interview of interviews || []) {
-      const pair = `${interview.requestId}::${interview.talentId}`;
-      const match = matches.find((m: any) =>
-        String(m.talentId) === String(interview.talentId)
-        && String(m.requestId) === String(interview.requestId)
-      );
-      const matchClosed = ['rejected', 'accepted'].includes(String(match?.status || '').toLowerCase());
-      if (offeredPairs.has(pair) || matchClosed) decided.add(String(interview.id));
-    }
-    return decided;
-  }, [requests, interviews, matches]);
-
-  const submitClientOffer = async (target: any, form: typeof hireForm) => {
-    const offerRequest = target.request
-      || requests.find((request: any) => String(request.id) === String(target.requestId))
-      || selectedRequest;
-    const talentId = target.talentId || target.id;
-    if (!offerRequest?.id || !target.matchId || !talentId) {
-      throw new Error('This offer is missing its role or candidate match. Reopen the candidate from the role and try again.');
-    }
-    if (!form.startDate || !form.salary || Number(form.salary) <= 0) {
-      throw new Error('Enter a valid monthly rate and proposed start date.');
-    }
-
-    const response = await apiFetch('/api/offers', {
-      method: 'POST',
-      body: JSON.stringify({
-        matchId: target.matchId,
-        requestId: offerRequest.id,
-        talentId,
-        proposedRateUsd: Number(form.salary),
-        proposedStartDate: form.startDate,
-        paymentModel: 'flat_rate',
-        paymentPeriod: 'monthly',
-        clientNote: form.notes,
-        entryPoint: target.entryPoint || 'matched_talent_page'
-      })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result?.ok) throw new Error(result?.error || 'The offer could not be saved.');
-
-    if (onRequestUpdated && result.offer) {
-      onRequestUpdated({
-        ...offerRequest,
-        offers: [...(offerRequest.offers || []), result.offer]
-      });
-    }
-    setShowHireModal(false);
-    setHireTarget(null);
-    setOfferFeedback(result.warnings?.length
-      ? `Offer submitted. ${result.warnings.join(' ')}`
-      : `Offer for ${target.name || target.fullName || 'the candidate'} submitted. Kongila will review the terms and send it to the candidate.`);
-  };
-
   // Dynamic stats calculation from real backend telemetry
   const clientContracts = contracts.filter(
     (c: any) => c.clientId === currentUser?.id,
@@ -1092,26 +1003,6 @@ export default function ClientDashboard({
 
     const clientProfile = myClientProfile;
     const myOrg = myOrganization;
-
-    const importantNotifications = (effectiveNotifications || [])
-      .filter((notification: any) =>
-        String(notification.userId || notification.user_id) === String(currentUser?.id)
-        && !notification.read
-      )
-      .map((notification: any) => {
-        const module = String(notification.module || notification.module_type || '').toLowerCase();
-        const category = String(notification.category || '').toLowerCase();
-        const section = CLIENT_NOTIFICATION_SECTIONS[module]
-          || CLIENT_NOTIFICATION_SECTIONS[category]
-          || (category === 'interviews' ? 'scheduling' : null)
-          || (category === 'billing' ? 'billing' : null);
-        return { ...notification, module, section };
-      })
-      .filter((notification: any) =>
-        notification.section && ['scheduling', 'radar', 'requests', 'contracts', 'billing', 'messaging'].includes(notification.section)
-      )
-      .sort((a: any, b: any) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())
-      .slice(0, 4);
 
     // Active Service Requests widget
     const openRequests = clientRequests.filter(
@@ -1397,6 +1288,26 @@ export default function ClientDashboard({
             >
               ＋ New Request
             </button>
+            {/* Hiring for several roles at once: the wizard asks better
+                questions, a spreadsheet is faster past about three roles. */}
+            <button
+              onClick={() => setShowBulkImportModal(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                background: "#FFFFFF",
+                border: "1px solid #E2E8F0",
+                borderRadius: "10px",
+                padding: "10px 18px",
+                color: "#2563EB",
+                fontWeight: 700,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              ⬆ Upload roles (CSV)
+            </button>
             <button
               onClick={() => setActiveSection("messaging")}
               style={{
@@ -1455,38 +1366,6 @@ export default function ClientDashboard({
             </button>
           </div>
         </div>
-
-        {importantNotifications.length > 0 && (
-          <section aria-label="Important notifications" style={{ padding: '18px 20px', borderRadius: '14px', background: '#FFF9ED', border: '1px solid #F3D9A8' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: 800, color: '#946200', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Needs your attention</div>
-                <h2 style={{ margin: '3px 0 0', fontSize: '17px', color: '#182B49', fontWeight: 800 }}>Important updates</h2>
-              </div>
-              <button type="button" onClick={() => setActiveSection('notifications')} style={{ border: 0, background: 'transparent', color: '#1455C0', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>All notifications &rarr;</button>
-            </div>
-            <div style={{ display: 'grid', gap: '8px' }}>
-              {importantNotifications.map((notification: any) => (
-                <div key={notification.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', padding: '12px 14px', borderRadius: '10px', background: '#FFFFFF', border: '1px solid #F0E3C7' }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ color: '#182B49', fontWeight: 750, fontSize: '14px' }}>{notification.title || 'Kongila update'}</div>
-                    <div style={{ marginTop: '3px', color: '#64748B', fontSize: '13px', lineHeight: 1.45 }}>{notification.message}</div>
-                  </div>
-                  <button type="button" onClick={() => {
-                    if (notification.section) setActiveSection(notification.section);
-                    if (notification.section === 'requests' && notification.sourceRecordId) {
-                      const request = requests.find((item: any) => String(item.id) === String(notification.sourceRecordId));
-                      if (request) setSelectedRequest(request);
-                    }
-                    if (notification.section === 'billing' && notification.sourceRecordId) {
-                      setSelectedInvoice(invoices.find((item: any) => String(item.id) === String(notification.sourceRecordId)) || null);
-                    }
-                  }} style={{ flexShrink: 0, padding: '8px 12px', border: '1px solid #C9D9EF', borderRadius: '8px', background: '#F3F8FF', color: '#1455C0', fontSize: '12px', fontWeight: 750, cursor: 'pointer' }}>Review &rarr;</button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* ── Who is looking after this account ──────────────────────────────────
             The account manager existed only as a word in a button label, and
@@ -4243,6 +4122,9 @@ export default function ClientDashboard({
           />
         )}
 
+
+        {/* Request Interview Modal */}
+
         {/* Header */}
         <div
           style={{
@@ -4737,14 +4619,7 @@ export default function ClientDashboard({
                           ) && (
                             <button
                               onClick={() => {
-                                setHireTarget({
-                                  ...cand,
-                                  request: activeRequest,
-                                  requestId: activeRequest.id,
-                                  matchId: cand.matchId,
-                                  talentId: cand.talentId,
-                                  entryPoint: 'post_interview'
-                                });
+                                setHireTarget({ ...cand, request: activeRequest, requestId: activeRequest.id });
                                 setHireForm({
                                   salary: activeRequest.budget
                                     ? String(activeRequest.budget)
@@ -6069,14 +5944,7 @@ export default function ClientDashboard({
                                       setMessages={setMessages}
                                       onSignContract={onSignContract}
                                       onExtendOffer={(talent, request, match) => {
-                                        setHireTarget({
-                                          ...talent,
-                                          request,
-                                          requestId: request.id,
-                                          matchId: match.id,
-                                          talentId: match.talentId || talent.id,
-                                          entryPoint: 'matched_talent_page'
-                                        });
+                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
                                         setHireForm({
                                           salary: String(request.budgetMaxUsd || request.budget || 4500),
                                           startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
@@ -6104,14 +5972,7 @@ export default function ClientDashboard({
                                       onScheduleMeeting={(talent, req, match) => setScheduleModalData({ talent, request: req, matchId: match?.id })}
                                       onViewInterview={() => setActiveSection('scheduling')}
                                       onExtendOffer={(talent, request, match) => {
-                                        setHireTarget({
-                                          ...talent,
-                                          request,
-                                          requestId: request.id,
-                                          matchId: match.id,
-                                          talentId: match.talentId || talent.id,
-                                          entryPoint: 'matched_talent_page'
-                                        });
+                                        setHireTarget({ ...talent, request, requestId: request.id, matchId: match.id });
                                         setHireForm({
                                           salary: String(request.budgetMaxUsd || request.budget || 4500),
                                           startDate: new Date(Date.now() + 86400000 * 7).toISOString().split("T")[0],
@@ -6133,54 +5994,6 @@ export default function ClientDashboard({
                                         } else {
                                           alert("Missing talent or request data for rescheduling.");
                                         }
-                                      }}
-                                      // The interviews the client has already
-                                      // acted on: an offer exists on that
-                                      // request for that candidate, or the
-                                      // match is closed either way. Without
-                                      // this the prompt would keep asking for
-                                      // a decision already made.
-                                      decidedInterviewIds={decidedInterviewIds}
-                                      onMakeOffer={(iv) => {
-                                        const talent = talents.find((t: any) => String(t.id) === String(iv.talentId) || String(t.userId || t.user_id) === String(iv.talentId));
-                                        const match = matches.find((m: any) => String(m.id) === String(iv.matchId))
-                                          || matches.find((m: any) => String(m.requestId) === String(iv.requestId) && (String(m.talentId) === String(iv.talentId) || String(m.talentId) === String(talent?.id)));
-                                        const resolvedTalent = talent
-                                          || talents.find((t: any) => String(t.id) === String(match?.talentId));
-                                        const request = requests.find((r: any) => String(r.id) === String(iv.requestId))
-                                          || requests.find((r: any) => String(r.id) === String(match?.requestId));
-                                        if (!resolvedTalent || !request) {
-                                          setOfferFeedback('Could not open this offer: the candidate or role is no longer available.');
-                                          return;
-                                        }
-                                        setHireTarget({
-                                          ...resolvedTalent,
-                                          request,
-                                          requestId: request.id,
-                                          matchId: match?.id || iv.matchId,
-                                          talentId: match?.talentId || iv.talentId || resolvedTalent.id,
-                                          // Recorded on the offer, so the
-                                          // board can tell a post-interview
-                                          // offer from a cold one.
-                                          entryPoint: 'post_interview'
-                                        });
-                                        setHireForm({
-                                          salary: String(request.budgetMaxUsd || request.budget || 4500),
-                                          startDate: new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0],
-                                          notes: ''
-                                        });
-                                        setShowHireModal(true);
-                                      }}
-                                      onPassCandidate={(iv) => {
-                                        const match = matches.find((m: any) =>
-                                          String(m.talentId) === String(iv.talentId)
-                                          && String(m.requestId) === String(iv.requestId)
-                                        );
-                                        if (!match) {
-                                          alert('That candidate could not be found on this role.');
-                                          return;
-                                        }
-                                        handleRejectCandidateFromInterview(match, iv);
                                       }}
                                     />;
       case 'contracts':
@@ -6945,22 +6758,6 @@ export default function ClientDashboard({
         </main>
       </div>
 
-      {showHireModal && hireTarget && (
-        <ClientOfferModal
-          target={hireTarget}
-          form={hireForm}
-          setForm={setHireForm}
-          onClose={() => { setShowHireModal(false); setHireTarget(null); }}
-          onSubmit={() => submitClientOffer(hireTarget, hireForm)}
-        />
-      )}
-      {offerFeedback && (
-        <div role="status" aria-live="polite" style={{ position: 'fixed', right: '24px', bottom: '24px', zIndex: 1400, maxWidth: 'min(460px, calc(100vw - 32px))', padding: '14px 18px', borderRadius: '12px', background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46', boxShadow: '0 12px 30px rgba(15,23,42,0.16)', display: 'flex', alignItems: 'flex-start', gap: '12px', fontSize: '13px', lineHeight: 1.5 }}>
-          <span style={{ flex: 1 }}>{offerFeedback}</span>
-          <button type="button" onClick={() => setOfferFeedback(null)} aria-label="Dismiss offer update" style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>×</button>
-        </div>
-      )}
-
       {/* The client's signing modal. It was passed in as a prop and never
           rendered, so the client half of a countersigned contract did not
           exist. */}
@@ -7124,7 +6921,7 @@ export default function ClientDashboard({
         </div>
       )}
       {/* ── Within-Dashboard Smart Intake Wizard Modal Overlay ── */}
-      {showIntakeModal && (
+      {showBulkImportModal && (
         <div
           style={{
             position: "fixed",
@@ -7143,16 +6940,84 @@ export default function ClientDashboard({
               position: "relative",
               background: "#FFFFFF",
               borderRadius: "24px",
-              padding: "16px",
+              padding: "28px",
               width: "100%",
-              maxWidth: "850px",
+              maxWidth: "920px",
               boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
               maxHeight: "95vh",
               overflowY: "auto",
             }}
           >
+            <button
+              onClick={() => setShowBulkImportModal(false)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                top: "20px",
+                right: "20px",
+                background: "var(--bg-secondary)",
+                border: "none",
+                borderRadius: "50%",
+                width: "32px",
+                height: "32px",
+                cursor: "pointer",
+                color: "var(--text-secondary)",
+                zIndex: 10,
+              }}
+            >
+              ✕
+            </button>
+            <BulkRoleImport
+              currentUser={currentUser}
+              clientName={currentUser?.name}
+              onComplete={async (created) => {
+                if (onAddRequest) {
+                  for (const request of created) await onAddRequest(request);
+                }
+                setShowBulkImportModal(false);
+                setActiveSection("requests");
+              }}
+              onCancel={() => setShowBulkImportModal(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {showIntakeModal && (
+        <div
+          className="client-intake-modal-backdrop"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.3)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "24px",
+          }}
+        >
+          <div
+            className="client-intake-modal-panel"
+            style={{
+              position: "relative",
+              background: "#FFFFFF",
+              borderRadius: "18px",
+              padding: "0",
+              width: "100%",
+              maxWidth: "1040px",
+              boxShadow: "0 28px 90px rgba(15, 23, 42, .24)",
+              maxHeight: "92dvh",
+              overflow: "hidden",
+              display: "flex",
+            }}
+          >
             {/* Close X Button */}
             <button
+              className="client-intake-modal-close"
+              type="button"
+              aria-label="Close service request"
               onClick={() => setShowIntakeModal(false)}
               style={{
                 position: "absolute",
@@ -7175,6 +7040,11 @@ export default function ClientDashboard({
             </button>
             <SmartIntakeForm
               currentUser={currentUser}
+              presentation="modal"
+              onBulkImport={() => {
+                setShowIntakeModal(false);
+                setShowBulkImportModal(true);
+              }}
               onComplete={async (created) => {
                 // A list: a brief with three roles files three requests.
                 const filed = Array.isArray(created) ? created : [created];
@@ -7568,6 +7438,39 @@ export default function ClientDashboard({
           </div>
         </div>
       )}
+
+      {/* The offer, in full.
+
+          This lived inside renderRadar, which nothing calls any more: the
+          matched talents section renders MatchedTalentPanel instead. So
+          "Start offer" set the state and nothing mounted the drawer, and the
+          button did nothing at all. It belongs at the root, where it opens
+          from whichever screen asked for it. */}
+        {showHireModal && hireTarget && (
+          <MakeOfferDrawer
+            currentUser={currentUser}
+            request={hireTarget.request || selectedRequest}
+            talent={hireTarget}
+            matchId={hireTarget.matchId}
+            entryPoint={hireTarget.entryPoint}
+            onClose={() => {
+              setShowHireModal(false);
+              setHireTarget(null);
+            }}
+            onCreated={(offer) => {
+              // Reflected on the request straight away, so the decision
+              // prompt clears and the button stops offering to start
+              // another one.
+              const offerRequest = hireTarget.request || selectedRequest;
+              if (offerRequest && onRequestUpdated) {
+                onRequestUpdated({
+                  ...offerRequest,
+                  offers: [...((offerRequest as any).offers || []), offer]
+                });
+              }
+            }}
+          />
+        )}
 
       {/* Re-hire Past Hire Modal */}
       {showRehireModal && rehireTarget && (
@@ -8351,73 +8254,6 @@ export default function ClientDashboard({
   );
 }
 
-function ClientOfferModal({
-  target,
-  form,
-  setForm,
-  onClose,
-  onSubmit
-}: {
-  target: any;
-  form: { salary: string; startDate: string; notes: string };
-  setForm: React.Dispatch<React.SetStateAction<{ salary: string; startDate: string; notes: string }>>;
-  onClose: () => void;
-  onSubmit: () => Promise<void>;
-}) {
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const submit = async () => {
-    if (busy) return;
-    setError(null);
-    setBusy(true);
-    try {
-      await onSubmit();
-    } catch (err: any) {
-      setError(err?.message || 'The offer could not be submitted. Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(15,23,42,0.56)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="client-offer-title" style={{ width: '100%', maxWidth: '520px', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5EAF1', borderRadius: '16px', padding: 'clamp(20px, 4vw, 32px)', boxShadow: '0 24px 80px rgba(15,23,42,0.22)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '22px' }}>
-          <div>
-            <div style={{ marginBottom: '6px', color: '#1455C0', fontSize: '11px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Offer proposal</div>
-            <h2 id="client-offer-title" style={{ fontSize: '22px', fontWeight: 850, color: '#14213D', margin: 0 }}>Make an offer</h2>
-            <p style={{ fontSize: '13px', lineHeight: 1.5, color: '#64748B', margin: '6px 0 0' }}>Propose terms for {target.name || target.fullName || 'this professional'}. Kongila will review the offer before it is sent.</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={busy} aria-label="Close offer form" style={{ flexShrink: 0, width: '36px', height: '36px', border: '1px solid #E5EAF1', borderRadius: '9px', background: '#F8FAFC', color: '#475569', fontSize: '20px', cursor: busy ? 'not-allowed' : 'pointer' }}>×</button>
-        </div>
-
-        <div style={{ display: 'grid', gap: '16px' }}>
-          <div>
-            <label htmlFor="client-offer-start-date" style={labelStyle}>Proposed start date *</label>
-            <input id="client-offer-start-date" type="date" min={new Date().toISOString().split('T')[0]} value={form.startDate} onChange={(event) => setForm(current => ({ ...current, startDate: event.target.value }))} style={inputStyle} />
-          </div>
-          <div>
-            <label htmlFor="client-offer-monthly-rate" style={labelStyle}>Monthly rate (USD) *</label>
-            <input id="client-offer-monthly-rate" type="number" min="1" step="1" value={form.salary} onChange={(event) => setForm(current => ({ ...current, salary: event.target.value }))} placeholder="e.g. 4500" style={inputStyle} />
-          </div>
-          <div>
-            <label htmlFor="client-offer-notes" style={labelStyle}>Offer notes or custom terms</label>
-            <textarea id="client-offer-notes" value={form.notes} onChange={(event) => setForm(current => ({ ...current, notes: event.target.value }))} rows={4} placeholder="Add any terms or context for your Kongila team." style={{ ...inputStyle, resize: 'vertical' }} />
-          </div>
-        </div>
-
-        {error && <div role="alert" style={{ marginTop: '16px', padding: '11px 13px', borderRadius: '9px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B', fontSize: '13px', lineHeight: 1.45 }}>{error}</div>}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '22px' }}>
-          <button type="button" onClick={onClose} disabled={busy} style={{ padding: '11px 16px', border: '1px solid #D7DFEA', borderRadius: '9px', background: '#FFFFFF', color: '#475569', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>Cancel</button>
-          <button type="button" onClick={submit} disabled={busy} style={{ minWidth: '150px', padding: '11px 18px', border: 0, borderRadius: '9px', background: busy ? '#6687C6' : '#1455C0', color: '#FFFFFF', fontWeight: 800, cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Submitting…' : 'Submit offer'}</button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 /**
  * The client's side of signing.
  *
@@ -8436,7 +8272,7 @@ function ClientSignModal({
   onClose: () => void;
   onSigned: (result: any) => void;
 }) {
-  const [doc, setDoc] = React.useState<{ ready: boolean; text: string; reason: string | null } | null>(null);
+  const [doc, setDoc] = React.useState<{ ready: boolean; text: string; html?: string; reason: string | null } | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [typedName, setTypedName] = React.useState('');
@@ -8452,7 +8288,7 @@ function ClientSignModal({
         const res = await apiFetch(`/api/signatures?contractId=${encodeURIComponent(contractId)}&view=document`);
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Could not load the agreement (${res.status}).`);
-        if (!cancelled) setDoc({ ready: Boolean(body.ready), text: String(body.text || ''), reason: body.reason || null });
+        if (!cancelled) setDoc({ ready: Boolean(body.ready), text: String(body.text || ''), html: String(body.html || ''), reason: body.reason || null });
       } catch (err: any) {
         if (!cancelled) setError(err?.message || 'Could not load the agreement.');
       } finally {
@@ -8503,7 +8339,13 @@ function ClientSignModal({
           {loading ? (
             <p style={{ color: '#64748B' }}>Loading the agreement…</p>
           ) : (
-            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{doc?.text || ''}</pre>
+            /* Safe by construction: the server renders this from the
+               parsed blocks, so only headings, paragraphs, lists, tables,
+               bold and rules can reach the page. */
+            doc?.html
+              ? <div className="kongila-document" style={{ fontSize: '14px', color: '#14213D' }}
+                  dangerouslySetInnerHTML={{ __html: doc.html }} />
+              : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{doc?.text || ''}</pre>
           )}
         </div>
 

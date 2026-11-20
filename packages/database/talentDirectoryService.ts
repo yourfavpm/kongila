@@ -76,7 +76,7 @@ function unpack(row: any) {
     secondarySkills: t.secondarySkills || [],
     skillLevels: t.skillLevels || {},
     requiresReReview: Boolean(t.requiresReReview),
-    talentManagerId: t.talentManagerId || null,
+    talentManagerId: row.talent_manager_id || t.talentManagerId || null,
     seniorityLevel: t.seniorityLevel || null,
     primaryRoleCategory: t.primaryRoleCategory || null,
     employmentPreference: t.employmentPreference || null,
@@ -93,6 +93,28 @@ function unpack(row: any) {
     certificationFiles: t.certificationFiles || [],
     createdAt: t.createdAt || row.date_joined
   };
+}
+
+async function accountManagerTalentIds(supabase: any, actor: Actor): Promise<Set<string>> {
+  const { data: organizations, error: organizationError } = await supabase.from('organizations')
+    .select('id').eq('account_manager_id', actor.userId);
+  if (organizationError) throw new Error(organizationError.message);
+  const organizationIds = (organizations || []).map((row: any) => String(row.id));
+  if (!organizationIds.length) return new Set();
+  const { data: clients, error: clientError } = await supabase.from('client_profiles')
+    .select('user_id').in('organization_id', organizationIds);
+  if (clientError) throw new Error(clientError.message);
+  const clientIds = (clients || []).map((row: any) => String(row.user_id));
+  if (!clientIds.length) return new Set();
+  const { data: requests, error: requestError } = await supabase.from('talent_requests')
+    .select('id').in('client_id', clientIds);
+  if (requestError) throw new Error(requestError.message);
+  const requestIds = (requests || []).map((row: any) => String(row.id));
+  if (!requestIds.length) return new Set();
+  const { data: matches, error: matchError } = await supabase.from('matches')
+    .select('talent_id').in('request_id', requestIds);
+  if (matchError) throw new Error(matchError.message);
+  return new Set((matches || []).map((row: any) => String(row.talent_id)));
 }
 
 /**
@@ -117,6 +139,16 @@ export async function listTalents(
   if (error) return fail(500, `Those candidates could not be loaded: ${error.message}`);
 
   let rows = (data || []).map(unpack);
+  if (actor.role === 'talent_manager') {
+    rows = rows.filter((talent: any) => String(talent.talentManagerId || '') === String(actor.userId));
+  } else if (actor.role === 'account_manager') {
+    try {
+      const allowedTalentIds = await accountManagerTalentIds(supabase, actor);
+      rows = rows.filter((talent: any) => allowedTalentIds.has(String(talent.id)));
+    } catch (scopeError: any) {
+      return fail(500, 'Could not verify your client portfolio: ' + scopeError.message);
+    }
+  }
 
   if (options.shortlistable) {
     rows = rows.filter((t: any) => {
@@ -141,20 +173,46 @@ export async function getTalent(actor: Actor, talentId: string): Promise<Directo
   const { data: row } = await supabase
     .from('talent_profiles').select('*').eq('id', id).maybeSingle();
   if (!row) return fail(404, 'That candidate does not exist.');
+  if (actor.role === 'talent_manager' && String(row.talent_manager_id || '') !== String(actor.userId)) {
+    return fail(404, 'That talent is not assigned to your portfolio.');
+  }
+  if (actor.role === 'account_manager') {
+    try {
+      const allowedTalentIds = await accountManagerTalentIds(supabase, actor);
+      if (!allowedTalentIds.has(String(row.id))) return fail(404, 'That talent is not connected to a client in your portfolio.');
+    } catch (scopeError: any) {
+      return fail(500, 'Could not verify your client portfolio: ' + scopeError.message);
+    }
+  }
 
-  const [documents, skills, assessments, results, matches, interviews, contracts] = await Promise.all([
+  const [documents, skills, assessments, results, matches, interviews, contracts, complianceDocuments, complianceSignatures] = await Promise.all([
     supabase.from('documents').select('*').eq('user_id', row.user_id || id),
     supabase.from('talent_skills').select('skill_id, level, skills(name)').eq('talent_id', id),
     supabase.from('talent_skill_assessments').select('*').eq('talentId', id),
     supabase.from('skill_assessment_results').select('*').eq('talentId', id),
     supabase.from('matches').select('*').eq('talent_id', id),
     supabase.from('interviews').select('*').eq('talent_id', id),
-    supabase.from('contracts').select('*').eq('talent_id', id)
+    supabase.from('contracts').select('*').eq('talent_id', id),
+    supabase.from('documents').select('*').is('user_id', null).eq('is_mandatory', true).eq('is_template', true),
+    supabase.from('document_signatures').select('document_id, signed_at, signer_name').eq('talent_id', id)
   ]);
+
+  const signaturesByDocument = new Map<string, any>();
+  for (const signature of complianceSignatures.data || []) signaturesByDocument.set(String(signature.document_id), signature);
+  const requiredDocuments = (complianceDocuments.data || []).filter((doc: any) => doc.is_hidden !== true).map((doc: any) => {
+    const signature = signaturesByDocument.get(String(doc.id));
+    return { ...doc, isSigned: Boolean(signature), signedAt: signature?.signed_at || null };
+  });
 
   const data = {
     talent: unpack(row),
     documents: documents.data || [],
+    complianceDocuments: requiredDocuments,
+    complianceSummary: {
+      requiredCount: requiredDocuments.length,
+      signedCount: requiredDocuments.filter((doc: any) => doc.isSigned).length,
+      compliant: requiredDocuments.every((doc: any) => doc.isSigned)
+    },
     skills: (skills.data || []).map((s: any) => ({ name: s.skills?.name || null, level: s.level }))
                                .filter((s: any) => s.name),
     assessments: assessments.data || [],

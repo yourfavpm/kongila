@@ -33,6 +33,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import TalentMessagesPanel from './TalentMessagesPanel';
 import TalentNotificationsPanel from './TalentNotificationsPanel';
+import EngagementWorkspace from './EngagementWorkspace';
 import TalentSettingsPanel from './TalentSettingsPanel';
 import TalentSupportPanel from './TalentSupportPanel';
 import PersonalityAssessment from './PersonalityAssessment';
@@ -119,6 +120,7 @@ type Section =
   | 'scores_grades'
   | 'opportunities'
   | 'interviews'
+  | 'offers'
   | 'contracts'
   | 'earnings'
   | 'tasks'
@@ -127,7 +129,7 @@ type Section =
   | 'settings'
   | 'support';
 
-const TALENT_SECTIONS: Section[] = ['dashboard', 'profile', 'compliance', 'vetting_progress', 'scores_grades', 'opportunities', 'interviews', 'contracts', 'earnings', 'tasks', 'messages', 'notifications', 'settings', 'support'];
+const TALENT_SECTIONS: Section[] = ['dashboard', 'profile', 'compliance', 'vetting_progress', 'scores_grades', 'opportunities', 'interviews', 'offers', 'contracts', 'earnings', 'tasks', 'messages', 'notifications', 'settings', 'support'];
 
 // ─── SVG Navigation Icons Component ──────────────────────────────────────────
 const SidebarIcon = ({ id, color = 'currentColor', size = 18 }: { id: string; color?: string; size?: number }) => {
@@ -187,6 +189,13 @@ const SidebarIcon = ({ id, color = 'currentColor', size = 18 }: { id: string; co
           <line x1="16" y1="2" x2="16" y2="6" />
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      );
+    case 'offers':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+          <polyline points="22 7 12 14 2 7" />
         </svg>
       );
     case 'contracts':
@@ -260,6 +269,7 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: 'scores_grades',    label: 'Scores & Grades' },
   { id: 'opportunities',    label: 'Opportunities' },
   { id: 'interviews',       label: 'Interviews' },
+  { id: 'offers',           label: 'My Offers' },
   { id: 'contracts',        label: 'Contracts & Employment History' },
   { id: 'earnings',         label: 'Earnings' },
   { id: 'tasks',            label: 'Tasks' },
@@ -272,7 +282,7 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
 
 const NAV_GROUP_STARTS: Record<string, string> = {
   dashboard: 'Workspace',
-  contracts: 'Professional',
+  offers: 'Professional',
   messages: 'Communication',
   profile: 'Account',
 };
@@ -948,7 +958,7 @@ const ProfileSection = ({
               Status: {displayStatus}
             </span>
           </div>
-          {activeContract && (
+          {false && activeContract && (
             <a 
               href={process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : 'https://remotan.kongila.io'}
               target="_blank" 
@@ -973,6 +983,8 @@ const ProfileSection = ({
           )}
         </div>
       </div>
+
+      <EngagementWorkspace mode="talent" />
 
       {!hasCompletedVetting && (
       <Card className="talent-active-stage" style={{
@@ -2548,7 +2560,7 @@ const ContractSection = ({ profile }: { profile: any }) => {
   // the published template. The page used to compose it here, which is how it
   // came to render fifteen identical paragraphs of placeholder text that a
   // candidate could scroll past and sign.
-  const [signingDoc, setSigningDoc] = useState<{ ready: boolean; text: string; reason: string | null } | null>(null);
+  const [signingDoc, setSigningDoc] = useState<{ ready: boolean; text: string; html?: string; reason: string | null } | null>(null);
   const [signingDocLoading, setSigningDocLoading] = useState(false);
   const [signingDocError, setSigningDocError] = useState<string | null>(null);
   const [signingBusy, setSigningBusy] = useState(false);
@@ -2577,7 +2589,7 @@ const ContractSection = ({ profile }: { profile: any }) => {
         const doc = await docRes.json();
         const sigs = sigRes.ok ? await sigRes.json() : { signatures: [] };
         if (cancelled) return;
-        setSigningDoc({ ready: Boolean(doc.ready), text: String(doc.text || ''), reason: doc.reason || null });
+        setSigningDoc({ ready: Boolean(doc.ready), text: String(doc.text || ''), html: String(doc.html || ''), reason: doc.reason || null });
         setSignatures(sigs.signatures || []);
       } catch (err: any) {
         if (!cancelled) setSigningDocError(err?.message || 'Could not load the agreement.');
@@ -2670,7 +2682,13 @@ const ContractSection = ({ profile }: { profile: any }) => {
           ) : signingDocError ? (
             <p style={{ color: '#B91C1C' }}>{signingDocError}</p>
           ) : (
-            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
+            /* Safe by construction: the server renders this from the
+               parsed blocks, so only headings, paragraphs, lists, tables,
+               bold and rules can reach the page. */
+            signingDoc?.html
+              ? <div className="kongila-document" style={{ fontSize: '14px', color: '#14213D' }}
+                  dangerouslySetInnerHTML={{ __html: signingDoc.html }} />
+              : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
           )}
         </div>
 
@@ -2740,7 +2758,13 @@ const ContractSection = ({ profile }: { profile: any }) => {
           ) : signingDocError ? (
             <p style={{ color: '#B91C1C' }}>{signingDocError}</p>
           ) : (
-            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
+            /* Safe by construction: the server renders this from the
+               parsed blocks, so only headings, paragraphs, lists, tables,
+               bold and rules can reach the page. */
+            signingDoc?.html
+              ? <div className="kongila-document" style={{ fontSize: '14px', color: '#14213D' }}
+                  dangerouslySetInnerHTML={{ __html: signingDoc.html }} />
+              : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'serif', fontSize: '15px', margin: 0 }}>{signingDoc?.text || ''}</pre>
           )}
 
           <h4 style={{ marginTop: '32px', borderTop: '1px solid #CBD5E1', paddingTop: '16px' }}>Signatures</h4>
@@ -3048,6 +3072,204 @@ const ContractSection = ({ profile }: { profile: any }) => {
 };
 
 // ─── Section 5: Application Pipeline ─────────────────────────────────────────
+/**
+ * My Offers.
+ *
+ * An offer used to appear only as a green banner on the dashboard, and only
+ * while it could still be answered. The moment it was accepted it vanished,
+ * so a candidate who had said yes had nowhere to see what they had agreed to
+ * and no way to tell whether a contract was coming. Offers and contracts are
+ * not the same thing and do not belong on the same screen: an offer is a
+ * proposal, a contract is the document that follows it.
+ *
+ * Three groups, in the order a candidate cares about them: waiting on you,
+ * accepted and waiting on Kongila, and everything that is closed.
+ */
+const OffersSection = ({
+  offers = [],
+  pendingDocs = [],
+  onRespondToOffer,
+  setActiveSection
+}: {
+  offers?: any[];
+  pendingDocs?: any[];
+  onRespondToOffer?: (offerId: string, action: 'accept' | 'decline', reason?: string) => any;
+  setActiveSection?: (section: any) => void;
+}) => {
+  const [busy, setBusy] = React.useState('');
+  const [docsPrompt, setDocsPrompt] = React.useState<any | null>(null);
+  const [message, setMessage] = React.useState('');
+
+  const status = (offer: any) => String(offer.status || '').toLowerCase();
+  const awaiting = offers.filter((offer: any) => offer.canRespond);
+  const accepted = offers.filter((offer: any) => !offer.canRespond && ['accepted', 'contract_active', 'contract_sent'].includes(status(offer)));
+  const closed = offers.filter((offer: any) => !offer.canRespond && !accepted.includes(offer));
+
+  const money = (offer: any) =>
+    `$${Number(offer.proposed_rate_usd || 0).toLocaleString()}${offer.payment_period === 'weekly' ? ' per week' : ' per month'}`;
+
+  const respond = async (offer: any, action: 'accept' | 'decline') => {
+    if (action === 'accept' && pendingDocs.length > 0) { setDocsPrompt(offer); return; }
+    let reason: string | undefined;
+    if (action === 'decline') {
+      const typed = await promptInApp('Let the team know why you are declining (optional):', { title: 'Decline offer', placeholder: 'Reason (optional)' });
+      if (typed === null) return;
+      reason = typed.trim() || undefined;
+    }
+    setBusy(offer.id);
+    try {
+      await onRespondToOffer?.(offer.id, action, reason);
+      setMessage(action === 'accept'
+        ? 'Offer accepted. Kongila is preparing your contract; it will appear under Contracts once it is ready to sign.'
+        : 'Offer declined. The team has been told.');
+    } finally { setBusy(''); }
+  };
+
+  const card = (offer: any, tone: 'open' | 'accepted' | 'closed') => {
+    const border = tone === 'open' ? 'rgba(16, 185, 129, 0.35)' : tone === 'accepted' ? 'rgba(20, 85, 192, 0.3)' : '#E6EAF2';
+    const background = tone === 'open' ? 'rgba(16, 185, 129, 0.06)' : tone === 'accepted' ? 'rgba(20, 85, 192, 0.05)' : '#FFFFFF';
+    return (
+      <div key={offer.id} style={{ background, border: `1px solid ${border}`, borderRadius: 16, padding: '18px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#182B49' }}>{offer.role_title || 'Role'}</div>
+            <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
+              {money(offer)}
+              {offer.proposed_start_date ? ` · starting ${new Date(offer.proposed_start_date).toLocaleDateString()}` : ''}
+            </div>
+            {offer.service_type && (
+              <div style={{ fontSize: 12, color: '#64748B', marginTop: 3 }}>{offer.service_type}</div>
+            )}
+          </div>
+          <span style={{
+            alignSelf: 'flex-start', padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800,
+            background: tone === 'open' ? '#ECFDF5' : tone === 'accepted' ? '#EFF6FF' : '#F1F5F9',
+            color: tone === 'open' ? '#065F46' : tone === 'accepted' ? '#1455C0' : '#475569'
+          }}>{status(offer).replace(/_/g, ' ') || 'sent'}</span>
+        </div>
+
+        {offer.notes_to_talent && (
+          <p style={{ margin: '12px 0 0', fontSize: 13, color: '#334155', lineHeight: 1.6 }}>{offer.notes_to_talent}</p>
+        )}
+
+        {tone === 'open' && offer.talent_response_deadline && (
+          <p style={{ margin: '10px 0 0', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>
+            Respond by {new Date(offer.talent_response_deadline).toLocaleDateString()}
+          </p>
+        )}
+
+        {tone === 'open' && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+            <button type="button" disabled={busy === offer.id} onClick={() => respond(offer, 'accept')}
+              style={{ background: '#10B981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 18px', fontWeight: 800, fontSize: 13, cursor: busy === offer.id ? 'wait' : 'pointer' }}>
+              {busy === offer.id ? 'Sending…' : 'Accept offer'}
+            </button>
+            <button type="button" disabled={busy === offer.id} onClick={() => respond(offer, 'decline')}
+              style={{ background: 'transparent', color: '#B91C1C', border: '1px solid rgba(185, 28, 28, 0.4)', borderRadius: 10, padding: '10px 18px', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>
+              Decline
+            </button>
+          </div>
+        )}
+
+        {tone === 'accepted' && (
+          <div style={{ marginTop: 12, fontSize: 12.5, color: '#1455C0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>
+              {status(offer) === 'accepted'
+                ? 'Accepted. Kongila is preparing your contract.'
+                : 'Your contract has been issued.'}
+            </span>
+            <button type="button" onClick={() => setActiveSection?.('contracts')}
+              style={{ background: 'transparent', border: '1px solid rgba(20,85,192,.35)', color: '#1455C0', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+              Go to Contracts
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const group = (title: string, note: string, rows: any[], tone: 'open' | 'accepted' | 'closed', empty: string) => (
+    <section style={{ marginBottom: 28 }}>
+      <h2 style={{ fontSize: 15, fontWeight: 800, color: '#182B49', margin: '0 0 2px' }}>
+        {title}{rows.length > 0 ? ` (${rows.length})` : ''}
+      </h2>
+      <p style={{ margin: '0 0 12px', fontSize: 12.5, color: '#64748B' }}>{note}</p>
+      {rows.length === 0 ? (
+        <div style={{ border: '1px dashed #D7DEE8', borderRadius: 12, padding: 20, fontSize: 13, color: '#64748B' }}>{empty}</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{rows.map(offer => card(offer, tone))}</div>
+      )}
+    </section>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: '#182B49', margin: 0 }}>My offers</h1>
+        <p style={{ margin: '6px 0 0', fontSize: 13.5, color: '#64748B', lineHeight: 1.6, maxWidth: 640 }}>
+          An offer is a proposal of role, pay and start date. Accepting one tells Kongila to prepare
+          your contract; the contract itself, and anything you sign, lives under Contracts.
+        </p>
+      </div>
+
+      {message && (
+        <div role="status" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', color: '#075985', borderRadius: 12, padding: '12px 14px', marginBottom: 18, fontSize: 13 }}>
+          {message}
+        </div>
+      )}
+
+      {pendingDocs.length > 0 && awaiting.length > 0 && (
+        <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.28)', borderRadius: 12, padding: '14px 16px', marginBottom: 18, display: 'flex', gap: 12, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#991B1B', fontWeight: 600 }}>
+            You have {pendingDocs.length} mandatory document{pendingDocs.length > 1 ? 's' : ''} still to sign. They have to be done before an offer can be accepted.
+          </span>
+          <button type="button" onClick={() => setActiveSection?.('compliance')}
+            style={{ border: 0, background: '#1455C0', color: '#fff', borderRadius: 10, padding: '9px 14px', fontWeight: 800, fontSize: 12.5, cursor: 'pointer' }}>
+            Go to Documents
+          </button>
+        </div>
+      )}
+
+      {group('Waiting on you', 'Answer these to move forward.', awaiting, 'open',
+        'No offer is waiting on you right now.')}
+      {group('Accepted', 'You have said yes. Kongila prepares the contract next.', accepted, 'accepted',
+        'Nothing accepted yet.')}
+      {group('Closed', 'Declined, withdrawn or expired.', closed, 'closed',
+        'Nothing closed.')}
+
+      {docsPrompt && (
+        <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDocsPrompt(null); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(15, 23, 42, 0.52)' }}>
+          <section role="dialog" aria-modal="true" style={{ width: 'min(100%, 520px)', background: '#fff', borderRadius: 18, padding: 26, boxShadow: '0 24px 70px rgba(15,23,42,.24)' }}>
+            <div style={{ color: '#1455C0', fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase' }}>One step before accepting</div>
+            <h2 style={{ margin: '8px 0', color: '#182B49', fontSize: 22 }}>Sign your required documents</h2>
+            <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: 14, lineHeight: 1.55 }}>
+              These have to be signed before an offer can be accepted.
+            </p>
+            <ul style={{ margin: '0 0 20px', paddingLeft: 20, color: '#334155', lineHeight: 1.8 }}>
+              {pendingDocs.map((doc: any, index: number) => <li key={doc.id || doc.name || index}>{doc.name || doc.title || 'Required document'}</li>)}
+            </ul>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setDocsPrompt(null)} style={{ border: '1px solid #D7DEE8', background: '#fff', color: '#334155', borderRadius: 10, padding: '11px 15px', fontWeight: 700, cursor: 'pointer' }}>Later</button>
+              <button type="button" onClick={() => { setDocsPrompt(null); setActiveSection?.('compliance'); }} style={{ border: 0, background: '#1455C0', color: '#fff', borderRadius: 10, padding: '11px 16px', fontWeight: 800, cursor: 'pointer' }}>Go to Documents</button>
+              <button type="button" onClick={async () => {
+                const offer = docsPrompt;
+                setDocsPrompt(null);
+                setBusy(offer.id);
+                try {
+                  const accepted = await onRespondToOffer?.(offer.id, 'accept');
+                  if (!accepted) setDocsPrompt(offer);
+                  else setMessage('Offer accepted. Kongila is preparing your contract.');
+                } finally { setBusy(''); }
+              }} style={{ border: '1px solid #1455C0', background: '#EFF6FF', color: '#1455C0', borderRadius: 10, padding: '11px 15px', fontWeight: 800, cursor: 'pointer' }}>I have signed them — retry</button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PipelineSection = ({ profile, matches = [], clientRequests = [], interviews = [], contracts = [] }: { profile: any; matches?: any[]; clientRequests?: any[]; interviews?: any[]; contracts?: any[]; }) => {
 
   // Filter matches belonging to this talent
@@ -3425,6 +3647,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
   // signature table. It used to live in React state and vanish on reload,
   // which is why the admin's progress bar always read zero.
   const [signedComplianceIds, setSignedComplianceIds] = useState<string[]>([]);
+  const [serverComplianceDocs, setServerComplianceDocs] = useState<any[] | null>(null);
   const [signingComplianceId, setSigningComplianceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -3434,7 +3657,10 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
         const res = await apiFetch('/api/signatures?view=compliance');
         if (!res.ok) return;
         const body = await res.json();
-        if (!cancelled) setSignedComplianceIds(body.signedDocumentIds || []);
+        if (!cancelled) {
+          setSignedComplianceIds(body.signedDocumentIds || []);
+          setServerComplianceDocs(Array.isArray(body.documents) ? body.documents : []);
+        }
       } catch {
         // Leave the list empty; an unsigned document showing as unsigned is
         // the safe failure.
@@ -3445,12 +3671,12 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
 
   const complianceDocs = allUserDocs.filter((d: any) => COMPLIANCE_DOC_TYPES.includes(d.type));
   // Also pull from allDocuments templates (signed compliance docs from vetting/contracts)
-  const globalComplianceTemplates = allDocuments.filter(d => d.isMandatory && !d.isHidden && (!d.userId || d.userId === ''));
+  const globalComplianceTemplates = (serverComplianceDocs ?? allDocuments).filter((d: any) => d.isMandatory && !d.isHidden && (!d.userId || d.userId === ''));
   const mergedComplianceDocs = [
     ...complianceDocs,
     ...globalComplianceTemplates.filter(gt => !complianceDocs.find((cd: any) => cd.templateId === gt.id)).map(gt => {
-      const signed = signedComplianceIds.includes(String(gt.id))
-        ? { signedAt: undefined, signatureData: undefined }
+      const signed = gt.isSigned || signedComplianceIds.includes(String(gt.id))
+        ? { signedAt: gt.signedAt, signatureData: undefined }
         : (profile?.documents || []).find((ud: any) => ud.templateId === gt.id);
       return { ...gt, status: signed ? 'signed' : 'pending_signature', signedAt: signed?.signedAt, signatureData: signed?.signatureData };
     })
@@ -3620,6 +3846,9 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
       if (!res.ok) throw new Error(body.error || 'Your signature was not recorded.');
 
       setSignedComplianceIds(prev => prev.includes(docId) ? prev : [...prev, docId]);
+      setServerComplianceDocs(prev => (prev || []).map((doc: any) => String(doc.id) === String(docId)
+        ? { ...doc, isSigned: true, signedAt: new Date().toISOString() }
+        : doc));
       setSigModalDoc(null);
       setTypedSig('');
       showToast('Signed. Your compliance record has been updated.', 'success');
@@ -3838,14 +4067,14 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <Card style={{ padding: '16px 20px', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#92400E', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              🔒 Read-only. Compliance documents are generated via the Vetting or Contracts workflow and cannot be edited or deleted from here.
+              🔒 Documents assigned by Kongila are read-only here. Review each PDF and sign required documents from this page.
             </div>
           </Card>
           {mergedComplianceDocs.length === 0 ? (
             <Card style={{ padding: '48px', textAlign: 'center', background: '#F8FAFC', border: '2px dashed #E2E8F0' }}>
               <div style={{ fontSize: '40px', marginBottom: '12px' }}>📜</div>
               <div style={{ fontSize: '14px', fontWeight: 700, color: '#1A2340', marginBottom: '6px' }}>No compliance documents yet</div>
-              <p style={{ fontSize: '13px', color: '#6B7A99', margin: 0 }}>NDA, Contractor Agreement, IT Policy, and Data Protection Agreement documents will appear here once generated via the vetting or contracts process.</p>
+              <p style={{ fontSize: '13px', color: '#6B7A99', margin: 0 }}>Required compliance documents assigned by Kongila will appear here when they are ready for you to review.</p>
             </Card>
           ) : (
             mergedComplianceDocs.map((doc: any, idx: number) => {
@@ -3974,6 +4203,12 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
           <div style={{ background: '#fff', borderRadius: '16px', padding: '32px', width: '100%', maxWidth: '480px', boxShadow: '0 24px 64px rgba(0,0,0,0.15)' }}>
             <h3 style={{ fontWeight: 800, fontSize: '18px', color: '#1A2340', marginBottom: '4px', marginTop: 0 }}>E-Sign Document</h3>
             <p style={{ fontSize: '13px', color: '#6B7A99', marginBottom: '24px' }}>{mergedComplianceDocs.find(d => d.id === sigModalDoc)?.name}</p>
+            {mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl ? (
+              <div style={{ marginBottom: 18, border: '1px solid #DDE2EC', borderRadius: 10, overflow: 'hidden' }}>
+                <iframe title={`Review ${mergedComplianceDocs.find(d => d.id === sigModalDoc)?.name || 'compliance document'}`} src={mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl} style={{ display: 'block', width: '100%', height: 250, border: 0 }} />
+                <a href={mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl} target="_blank" rel="noreferrer" style={{ display: 'block', padding: '8px 12px', fontSize: 12, color: '#1455C0' }}>Open PDF in a new tab</a>
+              </div>
+            ) : <p role="alert" style={{ margin: '0 0 16px', color: '#B91C1C', fontSize: 13 }}>This document is not available to review yet. Contact Kongila support before signing.</p>}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', background: '#F5F7FA', padding: '4px', borderRadius: '8px' }}>
               {(['type', 'draw'] as const).map(t => (
                 <button key={t} onClick={() => setSignatureType(t)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: 'none', background: signatureType === t ? '#0047CC' : 'transparent', color: signatureType === t ? '#fff' : '#6B7A99', fontWeight: 600, fontSize: '13px', cursor: 'pointer', textTransform: 'capitalize' }}>{t} Signature</button>
@@ -3986,7 +4221,7 @@ const ComplianceSection = ({ profile, allDocuments = [], onUpdateProfile, onUpda
             )}
             <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
               <button onClick={() => setSigModalDoc(null)} style={{ flex: 1, height: '42px', border: '1px solid #DDE2EC', borderRadius: '8px', background: 'transparent', color: '#6B7A99', fontWeight: 600, cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
-              <button onClick={() => handleSign(sigModalDoc)} disabled={Boolean(signingComplianceId) || typedSig.trim().length < 2} style={{ flex: 2, height: '42px', background: Boolean(signingComplianceId) || typedSig.trim().length < 2 ? '#94A3B8' : '#0047CC', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: Boolean(signingComplianceId) || typedSig.trim().length < 2 ? 'not-allowed' : 'pointer', fontSize: '14px' }}>{signingComplianceId ? 'Signing…' : 'Confirm & Sign'}</button>
+              <button onClick={() => handleSign(sigModalDoc)} disabled={Boolean(signingComplianceId) || typedSig.trim().length < 2 || !mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl} style={{ flex: 2, height: '42px', background: Boolean(signingComplianceId) || typedSig.trim().length < 2 || !mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl ? '#94A3B8' : '#0047CC', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: Boolean(signingComplianceId) || typedSig.trim().length < 2 || !mergedComplianceDocs.find(d => d.id === sigModalDoc)?.fileUrl ? 'not-allowed' : 'pointer', fontSize: '14px' }}>{signingComplianceId ? 'Signing…' : 'Confirm & Sign'}</button>
             </div>
           </div>
         </div>
@@ -7910,7 +8145,20 @@ const ScoresGradesSection = ({ profile, skillAssessmentResults = [] }: { profile
 
 // ─── Section: Earnings ────────────────────────────────────────────────────────
 const EarningsSection = ({ profile, contracts = [] }: { profile: any; contracts?: any[] }) => {
+  const [payoutStatements, setPayoutStatements] = React.useState<any[]>([]);
+  const [payoutLoadError, setPayoutLoadError] = React.useState('');
+  React.useEffect(() => {
+    let live = true;
+    apiFetch('/api/finance?view=payouts').then(async response => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not load earnings statements.');
+      if (live) setPayoutStatements(Array.isArray(body) ? body : body.payouts || []);
+    }).catch(error => { if (live) setPayoutLoadError(error?.message || 'Could not load earnings statements.'); });
+    return () => { live = false; };
+  }, []);
   const activeContract = contracts.find((c:any)=>c.status==='Signed'||c.status==='Active');
+  const activeServiceLine = String(activeContract?.serviceType || activeContract?.service_type || '').toLowerCase();
+  const clientEmployedPlacement = ['hire talent', 'direct hire', 'direct_hire', 'placement'].some(value => activeServiceLine.includes(value));
   const totalEarned = contracts.reduce((sum:number,c:any)=>sum+(Number(c.totalEarned)||0),0);
   const nextPayout = activeContract?.nextPayout||0;
   const nextPayoutDate = activeContract?.nextPayoutDate||'—';
@@ -7931,7 +8179,7 @@ const EarningsSection = ({ profile, contracts = [] }: { profile: any; contracts?
         <p style={{fontSize:'13px',color:'#6B7A99',margin:0}}>Track your income, active rates, and upcoming payouts.</p>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'16px'}}>
+      {!clientEmployedPlacement && <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'16px'}}>
         {summaryCards.map((c,i)=>(
           <Card key={i} style={{padding:'20px',borderLeft:`4px solid ${c.color}`}}>
             <div style={{fontSize:'22px',marginBottom:'8px'}}>{c.icon}</div>
@@ -7940,9 +8188,17 @@ const EarningsSection = ({ profile, contracts = [] }: { profile: any; contracts?
             <div style={{fontSize:'11px',color:'#94A3B8'}}>{c.sub}</div>
           </Card>
         ))}
-      </div>
+      </div>}
 
-      {activeContract?(
+      {clientEmployedPlacement ? (
+        <Card style={{ padding: '24px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#1A2340', margin: '0 0 8px' }}>Direct employment arrangement</h3>
+          <p style={{ fontSize: '13px', color: '#64748B', lineHeight: 1.6, margin: 0 }}>
+            This is a direct-hire placement. Your employer is the client, who manages your salary and payroll directly. This engagement will not create Kongila payroll or payout entries.
+          </p>
+          {activeContract?.clientName && <div style={{ marginTop: 12, fontSize: 13, color: '#1A2340' }}>Employer: <strong>{activeContract.clientName}</strong></div>}
+        </Card>
+      ) : activeContract?(
         <Card style={{padding:'24px'}}>
           <h3 style={{fontSize:'15px',fontWeight:800,color:'#1A2340',margin:'0 0 16px 0'}}>📑 Active Contract</h3>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
@@ -7968,6 +8224,15 @@ const EarningsSection = ({ profile, contracts = [] }: { profile: any; contracts?
           <p style={{fontSize:'13px',color:'#6B7A99',margin:0}}>Your earnings and payment details will appear here once you have an active placement.</p>
         </Card>
       )}
+      {!clientEmployedPlacement && <Card style={{ padding: 22 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: '#1A2340', margin: '0 0 5px' }}>Earnings statements</h3>
+        <p style={{ fontSize: 13, color: '#6B7A99', margin: '0 0 16px' }}>Each statement shows the agreed gross amount, the Kongila talent commission deduction, and your net payout. Payout release follows the client payment and finance review.</p>
+        {payoutLoadError ? <p role="alert" style={{ color: '#B91C1C' }}>{payoutLoadError}</p> : payoutStatements.length === 0 ? <p style={{ color: '#6B7A99', fontSize: 13, margin: 0 }}>No earnings statements are available yet.</p> : <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, textAlign: 'left' }}><thead><tr style={{ color: '#64748B', borderBottom: '1px solid #E2E8F0' }}><th style={{ padding: '9px 8px' }}>Period</th><th style={{ padding: '9px 8px' }}>Gross</th><th style={{ padding: '9px 8px' }}>Kongila commission</th><th style={{ padding: '9px 8px' }}>Net payout</th><th style={{ padding: '9px 8px' }}>Status</th></tr></thead><tbody>
+            {payoutStatements.map((statement: any) => <tr key={statement.id} style={{ borderBottom: '1px solid #F1F5F9' }}><td style={{ padding: '10px 8px' }}>{statement.period || '—'}</td><td style={{ padding: '10px 8px' }}>{statement.currency || 'USD'} {Number(statement.grossAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td><td style={{ padding: '10px 8px' }}>{statement.currency || 'USD'} {Number(statement.commissionAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}{statement.commissionPct != null && <small style={{ display: 'block', color: '#64748B' }}>{(Number(statement.commissionPct) * 100).toFixed(2).replace(/\.00$/, '')}%</small>}</td><td style={{ padding: '10px 8px', fontWeight: 700 }}>{statement.currency || 'USD'} {Number(statement.netAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td><td style={{ padding: '10px 8px', textTransform: 'capitalize' }}>{String(statement.status || 'pending').replace(/_/g, ' ')}</td></tr>)}
+          </tbody></table>
+        </div>}
+      </Card>}
     </div>
   );
 };
@@ -8163,6 +8428,28 @@ export default function TalentDashboard({
       setActiveSection('messages');
     } catch (error: any) {
       showGlobalToast(error?.message || 'Could not open a message to your manager.', 'error');
+    }
+  };
+
+  const messageEngagementContact = async (contactId: string, assignmentId: string) => {
+    if (!contactId || !assignmentId) return;
+    try {
+      const response = await apiFetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'start', type: 'engagement', contextType: 'engagement',
+          contextId: assignmentId, otherPartyId: contactId
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      const conversation = payload?.data;
+      if (!response.ok || !conversation?.id) throw new Error(payload?.error || 'The engagement conversation could not be opened.');
+      setConversations(previous => previous.some(item => item.id === conversation.id) ? previous : [conversation, ...previous]);
+      setOpenConversationId(conversation.id);
+      setActiveSection('messages');
+    } catch (error: any) {
+      showGlobalToast(error?.message || 'Could not open the engagement conversation.', 'error');
     }
   };
   
@@ -8443,7 +8730,13 @@ export default function TalentDashboard({
         onRespond={respondToInterview}
         onRequestReschedule={handleRequestReschedule}
       />;
-      case 'contracts':        return <ContractSection profile={talentProfile} />;
+      case 'offers':           return <OffersSection
+        offers={offers}
+        pendingDocs={pendingDocs}
+        onRespondToOffer={onRespondToOffer}
+        setActiveSection={setActiveSection}
+      />;
+      case 'contracts':        return <><ContractSection profile={talentProfile} /><EngagementWorkspace mode="talent" onMessageContact={messageEngagementContact} /></>;
       case 'earnings':         return <EarningsSection profile={talentProfile} contracts={talentContracts} />;
       case 'tasks':            return <TasksSection profile={talentProfile} />;
       case 'messages':
@@ -8548,7 +8841,9 @@ export default function TalentDashboard({
                 const isActive = activeSection === item.id;
                 const complianceCount = item.id === 'compliance'
                   ? allDocuments.filter(d => d.isMandatory && !d.isHidden && (!d.userId || d.userId === '')).filter(gdoc => !talentProfile?.documents?.some((doc: any) => doc.templateId === gdoc.id || doc.name === gdoc.name)).length
-                  : 0;
+                  : item.id === 'offers'
+                    ? (offers || []).filter((offer: any) => offer.canRespond).length
+                    : 0;
                 const unreadBadgeCount = item.id === 'notifications' ? unreadNotifsCount : (item.id === 'messages' ? unreadMessagesCount : (unreadByModule[item.id] || 0));
                 return (
                   <React.Fragment key={item.id}>
@@ -8631,7 +8926,9 @@ export default function TalentDashboard({
             const isActive = activeSection === item.id;
             const complianceCount = item.id === 'compliance'
               ? allDocuments.filter(d => d.isMandatory && !d.isHidden && (!d.userId || d.userId === '')).filter(gdoc => !talentProfile?.documents?.some((doc: any) => doc.templateId === gdoc.id || doc.name === gdoc.name)).length
-              : 0;
+              : item.id === 'offers'
+                ? (offers || []).filter((offer: any) => offer.canRespond).length
+                : 0;
             const unreadBadgeCount = item.id === 'notifications' ? unreadNotifsCount : (item.id === 'messages' ? unreadMessagesCount : (unreadByModule[item.id] || 0));
             return (
               <React.Fragment key={item.id}>

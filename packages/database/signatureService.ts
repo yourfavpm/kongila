@@ -35,7 +35,7 @@ import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { notifyUsers } from './notify';
 import { complianceRefusal, complianceStatus, isGated, type GatedAction } from '@kongila/workflows';
-import { buildContractDocument, type ContractDocument } from '@kongila/contracts';
+import { buildContractDocument, documentToHtml, type ContractDocument } from '@kongila/contracts';
 
 export interface SignatureResult<T = any> {
   ok: boolean;
@@ -151,13 +151,53 @@ export async function signContract(
     if (refusal) return fail(409, refusal);
   }
 
-  // The text being signed is built here, from the contract row and the
-  // published template. It used to arrive in the request body, which meant
-  // the signer decided what their own signature attested to.
-  const document = await contractDocumentFor(contract);
+  // The text being signed is built here, from the document issued to this
+  // party. It used to arrive in the request body, which meant the signer
+  // decided what their own signature attested to.
+  //
+  // Each party signs their own document. This used to build one document and
+  // ask both parties to sign it, then refuse the second signature if the
+  // text differed — which is exactly what it does, because the client's
+  // document carries the service fee and the candidate's carries their pay.
+  const audience: 'client' | 'talent' = role === 'client' ? 'client' : 'talent';
+  const document = await contractDocumentFor(contract, audience);
   if (!document.ready) return fail(409, document.reason as string);
 
   const documentHash = hashDocument(document.text);
+
+  // The issued row, when this database has them. It is what says whether the
+  // document was ever sent to this party, and what it said when it was.
+  let issued: any = null;
+  try {
+    const { data } = await supabase
+      .from('contract_documents')
+      .select('*')
+      .eq('contract_id', input.contractId)
+      .eq('audience', audience)
+      .maybeSingle();
+    issued = data || null;
+  } catch {
+    issued = null;
+  }
+
+  if (issued) {
+    if (String(issued.status) === 'signed') {
+      return fail(409, 'You have already signed this contract.');
+    }
+    if (String(issued.status) === 'void') {
+      return fail(409, 'This document has been withdrawn. A replacement will be issued.');
+    }
+    if (String(issued.status) === 'draft') {
+      return fail(409, 'This contract has not been sent to you yet.');
+    }
+    // The words have changed since this party was sent them. Signing now
+    // would attest to text they were never shown.
+    if (issued.document_hash && issued.document_hash !== documentHash) {
+      return fail(409,
+        'This document has changed since it was sent to you. '
+        + 'A replacement will be issued so you sign the text you were given.');
+    }
+  }
 
   const { data: existing } = await supabase
     .from('contract_signatures')
@@ -169,20 +209,15 @@ export async function signContract(
     return fail(409, 'You have already signed this contract.');
   }
 
-  // Both parties must sign the same words. If the template changed between
-  // the two signatures, the second one is refused rather than producing a
-  // contract where each side agreed to something different.
-  const other = (existing || [])[0];
-  if (other && other.document_hash !== documentHash) {
-    return fail(409,
-      'This document has changed since the other party signed it. ' +
-      'A new contract must be issued so both parties sign the same text.');
-  }
-
   const signedAt = new Date().toISOString();
+  const signatureId = globalThis.crypto?.randomUUID?.()
+    || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const { error: insertError } = await supabase.from('contract_signatures').insert({
-    id: globalThis.crypto?.randomUUID?.() || `sig_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: signatureId,
     contract_id: input.contractId,
+    // Which of the two documents this signature is against. The role said
+    // who signed; this says what they signed.
+    contract_document_id: issued?.id || null,
     signer_user_id: actor.userId,
     signer_role: role,
     signer_name: typedName,
@@ -197,7 +232,44 @@ export async function signContract(
   });
 
   if (insertError) {
-    return fail(500, `Your signature was not recorded: ${insertError.message}`);
+    // contract_document_id arrives with the 2026-11-20b migration. Without
+    // it the signature is still a complete record, so retry rather than
+    // refusing a signature the party has already given.
+    if (/contract_document_id/.test(String(insertError.message))) {
+      const { error: retryError } = await supabase.from('contract_signatures').insert({
+        id: signatureId,
+        contract_id: input.contractId,
+        signer_user_id: actor.userId,
+        signer_role: role,
+        signer_name: typedName,
+        signer_email: actor.email,
+        document_hash: documentHash,
+        drawn_signature: input.drawnSignature || null,
+        ip_address: input.ipAddress || null,
+        user_agent: input.userAgent || null,
+        signed_at: signedAt
+      });
+      if (retryError) {
+        return fail(500, `Your signature was not recorded: ${retryError.message}`);
+      }
+    } else {
+      return fail(500, `Your signature was not recorded: ${insertError.message}`);
+    }
+  }
+
+  // This party's document is signed. Done before the contract status is
+  // worked out, because the status is read off these rows.
+  if (issued?.id) {
+    await supabase
+      .from('contract_documents')
+      .update({
+        status: 'signed',
+        signed_at: signedAt,
+        signature_id: signatureId,
+        document_hash: documentHash,
+        updated_at: signedAt
+      })
+      .eq('id', issued.id);
   }
 
   // Fully signed only when both parties have signed the same text.
@@ -222,11 +294,24 @@ export async function signContract(
     contract.start_date && new Date(contract.start_date).getTime() > Date.now()
   );
 
-  const nextStatus = bothParties
+  // Derived from the two documents where this database has them, so the
+  // contract cannot read as fully signed while one document sits unsent.
+  // Falls back to counting signatures on databases without that table.
+  let nextStatus = bothParties
     ? (startsInFuture ? 'fully_signed' : 'active')
     : role === 'talent' ? 'talent_signed'
     : role === 'client' ? 'client_signed'
     : 'pending_signatures';
+
+  if (issued?.id) {
+    try {
+      const { syncContractStatus } = await import('./contractDocumentService');
+      const derived = await syncContractStatus(String(input.contractId));
+      if (derived) nextStatus = derived;
+    } catch {
+      // Fall back to the status worked out above.
+    }
+  }
 
   await supabase
     .from('contracts')
@@ -315,31 +400,6 @@ export async function complianceGate(
       signedAt: s.signed_at
     }))
   );
-}
-
-/** Returns the current server-side mandatory-document position for a talent. */
-export async function getTalentComplianceStatus(talentId: string) {
-  if (!talentId) return fail(400, 'A talent profile is required to check mandatory documents.');
-
-  const supabase = getSupabaseClient();
-  const [{ data: documents, error: documentsError }, { data: signatures, error: signaturesError }] = await Promise.all([
-    supabase.from('documents').select('id, name, type, is_mandatory, is_template, user_id'),
-    supabase.from('document_signatures').select('document_id, talent_id, signed_at').eq('talent_id', talentId)
-  ]);
-  if (documentsError) return fail(500, `Could not load mandatory documents: ${documentsError.message}`);
-  if (signaturesError) return fail(500, `Could not load document signatures: ${signaturesError.message}`);
-
-  const status = complianceStatus(
-    talentId,
-    (documents || []).map((d: any) => ({
-      id: d.id, name: d.name, type: d.type,
-      isMandatory: d.is_mandatory, isTemplate: d.is_template, userId: d.user_id
-    })),
-    (signatures || []).map((s: any) => ({
-      documentId: s.document_id, talentId: s.talent_id, signedAt: s.signed_at
-    }))
-  );
-  return { ok: true, status: 200, data: status };
 }
 
 /** Records a candidate signing one of the universal compliance templates. */
@@ -471,7 +531,54 @@ export async function getSignatures(
  * signed it stops. The page used to fill the gap with fifteen identical
  * paragraphs of placeholder text and let a candidate sign them.
  */
-export async function contractDocumentFor(contract: any): Promise<ContractDocument> {
+export async function contractDocumentFor(
+  contract: any,
+  audience: 'client' | 'talent' = 'talent'
+): Promise<ContractDocument> {
+  // ── The document that was actually issued ──────────────────────────────
+  // This is the first place to look, and until now it was not looked at at
+  // all. Contract generation renders a client document and a candidate
+  // document and stores both; this used to ignore them, go back to the
+  // templates table, re-render one generic document and ask both parties to
+  // sign that same text. A client and a candidate do not sign the same
+  // document: one carries the service fee, the other carries the pay.
+  const supabase = getSupabaseClient();
+
+  try {
+    const { data: issued } = await supabase
+      .from('contract_documents')
+      .select('body, status')
+      .eq('contract_id', String(contract.id))
+      .eq('audience', audience)
+      .maybeSingle();
+
+    if (issued?.body && String(issued.body).trim()) {
+      if (String(issued.status) === 'void') {
+        return {
+          ready: false,
+          text: String(issued.body),
+          reason: 'This document has been withdrawn. A replacement will be issued.'
+        };
+      }
+      return { ready: true, text: String(issued.body), reason: null };
+    }
+  } catch {
+    // No contract_documents table yet. Fall through to the body frozen onto
+    // the contract row, which is the same text.
+  }
+
+  // ── The body frozen onto the contract at generation ────────────────────
+  const frozen = audience === 'talent'
+    ? contract.talent_contract_body
+    : contract.client_contract_body;
+
+  if (frozen && String(frozen).trim()) {
+    return { ready: true, text: String(frozen), reason: null };
+  }
+
+  // ── Contracts made before any of that ──────────────────────────────────
+  // Rendered from the published template, as the only path used to do. A
+  // missing template is "not ready", never "sign the cover sheet".
   const facts = {
     referenceNumber: contract.reference_number,
     talentName: contract.talent_name,
@@ -483,15 +590,16 @@ export async function contractDocumentFor(contract: any): Promise<ContractDocume
     engagementType: contract.engagement_type
   };
 
-  const supabase = getSupabaseClient();
   let body: string | null = null;
 
-  // The template table may not exist yet in a given environment. A missing
-  // template is "not ready", never "sign the cover sheet".
   try {
+    const templateId = audience === 'talent'
+      ? (contract.talent_template_id || contract.template_id)
+      : (contract.client_template_id || contract.template_id);
+
     let query = supabase.from('contract_templates').select('body, status, version');
-    if (contract.template_id) query = query.eq('id', contract.template_id);
-    else query = query.eq('status', 'published').eq('type', 'contract');
+    if (templateId) query = query.eq('id', templateId);
+    else query = query.eq('status', 'published').eq('audience', audience);
 
     const { data } = await query.order('version', { ascending: false }).limit(1);
     const template = (data || [])[0];
@@ -526,14 +634,39 @@ export async function getContractDocument(
   if (error) return fail(500, error.message);
   if (!contract) return fail(404, 'That contract does not exist.');
 
-  const isParty = actor.kind === 'admin'
-    || String(contract.talent_id) === String(actor.talentProfileId || actor.userId)
-    || String(contract.client_id) === String(actor.userId);
+  const isTalent = String(contract.talent_id) === String(actor.talentProfileId || actor.userId);
+  const isClient = String(contract.client_id) === String(actor.userId);
+  const isParty = actor.kind === 'admin' || isTalent || isClient;
 
   if (!isParty) return fail(403, 'That contract is not yours.');
 
-  const document = await contractDocumentFor(contract);
-  return { ok: true, status: 200, data: { contractId, ...document } };
+  // Each party gets their own document. An operator looking at it sees the
+  // client's, which is the one they are usually chasing.
+  const audience: 'client' | 'talent' = isTalent ? 'talent' : 'client';
+
+  // Opening it is what records the view, so an unsigned contract can be
+  // told apart from one the party never opened. An operator reading it is
+  // not the party reading it, so that does not count.
+  if (actor.kind !== 'admin') {
+    try {
+      const { viewContractDocument } = await import('./contractDocumentService');
+      await viewContractDocument(actor, { contractId, audience });
+    } catch {
+      // No contract_documents table yet. The document still renders.
+    }
+  }
+
+  const document = await contractDocumentFor(contract, audience);
+
+  // Laid out, as well as flat. The portal used to render the raw body in a
+  // <pre>, which was fine while every template was plain text and shows a
+  // candidate a page of markup now that they are not. The text is still
+  // what gets hashed.
+  return {
+    ok: true,
+    status: 200,
+    data: { contractId, audience, html: documentToHtml(document.text), ...document } as any
+  };
 }
 
 /**

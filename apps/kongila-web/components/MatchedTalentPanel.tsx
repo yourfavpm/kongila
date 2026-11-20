@@ -222,6 +222,13 @@ export default function MatchedTalentPanel({
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))", gap: "24px" }}>
                 {group.candidates.map(({ match, talent }) => {
                   const isShortlisted = String(match.status).toLowerCase() === 'shortlisted';
+                  const offer = (group.request.offers || []).find((candidateOffer: any) =>
+                    String(candidateOffer.talentId ?? candidateOffer.talent_id) === String(talent.id)
+                    && String(candidateOffer.matchId ?? candidateOffer.match_id) === String(match.id)
+                  );
+                  const offerStatus = String(offer?.status || '').toLowerCase();
+                  const offerInProgress = ['draft', 'submitted', 'revision_requested', 'admin_approved', 'sent_to_talent'].includes(offerStatus);
+                  const hasAcceptedOffer = ['accepted', 'contract_active'].includes(offerStatus);
                   const breakdown = match.breakdown || {} as any;
                   const candidateInterviews = interviews.filter((interview) =>
                     String(interview.requestId) === String(group.request.id)
@@ -313,6 +320,9 @@ export default function MatchedTalentPanel({
                                 Grade {getTalentGrade(talent)}
                               </span>
                             </div>
+                            {(offerInProgress || hasAcceptedOffer) && <span style={{ display: 'inline-flex', marginTop: 7, padding: '4px 9px', borderRadius: 999, background: hasAcceptedOffer ? '#DCFCE7' : '#FEF3C7', color: hasAcceptedOffer ? '#166534' : '#92400E', fontSize: 11, fontWeight: 800 }}>
+                              {hasAcceptedOffer ? 'Hired' : 'Offer stage'}
+                            </span>}
                             <div style={{ fontSize: "14px", color: "#64748B", marginTop: "4px", fontWeight: 500 }}>
                               {talent.title || talent.primaryRoleCategory} • {talent.seniorityLevel || "Mid"}
                             </div>
@@ -403,7 +413,7 @@ export default function MatchedTalentPanel({
                           >
                             Not a Fit
                           </button>
-                          {hasCompletedInterview && onExtendOffer && !isTerminalMatch && (
+                          {hasCompletedInterview && onExtendOffer && !isTerminalMatch && !offer && (
                             <button
                               onClick={() => onExtendOffer(talent, group.request, match)}
                               style={{ background: "#10B981", color: "#FFF", border: "none", padding: "10px 14px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}

@@ -39,6 +39,7 @@ import {
   matchingProgressStatus,
   normalizeRequestStatus,
   normalizeInterviewStage,
+  interviewParty,
   interviewTransition,
   interviewStageToDb,
   explainInterviewTransition,
@@ -1449,7 +1450,18 @@ export async function requestReschedule(
     // that only `decideReschedule` could clear, and that is admin-only, so
     // the client whose interview it was never saw the time being proposed to
     // them and operations had to guess on their behalf.
-    const isCounter = actor.kind === 'talent'
+    // Only a client interview has a client to put a new time to.
+    //
+    // A vetting interview — the behavioural interview in the pipeline — is
+    // between the candidate and Kongila. It still names a client, because
+    // interviews.client_id is NOT NULL and the operator who scheduled it
+    // stands in, and that stand-in was being treated as a real counterparty:
+    // a candidate asking to move a behavioural interview was recorded as
+    // proposing a time to a client who is not in the conversation, and the
+    // screens said it was waiting on them.
+    const party = interviewParty(interview);
+    const isCounter = party === 'client'
+      && actor.kind === 'talent'
       && Boolean(interviewTransition(interview.status, 'talent_counters'));
 
     if (isCounter && !proposed) {
@@ -1482,7 +1494,9 @@ export async function requestReschedule(
       : 'No alternative time was proposed.';
 
     const saved = updated || interview;
-    const talentAskedClientToMove = actor.kind === 'talent' && Boolean(interview.client_id);
+    const talentAskedClientToMove = party === 'client'
+      && actor.kind === 'talent'
+      && Boolean(interview.client_id);
     const warnings = (isCounter || talentAskedClientToMove)
       ? await notifyInterviewEvent(
           saved,
@@ -1495,6 +1509,10 @@ export async function requestReschedule(
           },
           { proposedInstant: proposed }
         )
+      // A vetting interview, or a client moving their own: both sides of the
+      // conversation hear it directly. On a vetting interview that is the
+      // candidate and the operator who scheduled it, which is who it is
+      // actually between.
       : await notifyParties(
           saved,
           'reschedule_requested',
@@ -1546,7 +1564,15 @@ export async function decideReschedule(
     // A talent reschedule on a client-owned interview must be seen and
     // answered by that client. Operations can coordinate, but cannot accept
     // or reject the proposed time on the client's behalf.
+    //
+    // Only where there is a client. This used to test `interview.client_id`,
+    // which is never null — interviews.client_id is NOT NULL, so a vetting
+    // interview names the operator who scheduled it. Every behavioural
+    // interview therefore looked client-owned, and a candidate asking to
+    // move one left it stuck: operations were told to wait for a client who
+    // was not in the conversation and had no screen on which to answer.
     if (
+      interviewParty(interview) === 'client' &&
       interview.reschedule_requested &&
       interview.reschedule_requested_by === 'talent' &&
       interview.client_id
@@ -1883,7 +1909,6 @@ export async function completeInterview(
   if (actor.kind !== 'admin') {
     return fail(403, 'Only operations can record whether an interview took place.');
   }
-
   const id = String(input.interviewId || '').trim();
   if (!id) return fail(400, 'Which interview?');
 

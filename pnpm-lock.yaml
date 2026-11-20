@@ -214,9 +214,18 @@ importers:
 
   packages/database:
     dependencies:
+      '@kongila/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@kongila/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@kongila/matching-engine':
         specifier: workspace:*
         version: link:../matching-engine
+      '@kongila/notifications':
+        specifier: workspace:*
+        version: link:../notifications
       '@kongila/shared-types':
         specifier: workspace:*
         version: link:../shared-types

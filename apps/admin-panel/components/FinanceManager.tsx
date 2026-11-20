@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import BillingTermsPanel from './BillingTermsPanel';
 import { apiFetch } from '../lib/apiFetch';
 import { GlassCard as Card, NeonButton as Button, Badge, promptInApp } from '@kongila/ui';
 import { formatCurrency, formatDate } from '@kongila/utils';
@@ -12,6 +13,9 @@ interface FinanceManagerProps {
   talents: TalentProfile[];
   contracts: Contract[];
   documents: any[];
+  /** For naming a client on its own billing terms. Optional: the panel
+      still works without it, it just shows ids rather than names. */
+  organizations?: any[];
   syncFromDb: () => Promise<void>;
 }
 
@@ -23,6 +27,7 @@ export default function FinanceManager({
   talents,
   contracts,
   documents,
+  organizations = [],
   syncFromDb,
 }: FinanceManagerProps) {
   const [activeTab, setActiveTab] = useState<'revenue' | 'invoices' | 'payouts' | 'fees'>('revenue');
@@ -49,6 +54,11 @@ export default function FinanceManager({
   const [blockedPayouts, setBlockedPayouts] = useState<any[]>([]);
   const [financeError, setFinanceError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<{ summary: string; skipped: any[] } | null>(null);
+  const [billingPreview, setBillingPreview] = useState<any | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<any | null>(null);
+  const [editInvoiceLines, setEditInvoiceLines] = useState<Array<{ description: string; quantity: string; unitAmount: string }>>([]);
+  const [savingInvoiceDraft, setSavingInvoiceDraft] = useState(false);
 
   // The margins, from fee_config. They used to arrive in the db blob, which
   // had no branch for them in either direction, so the table rendered empty
@@ -170,13 +180,25 @@ export default function FinanceManager({
       // The server has already written the rows. Re-saving them through the
       // db blob would be a second write of the same data, so this just
       // reloads what is now there.
-      setLastRun({ summary: data.message, skipped: data.skipped || [] });
+      setLastRun({ summary: data.summary || `${data.created?.length || 0} draft invoice(s) created.`, skipped: data.skipped || [] });
       await syncFromDb();
     } catch (e: any) {
       setFinanceError(e?.message || 'The billing run failed.');
     } finally {
       setGeneratingDrafts(false);
     }
+  };
+
+  const handlePreviewBilling = async () => {
+    setLoadingPreview(true); setFinanceError(null);
+    try {
+      const res = await apiFetch('/api/finance?view=preview');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not preview billing.');
+      setBillingPreview(data);
+    } catch (e: any) {
+      setFinanceError(e?.message || 'Could not preview billing.');
+    } finally { setLoadingPreview(false); }
   };
 
   /**
@@ -210,6 +232,47 @@ export default function FinanceManager({
     } finally {
       setSendingInvoiceId(null);
     }
+  };
+
+  const openInvoiceEditor = async (invoice: any) => {
+    setFinanceError(null);
+    try {
+      const res = await apiFetch('/api/finance?view=invoices');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Could not load invoice lines.');
+      const lines = (body.lineItems || []).filter((line: any) => String(line.invoiceId) === String(invoice.id));
+      setEditingInvoice(invoice);
+      setEditInvoiceLines(lines.map((line: any) => ({
+        description: line.description,
+        quantity: String(line.quantity || 1),
+        unitAmount: String(line.unitAmount || 0)
+      })));
+    } catch (e: any) {
+      setFinanceError(e?.message || 'Could not load invoice lines.');
+    }
+  };
+
+  const saveInvoiceDraft = async () => {
+    if (!editingInvoice || savingInvoiceDraft) return;
+    setSavingInvoiceDraft(true); setFinanceError(null);
+    try {
+      const res = await apiFetch('/api/finance', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update_draft_invoice', invoiceId: editingInvoice.id,
+          lines: editInvoiceLines.map(line => ({
+            description: line.description, quantity: Number(line.quantity), unitAmount: Number(line.unitAmount)
+          }))
+        })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'The invoice draft was not saved.');
+      setEditingInvoice(null); setEditInvoiceLines([]);
+      await syncFromDb();
+      setLastRun({ summary: 'Draft invoice updated. Review the PDF before sending.', skipped: [] });
+    } catch (e: any) {
+      setFinanceError(e?.message || 'The invoice draft was not saved.');
+    } finally { setSavingInvoiceDraft(false); }
   };
 
   const handleBulkSendInvoices = async () => {
@@ -500,6 +563,9 @@ export default function FinanceManager({
               ))}
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
+              <Button onClick={handlePreviewBilling} disabled={loadingPreview} style={{ background: '#FFF', color: '#14213D', border: '1px solid #CBD5E1' }}>
+                {loadingPreview ? 'Preparing preview…' : 'Preview billing'}
+              </Button>
               <Button onClick={handleGenerateDrafts} disabled={generatingDrafts} style={{ background: '#FFF', color: '#0F172A', border: '1px solid #E2E8F0' }}>
                 {generatingDrafts ? 'Generating...' : 'Auto-Generate Drafts'}
               </Button>
@@ -524,6 +590,21 @@ export default function FinanceManager({
             </div>
           )}
 
+          {billingPreview && (
+            <section aria-label="Billing preview" style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 12, padding: 16, marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+                <div><h3 style={{ margin: 0, color: '#14213D', fontSize: 16 }}>Billing preview</h3><p style={{ margin: '5px 0 12px', color: '#64748B', fontSize: 13 }}>{billingPreview.summary || 'Amounts calculated from active engagements and the configured service fees.'}</p></div>
+                <button type="button" className="btn-secondary" onClick={() => setBillingPreview(null)}>Close</button>
+              </div>
+              {(billingPreview.drafts || []).length === 0 ? <p style={{ color: '#64748B', marginBottom: 0 }}>No invoices are currently due.</p> : (
+                <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}><thead><tr style={{ color: '#64748B', textAlign: 'left' }}><th style={{ padding: 8 }}>Service / period</th><th style={{ padding: 8 }}>Client lines</th><th style={{ padding: 8 }}>Client total</th><th style={{ padding: 8 }}>Talent net</th><th style={{ padding: 8 }}>Kongila margin</th></tr></thead><tbody>
+                  {billingPreview.drafts.map((draft: any) => <tr key={`${draft.contractId}-${draft.period || 'once'}`} style={{ borderTop: '1px solid #E2E8F0', verticalAlign: 'top' }}><td style={{ padding: 8 }}>{LINE_LABELS[draft.serviceLine] || draft.serviceLine}<small style={{ display: 'block', color: '#64748B' }}>{draft.period || 'one-time'} · {draft.contractId}</small>{draft.period && <small style={{ display: 'block', color: '#64748B' }}>{draft.recurring === false ? 'One invoice only' : `Repeats monthly · billing day ${draft.billingDayOfMonth || 1}`}</small>}</td><td style={{ padding: 8 }}>{draft.lines.map((line: any, i: number) => <div key={i} style={{ marginBottom: 5 }}>{line.description}: {draft.currency} {formatCurrency(line.amount)}</div>)}</td><td style={{ padding: 8, fontWeight: 700 }}>{draft.currency} {formatCurrency(draft.total)}</td><td style={{ padding: 8 }}>{draft.talentPayout == null ? '—' : `${draft.currency} ${formatCurrency(draft.talentPayout)}`}</td><td style={{ padding: 8 }}>{draft.currency} {formatCurrency(draft.platformMargin)}</td></tr>)}
+                </tbody></table></div>
+              )}
+              {(billingPreview.skipped || []).length > 0 && <details style={{ marginTop: 12 }}><summary style={{ cursor: 'pointer', color: '#8A5B00', fontWeight: 600 }}>{billingPreview.skipped.length} item(s) need attention</summary><ul>{billingPreview.skipped.map((item: any, i: number) => <li key={i}>{item.reason}</li>)}</ul></details>}
+            </section>
+          )}
+
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #E2E8F0', color: '#64748B', fontSize: '13px' }}>
@@ -533,6 +614,7 @@ export default function FinanceManager({
                 <th style={{ padding: '12px 8px' }}>Invoice</th>
                 <th style={{ padding: '12px 8px' }}>Client</th>
                 <th style={{ padding: '12px 8px' }}>Amount</th>
+                <th style={{ padding: '12px 8px' }}>Kongila margin</th>
                 <th style={{ padding: '12px 8px' }}>Due Date</th>
                 <th style={{ padding: '12px 8px' }}>Status</th>
                 <th style={{ padding: '12px 8px' }}>Actions</th>
@@ -547,6 +629,7 @@ export default function FinanceManager({
                   <td style={{ padding: '12px 8px', fontWeight: 500 }}>{(inv as any).invoiceNumber || <span style={{ color: '#94A3B8' }}>not issued</span>}</td>
                   <td style={{ padding: '12px 8px' }}>{(inv as any).clientName || 'Unknown'}</td>
                   <td style={{ padding: '12px 8px' }}>{formatCurrency(invoiceTotal(inv))}</td>
+                  <td style={{ padding: '12px 8px', color: '#0F766E', fontWeight: 600 }}>{(inv as any).platformMarginUsd == null ? '—' : formatCurrency(Number((inv as any).platformMarginUsd))}</td>
                   <td style={{ padding: '12px 8px' }}>{formatDate(inv.dueDate)}</td>
                   <td style={{ padding: '12px 8px' }}>
                     <Badge status={getStatusColor(inv.status) as any} text={inv.status} />
@@ -554,9 +637,12 @@ export default function FinanceManager({
                   <td style={{ padding: '12px 8px' }}>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       {inv.status === 'draft' && (
+                        <>
+                        <button onClick={() => openInvoiceEditor(inv)} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Edit draft</button>
                         <button onClick={() => handleSendInvoice(inv.id)} disabled={sendingInvoiceId === inv.id} style={{ background: 'none', border: 'none', color: '#2563EB', cursor: sendingInvoiceId === inv.id ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}>
                           {sendingInvoiceId === inv.id ? 'Sending...' : 'Send'}
                         </button>
+                        </>
                       )}
                       {(inv.status === 'sent' || inv.status === 'overdue') && (
                         <button onClick={() => handleUpdateInvoiceStatus(inv.id, 'paid')} style={{ background: 'none', border: 'none', color: '#10B981', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Mark paid</button>
@@ -567,7 +653,7 @@ export default function FinanceManager({
                 </tr>
               ))}
               {filteredInvoices.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: '#94A3B8' }}>No invoices found.</td></tr>
+                <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#94A3B8' }}>No invoices found.</td></tr>
               )}
             </tbody>
           </table>
@@ -766,6 +852,12 @@ export default function FinanceManager({
             </table>
           </Card>
 
+          {/* Everything else that decides what an invoice says: the
+              placement percentage, the supervision premium, payment terms,
+              and the days a split payment falls due. Per service line, and
+              per client where one has been negotiated. */}
+          <BillingTermsPanel organizations={organizations} />
+
           <Card style={{ padding: '24px', background: '#F8FAFC' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 16px 0', color: '#0F172A' }}>Fee Audit Logs</h3>
             {feeLog.length === 0 ? (
@@ -781,6 +873,32 @@ export default function FinanceManager({
               );
             })}
           </Card>
+        </div>
+      )}
+      {editingInvoice && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && !savingInvoiceDraft) setEditingInvoice(null); }}>
+          <section className="modal-content" style={{ width: 'min(760px, 94vw)', maxHeight: '88vh', overflow: 'auto', padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 16 }}>
+              <div><h2 style={{ margin: 0, color: '#14213D' }}>Edit draft invoice</h2><p style={{ color: '#64748B', margin: '6px 0 20px' }}>Review service and Kongila fee lines before this branded invoice is issued.</p></div>
+              <button type="button" onClick={() => setEditingInvoice(null)} disabled={savingInvoiceDraft} className="btn-secondary">Close</button>
+            </div>
+            {financeError && <div role="alert" style={{ color: '#991B1B', background: '#FEF2F2', padding: 10, borderRadius: 8, marginBottom: 14 }}>{financeError}</div>}
+            <div style={{ display: 'grid', gap: 10 }}>
+              {editInvoiceLines.map((line, index) => (
+                <div key={index} style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) 100px 150px auto', gap: 8, alignItems: 'end' }}>
+                  <label style={{ fontSize: 12, color: '#64748B' }}>Description<input aria-label={`Line ${index + 1} description`} value={line.description} onChange={e => setEditInvoiceLines(rows => rows.map((row, i) => i === index ? { ...row, description: e.target.value } : row))} /></label>
+                  <label style={{ fontSize: 12, color: '#64748B' }}>Quantity<input aria-label={`Line ${index + 1} quantity`} type="number" min="0.01" step="0.01" value={line.quantity} onChange={e => setEditInvoiceLines(rows => rows.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))} /></label>
+                  <label style={{ fontSize: 12, color: '#64748B' }}>Unit amount<input aria-label={`Line ${index + 1} unit amount`} type="number" min="0" step="0.01" value={line.unitAmount} onChange={e => setEditInvoiceLines(rows => rows.map((row, i) => i === index ? { ...row, unitAmount: e.target.value } : row))} /></label>
+                  <button type="button" className="btn-secondary" onClick={() => setEditInvoiceLines(rows => rows.filter((_, i) => i !== index))} aria-label={`Remove line ${index + 1}`}>Remove</button>
+                </div>
+              ))}
+              <button type="button" className="btn-secondary" onClick={() => setEditInvoiceLines(rows => [...rows, { description: '', quantity: '1', unitAmount: '0' }])}>Add invoice line</button>
+            </div>
+            <div style={{ borderTop: '1px solid #E2E8F0', marginTop: 18, paddingTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong>Draft total: {formatCurrency(editInvoiceLines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitAmount || 0), 0))}</strong>
+              <button type="button" className="btn-primary" disabled={savingInvoiceDraft || editInvoiceLines.length === 0} onClick={saveInvoiceDraft}>{savingInvoiceDraft ? 'Saving…' : 'Save draft'}</button>
+            </div>
+          </section>
         </div>
       )}
     </div>

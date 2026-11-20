@@ -12,6 +12,9 @@ export default function SetPasswordPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // True when they are here because the account was created with a
+  // temporary password, rather than from an invitation link.
+  const [forcedChange, setForcedChange] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -24,6 +27,21 @@ export default function SetPasswordPage() {
 
     const resolveInvitation = async () => {
       const callbackUrl = new URL(window.location.href);
+
+      // An operator whose account was created with a password arrives here
+      // already signed in, sent by the portal rather than by a link in an
+      // email. There is no token to verify in that case — the session is
+      // the proof — so take it and show the form.
+      const current = await supabase.auth.getSession();
+      if (current.data.session?.user?.user_metadata?.must_change_password) {
+        if (!active) return;
+        setEmail(current.data.session.user.email || '');
+        setForcedChange(true);
+        setValidLink(true);
+        setChecking(false);
+        return;
+      }
+
       const callbackError = callbackUrl.searchParams.get('error_description') || callbackUrl.searchParams.get('error');
       if (callbackError) throw new Error(callbackError);
 
@@ -95,15 +113,30 @@ export default function SetPasswordPage() {
     }
 
     setBusy(true);
-    const { error: updateError } = await supabase.auth.updateUser({ password });
+    // Clearing must_change_password is part of saving the new one. If it
+    // were a second call it could fail on its own and send them back here
+    // for ever with a password they have already changed.
+    const { error: updateError } = await supabase.auth.updateUser({
+      password,
+      data: { must_change_password: false }
+    });
     if (updateError) {
       setError(`Your password was not saved: ${updateError.message}`);
       setBusy(false);
       return;
     }
 
-    const { error: signOutError } = await supabase.auth.signOut();
     setSuccess(true);
+
+    // Someone activating an invitation signs in fresh, which proves the
+    // password works. Someone who was already signed in and forced to
+    // change it stays where they are and goes straight to work.
+    if (forcedChange) {
+      window.setTimeout(() => { void router.replace('/'); }, 900);
+      return;
+    }
+
+    const { error: signOutError } = await supabase.auth.signOut();
     if (signOutError) {
       setError(`Your password was set, but the session could not be closed. Sign out before sharing this device. ${signOutError.message}`);
     } else {
@@ -123,12 +156,19 @@ export default function SetPasswordPage() {
         <div style={{ color: '#0047CC', fontWeight: 800, fontSize: '24px', marginBottom: '28px' }}>
           Kongila
         </div>
-        <h1 style={{ margin: '0 0 10px', fontSize: '24px' }}>Set your password</h1>
+        <h1 style={{ margin: '0 0 10px', fontSize: '24px' }}>
+          {forcedChange ? 'Choose your password' : 'Set your password'}
+        </h1>
         {checking ? (
           <p>Verifying your secure invitation…</p>
         ) : success ? (
           <>
-            <p>Your password is set. {error ? 'Please sign out before sharing this device.' : 'Redirecting you to sign in…'}</p>
+            <p>
+              Your password is set.{' '}
+              {error
+                ? 'Please sign out before sharing this device.'
+                : forcedChange ? 'Taking you to your dashboard…' : 'Redirecting you to sign in…'}
+            </p>
             {error && <p role="alert" style={{ color: '#B91C1C' }}>{error}</p>}
           </>
         ) : !validLink ? (
@@ -140,7 +180,9 @@ export default function SetPasswordPage() {
         ) : (
           <>
             <p style={{ color: '#526078', margin: '0 0 24px' }}>
-              Activate your administrator account{email ? ` for ${email}` : ''}.
+              {forcedChange
+                ? `You signed in with a temporary password. Choose your own to carry on${email ? ` as ${email}` : ''}.`
+                : `Activate your administrator account${email ? ` for ${email}` : ''}.`}
             </p>
             <form onSubmit={submit}>
               <label htmlFor="password" style={{ display: 'block', fontWeight: 700, marginBottom: '8px' }}>

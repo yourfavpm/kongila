@@ -67,7 +67,13 @@ export function previousPeriod(now: Date = new Date()): string {
 async function loadContracts() {
   const supabase = getSupabaseClient();
 
-  const { data: contracts, error } = await supabase.from('contracts').select('*');
+  const { data: assignments, error: assignmentError } = await supabase
+    .from('assignments').select('id, contract_id, status, service_line')
+    .eq('status', 'active').in('service_line', ['outsourcing', 'managed_workforce']);
+  if (assignmentError) throw new Error(assignmentError.message);
+  const contractIds = [...new Set((assignments || []).map((a: any) => a.contract_id).filter(Boolean))];
+  if (!contractIds.length) return [];
+  const { data: contracts, error } = await supabase.from('contracts').select('*').in('id', contractIds);
   if (error) throw new Error(error.message);
 
   const talentIds = [...new Set((contracts || []).map((c: any) => c.talent_id).filter(Boolean))];
@@ -95,15 +101,18 @@ async function loadContracts() {
     (profiles || []).map((p: any) => [String(p.user_id), orgName.get(String(p.organization_id)) || ''])
   );
 
+  const assignmentByContract = new Map<string, any>((assignments || []).map((a: any) => [String(a.contract_id), a]));
   return (contracts || []).map((c: any) => ({
     id: c.id,
+    assignmentId: assignmentByContract.get(String(c.id))?.id,
     talentId: c.talent_id,
     talentName: talentName.get(String(c.talent_id)) || '',
     clientId: c.client_id,
     clientName: clientName.get(String(c.client_id)) || '',
-    serviceType: c.service_type,
+    serviceType: assignmentByContract.get(String(c.id))?.service_line || c.service_type,
     status: c.status,
     rateAmount: Number(c.rate_amount || 0),
+    talentCommissionPctSnapshot: c.talent_commission_pct_snapshot == null ? null : Number(c.talent_commission_pct_snapshot),
     currency: c.currency || 'USD',
     startDate: c.start_date,
     endDate: c.end_date
@@ -201,6 +210,7 @@ export async function generatePayroll(
       id: newId('pe'),
       run_id: runId,
       contract_id: entry.contractId,
+      assignment_id: entry.assignmentId,
       talent_id: entry.talentId,
       talent_name: entry.talentName,
       client_name: entry.clientName,

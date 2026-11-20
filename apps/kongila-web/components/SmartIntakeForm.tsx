@@ -24,24 +24,32 @@ interface SmartIntakeFormProps {
    */
   onComplete: (requests: ServiceRequest[]) => void;
   onCancel?: () => void;
+  /** Compact presentation when the intake is opened over the client workspace. */
+  presentation?: 'page' | 'modal';
+  /**
+   * Hand the client over to the spreadsheet route. Only offered where there
+   * is somewhere to hand them to — the signed-out marketing page has no
+   * bulk screen behind it, so the link does not appear there.
+   */
+  onBulkImport?: () => void;
 }
 
 const INTAKE_SERVICES = [
   {
-    id: 'Hire Talent', title: 'Hire Talent', model: 'You employ and manage directly',
-    desc: 'Find and screen professionals for your organisation to employ and manage directly.'
+    id: 'Hire Talent', title: 'Hire Talent',
+    desc: 'Find and screen people your organisation employs directly.'
   },
   {
-    id: 'Outsource Talent', title: 'Outsource Talent', model: 'You direct the day-to-day work',
-    desc: 'Engage dedicated remote team members while Kongila supports the agreed outsourcing arrangements.'
+    id: 'Outsource Talent', title: 'Outsource Talent',
+    desc: 'Kongila supports employment; you direct the day-to-day work.'
   },
   {
-    id: 'Managed Workforce', title: 'Managed Workforce', model: 'Kongila manages the workforce',
-    desc: 'Kongila provides, supervises and manages the workforce according to your agreed engagement.'
+    id: 'Managed Workforce', title: 'Managed Workforce',
+    desc: 'Kongila provides and manages the workforce for your organisation.'
   },
   {
-    id: 'Project Execution', title: 'Project Execution', model: 'Kongila manages defined delivery',
-    desc: 'Engage Kongila to staff and manage the delivery of a specific project or defined deliverable.'
+    id: 'Project Execution', title: 'Project Execution',
+    desc: 'Kongila manages a team to deliver a defined project.'
   }
 ];
 
@@ -172,7 +180,7 @@ function IntakeIllustration({ service, step }: { service?: string; step: number 
   );
 }
 
-export default function SmartIntakeForm({ currentUser, initialServiceType, onComplete, onCancel }: SmartIntakeFormProps) {
+export default function SmartIntakeForm({ currentUser, initialServiceType, onComplete, onCancel, onBulkImport, presentation = 'page' }: SmartIntakeFormProps) {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Set once the request is filed. While it holds a value the wizard is
@@ -300,6 +308,121 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
     if (roles.length <= 1) return;
     setErrorMsg('');
     setRoles(roles.filter((_, i) => i !== index));
+  };
+
+  // ─── Drafting help ──────────────────────────────────────────────────────────
+  //
+  // The brief is what the matching engine scores against, so a client who
+  // writes two lines gets a two-line shortlist. These buttons turn what they
+  // already typed into something a candidate can read. Nothing is saved until
+  // they have seen it in the box and can edit it, and the server prompt is
+  // told never to invent a requirement — an invented one becomes a filter
+  // that quietly removes good people.
+  //
+  // When the deployment has no key the first call answers 503 and the buttons
+  // disappear for the rest of the session, rather than offering a feature
+  // that cannot work.
+  const [aiAvailable, setAiAvailable] = useState(true);
+  const [aiBusy, setAiBusy] = useState<string | null>(null);
+  const [aiError, setAiError] = useState('');
+
+  const draftRole = async (index: number, kind: 'description' | 'responsibilities' | 'skills' | 'tidy') => {
+    const role = roles[index] || {};
+    const busyKey = `${index}:${kind}`;
+    setAiBusy(busyKey);
+    setAiError('');
+    try {
+      const response = await apiFetch('/api/ai/draft-role', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind,
+          roleTitle: role.title || '',
+          seniority: role.seniorityLevel || '',
+          serviceType: formData.serviceType || '',
+          skills: (role.requiredSkills || []).filter(Boolean),
+          context: kind === 'skills' ? (role.description || '') : (role.description || '')
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 503) {
+        setAiAvailable(false);
+        return;
+      }
+      if (!response.ok) {
+        setAiError(data?.error || 'That did not work. Write it yourself for now.');
+        return;
+      }
+
+      if (kind === 'skills') {
+        const existing = (role.requiredSkills || []).filter(Boolean).map((skill: string) => skill.trim());
+        const seen = new Set(existing.map((skill: string) => skill.toLowerCase()));
+        const added = (data.skills || []).filter((skill: string) => {
+          const key = String(skill).toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        updateRole(index, 'requiredSkills', [...existing, ...added]);
+        return;
+      }
+
+      if (kind === 'responsibilities') {
+        const current = String(role.description || '').trim();
+        updateRole(index, 'description', current ? `${current}\n\n${data.text}` : data.text);
+        return;
+      }
+
+      updateRole(index, 'description', data.text);
+    } catch {
+      setAiError('We could not reach the drafting service. Write it yourself for now.');
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
+  const aiButtonStyle: React.CSSProperties = {
+    background: 'transparent',
+    border: '1px solid var(--border-glass, #CBD5E1)',
+    borderRadius: '999px',
+    padding: '6px 12px',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: 'var(--kongila-blue, #2563EB)',
+    cursor: 'pointer'
+  };
+
+  const AiDraftButtons = ({ index, role }: { index: number; role: any }) => {
+    if (!aiAvailable) return null;
+    const hasTitle = Boolean(String(role.title || '').trim());
+    const hasText = Boolean(String(role.description || '').trim());
+    const options: Array<{ kind: 'description' | 'responsibilities' | 'skills' | 'tidy'; label: string; ready: boolean }> = [
+      { kind: 'description', label: hasText ? 'Rewrite from scratch' : 'Draft this for me', ready: hasTitle },
+      { kind: 'responsibilities', label: 'Add responsibilities', ready: hasTitle },
+      { kind: 'tidy', label: 'Tidy up my wording', ready: hasText }
+    ];
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+        {options.map(option => (
+          <button
+            key={option.kind}
+            type="button"
+            disabled={!option.ready || aiBusy !== null}
+            onClick={() => draftRole(index, option.kind)}
+            style={{
+              ...aiButtonStyle,
+              opacity: !option.ready || aiBusy !== null ? 0.5 : 1,
+              cursor: !option.ready || aiBusy !== null ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {aiBusy === `${index}:${option.kind}` ? 'Writing…' : option.label}
+          </button>
+        ))}
+        <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748B)' }}>
+          {hasTitle ? 'You can edit everything it writes.' : 'Add a role title first.'}
+        </span>
+      </div>
+    );
   };
 
   const totalHeadcount = roles.reduce(
@@ -763,9 +886,9 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
   const renderStep1 = () => (
     <div className="intake-step-content">
       <div className="intake-section-heading">
-        <p className="intake-kicker">START WITH THE ENGAGEMENT</p>
-        <h2>What are you looking to accomplish?</h2>
-        <p>Choose the structure that best fits how you want Kongila to support your workforce.</p>
+        <p className="intake-kicker">CHOOSE A SERVICE</p>
+        <h2>What do you need Kongila to do?</h2>
+        <p>Select one to continue. You can review your request before submitting.</p>
       </div>
       <div className="intake-service-grid" role="radiogroup" aria-label="Choose a service type">
         {INTAKE_SERVICES.map(item => {
@@ -783,7 +906,6 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
               <span className="intake-service-copy">
                 <strong>{item.title}</strong>
                 <span className="intake-service-description">{item.desc}</span>
-                <span className="intake-service-model">{item.model}</span>
               </span>
               <span className="intake-service-choice" aria-hidden="true">{selected ? '✓' : '+'}</span>
             </button>
@@ -819,6 +941,26 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
                 Each role gets its own request and reference, with its own candidates, progress and hiring
                 count. Your shared brief and company details are carried across all of them.
               </div>
+            )}
+
+            {onBulkImport && (
+              <button
+                type="button"
+                onClick={onBulkImport}
+                style={{
+                  alignSelf: 'flex-start',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  color: 'var(--kongila-blue, #2563EB)',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
+              >
+                Hiring for several roles? Upload them as a spreadsheet instead.
+              </button>
             )}
 
             {roles.map((role, index) => (
@@ -868,6 +1010,22 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
                     value={(role.requiredSkills || []).join(', ')}
                     onChange={e => updateRole(index, 'requiredSkills', e.target.value.split(',').map((s: string) => s.trim()))}
                   />
+                  {aiAvailable && (
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        disabled={!String(role.title || '').trim() || aiBusy !== null}
+                        onClick={() => draftRole(index, 'skills')}
+                        style={{
+                          ...aiButtonStyle,
+                          opacity: !String(role.title || '').trim() || aiBusy !== null ? 0.5 : 1,
+                          cursor: !String(role.title || '').trim() || aiBusy !== null ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {aiBusy === `${index}:skills` ? 'Thinking…' : 'Suggest skills'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
         <div className="intake-form-row" style={{ display: 'flex', gap: '16px' }}>
@@ -911,6 +1069,10 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
                     value={role.description || ''}
                     onChange={e => updateRole(index, 'description', e.target.value)}
                   />
+                  <AiDraftButtons index={index} role={role} />
+                  {aiError && (
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#B91C1C' }}>{aiError}</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -1430,7 +1592,7 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
   }
 
   return (
-    <div className="client-intake-shell">
+    <div className={`client-intake-shell is-${presentation} intake-step-${step}`}>
       <IntakeTopBar onCancel={onCancel} />
       <div className="intake-progress-shell" aria-label={`Step ${step} of ${totalSteps}`}>
         <div className="intake-progress-meta"><span>CLIENT SERVICE REQUEST</span><strong>Step {step} <span>of {totalSteps}</span></strong></div>
@@ -1458,13 +1620,13 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
         </div>
       </div>
 
-      <div className="intake-main-layout">
+      <div className={`intake-main-layout ${step === 1 ? 'intake-main-layout-step-one' : ''}`}>
         <section className="intake-main-column" aria-label="Request details">
           <GlassCard className={`intake-card intake-workspace intake-workspace-step-${step}`} style={{ maxWidth: 'none', width: '100%', margin: 0, transition: 'none' }}>
-            <div className="intake-current-heading">
+            {step > 1 && <div className="intake-current-heading">
               <span className="intake-current-number">{`0${step}`}</span>
               <div><p>{selectedService?.title || 'KONGILA WORKFORCE SOLUTIONS'}</p><h1>{getIntakeStepTitle(step, authData.mode)}</h1></div>
-            </div>
+            </div>}
 
             {errorMsg && <div className="intake-error" role="alert"><span aria-hidden="true">!</span>{errorMsg}</div>}
 
@@ -1485,24 +1647,43 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
               )}
 
               {step < totalSteps ? (
-                <NeonButton onClick={handleNext}>Continue <span aria-hidden="true">→</span></NeonButton>
+                <NeonButton onClick={handleNext} disabled={step === 1 && !selectedService}>Continue <span aria-hidden="true">→</span></NeonButton>
               ) : (
                 <NeonButton onClick={() => {
-                  if (authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified) {
+                  // Only a visitor creating an account has a code to enter.
+                  if (!currentUser && authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified) {
                     setSignupOtpModalOpen(true);
                     return;
                   }
                   void submitRequest(signupOtpVerified);
-                }} loading={isSubmitting} disabled={authData.mode === 'signup' && !authData.tosAccepted}>
+                }}
+                  loading={isSubmitting}
+                  /**
+                   * A signed-in client has nothing left to verify.
+                   *
+                   * `authData.mode` starts at 'signup' and is only ever
+                   * changed by the sign-in toggle on step 6 — a step that
+                   * does not exist when somebody is already signed in
+                   * (totalSteps is 5 for them). So for a client filing a
+                   * second request the mode stayed 'signup', `tosAccepted`
+                   * stayed false because they never saw the box, and the
+                   * submit button was disabled for ever while reading
+                   * "Verify email & submit request". There was no way to
+                   * file a request from inside the product at all.
+                   */
+                  disabled={!currentUser && authData.mode === 'signup' && !authData.tosAccepted}
+                >
                   {isSubmitting
                     ? 'Submitting...'
-                    : authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified
-                      ? 'Enter 8-digit code'
-                      : authData.mode === 'signup' && !signupOtpVerified
-                        ? 'Verify email & submit request'
-                        : authData.mode === 'signup'
-                          ? 'Submit service request'
-                          : 'Sign In & Submit Request'}
+                    : currentUser
+                      ? 'Submit request'
+                      : authData.mode === 'signup' && signupOtpRequested && !signupOtpVerified
+                        ? 'Enter 8-digit code'
+                        : authData.mode === 'signup' && !signupOtpVerified
+                          ? 'Verify email & submit request'
+                          : authData.mode === 'signup'
+                            ? 'Submit service request'
+                            : 'Sign In & Submit Request'}
                 </NeonButton>
               )}
             </div>
@@ -1543,15 +1724,20 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
           <section role="dialog" aria-modal="true" aria-labelledby="client-signup-otp-title" aria-describedby="client-signup-otp-description" style={{ width: '100%', maxWidth: '460px', boxSizing: 'border-box', background: '#fff', border: '1px solid #DFE6EE', borderRadius: '20px', padding: 'clamp(22px, 5vw, 34px)', color: '#14213D', boxShadow: '0 28px 80px rgba(15, 23, 42, .26)' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
               <div>
-                <div style={{ color: '#1455C0', fontSize: '11px', fontWeight: 800, letterSpacing: '.1em', textTransform: 'uppercase' }}>Email verification</div>
-                <h2 id="client-signup-otp-title" style={{ margin: '8px 0 7px', fontSize: '23px', lineHeight: 1.25, letterSpacing: '-.02em' }}>Check your inbox</h2>
+                <h2 id="client-signup-otp-title" style={{ margin: '0 0 7px', fontSize: '23px', lineHeight: 1.25, letterSpacing: '-.02em' }}>Check your inbox</h2>
               </div>
               <button type="button" aria-label="Close verification dialog" disabled={isSubmitting} onClick={() => setSignupOtpModalOpen(false)} style={{ flex: '0 0 auto', width: '36px', height: '36px', border: '1px solid #E2E8F0', borderRadius: '50%', background: '#fff', color: '#526174', fontSize: '20px', cursor: isSubmitting ? 'wait' : 'pointer' }}>×</button>
             </div>
-            <p id="client-signup-otp-description" style={{ margin: '0 0 20px', color: '#526174', fontSize: '14px', lineHeight: 1.6 }}>
-              Enter the 8-digit code sent to <strong style={{ color: '#14213D', overflowWrap: 'anywhere' }}>{authData.businessEmail}</strong> to verify your email and finish creating your account and request.
+            {/* One line, and the only thing on it that matters is the
+                address. This said the same thing three times over — a kicker
+                reading "Email verification", a heading, a sentence restating
+                both and explaining what submitting would do, then a label
+                above the box repeating "8-digit verification code" when the
+                box already shows eight slots. Somebody reading their email
+                for a code does not want a paragraph. */}
+            <p id="client-signup-otp-description" style={{ margin: '0 0 18px', color: '#526174', fontSize: '14px', lineHeight: 1.6 }}>
+              We sent a code to <strong style={{ color: '#14213D', overflowWrap: 'anywhere' }}>{authData.businessEmail}</strong>.
             </p>
-            <label htmlFor="client-signup-otp" style={{ display: 'block', marginBottom: '7px', color: '#26384D', fontSize: '13px', fontWeight: 700 }}>8-digit verification code</label>
             <input
               id="client-signup-otp"
               type="text"
@@ -1569,16 +1755,16 @@ export default function SmartIntakeForm({ currentUser, initialServiceType, onCom
             />
             {otpMessage && <p role="status" aria-live="polite" style={{ minHeight: '22px', margin: '11px 0 0', color: /could not|invalid|expired|error|wait/i.test(otpMessage) ? '#B42332' : '#526174', fontSize: '13px', lineHeight: 1.5 }}>{otpMessage}</p>}
             <button type="button" onClick={() => void verifyClientSignupCode()} disabled={signupOtp.length !== CLIENT_SIGNUP_OTP_LENGTH || isSubmitting} style={{ width: '100%', minHeight: '48px', marginTop: '18px', border: 0, borderRadius: '999px', background: '#1455C0', color: '#fff', fontSize: '14px', fontWeight: 800, cursor: signupOtp.length === CLIENT_SIGNUP_OTP_LENGTH && !isSubmitting ? 'pointer' : 'not-allowed', opacity: signupOtp.length === CLIENT_SIGNUP_OTP_LENGTH && !isSubmitting ? 1 : .58 }}>
-              {isSubmitting ? 'Verifying and submitting…' : 'Verify & submit request'}
+              {isSubmitting ? 'Submitting…' : 'Verify'}
             </button>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '16px', color: '#64748B', fontSize: '13px' }}>
-              <span>Didn’t receive the email?</span>
+              <span>No email?</span>
               <button type="button" disabled={signupOtpCooldown > 0 || isSubmitting} onClick={() => void resendClientSignupCode()} style={{ border: 0, padding: 0, background: 'none', color: signupOtpCooldown > 0 || isSubmitting ? '#94A3B8' : '#1455C0', font: 'inherit', fontWeight: 800, cursor: signupOtpCooldown > 0 || isSubmitting ? 'not-allowed' : 'pointer' }}>
                 {signupOtpCooldown > 0 ? `Resend in ${signupOtpCooldown}s` : 'Resend code'}
               </button>
             </div>
-            <div style={{ marginTop: '17px', paddingTop: '14px', borderTop: '1px solid #E8EDF3', color: '#718096', fontSize: '12px', lineHeight: 1.55 }}>
-              If the address is incorrect, close this dialog and edit it before requesting another code.
+            <div style={{ marginTop: '14px', color: '#94A3B8', fontSize: '12px', lineHeight: 1.55 }}>
+              Wrong address? Close this and change it.
             </div>
           </section>
         </div>

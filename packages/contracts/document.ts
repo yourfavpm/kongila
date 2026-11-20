@@ -21,6 +21,9 @@ export interface ContractFacts {
   clientName?: string | null;
   roleTitle?: string | null;
   monthlyRateUsd?: number | string | null;
+  clientFeePct?: number | string | null;
+  clientServiceFeeUsd?: number | string | null;
+  clientServiceRateUsd?: number | string | null;
   startDate?: string | null;
   endDate?: string | null;
   engagementType?: string | null;
@@ -44,6 +47,9 @@ const FIELDS: Record<string, (f: ContractFacts) => string> = {
   client_name: f => String(f.clientName || ''),
   role_title: f => String(f.roleTitle || ''),
   monthly_rate_usd: f => (f.monthlyRateUsd == null ? '' : String(f.monthlyRateUsd)),
+  client_fee_pct: f => (f.clientFeePct == null ? '' : `${(Number(f.clientFeePct) * 100).toFixed(2).replace(/\.00$/, '')}%`),
+  client_service_fee_usd: f => (f.clientServiceFeeUsd == null ? '' : String(f.clientServiceFeeUsd)),
+  client_service_rate_usd: f => (f.clientServiceRateUsd == null ? '' : String(f.clientServiceRateUsd)),
   start_date: f => String(f.startDate || ''),
   end_date: f => String(f.endDate || ''),
   reference_number: f => String(f.referenceNumber || ''),
@@ -105,6 +111,12 @@ export function contractCoverSheet(facts: ContractFacts): string {
   ];
   if (facts.endDate) lines.push(`End date: ${facts.endDate}`);
   if (facts.engagementType) lines.push(`Engagement: ${facts.engagementType}`);
+  if (facts.clientServiceFeeUsd != null) {
+    lines.push(`Kongila client service fee: USD ${facts.clientServiceFeeUsd}`);
+  }
+  if (facts.clientServiceRateUsd != null) {
+    lines.push(`Client service amount including Kongila fee: USD ${facts.clientServiceRateUsd}`);
+  }
   return lines.join('\n');
 }
 

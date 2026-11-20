@@ -5,7 +5,10 @@
   "types": "index.ts",
   "private": true,
   "dependencies": {
+    "@kongila/auth": "workspace:*",
+    "@kongila/contracts": "workspace:*",
     "@kongila/matching-engine": "workspace:*",
+    "@kongila/notifications": "workspace:*",
     "@kongila/shared-types": "workspace:*",
     "@kongila/utils": "workspace:*",
     "@kongila/workflows": "workspace:*",

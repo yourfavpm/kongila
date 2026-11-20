@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, getTalentComplianceStatus } from '@kongila/database';
+import { requirePermission, getRequestUser, getSupabaseClient } from '@kongila/database';
 
 /**
  * The offer queue operations work from.
@@ -13,7 +13,10 @@ const OPEN_STATUSES = [
   'submitted',
   'admin_approved',
   'revision_requested',
-  'sent_to_talent'
+  'sent_to_talent',
+  // Accepted offers are the input to contract generation and stay in the
+  // operator's open queue until a contract is created.
+  'accepted'
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -22,6 +25,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
   if (actor.kind !== 'admin') return res.status(403).json({ error: 'Not authorised' });
+
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:offers' : 'offers.approve');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
 
   const supabase = getSupabaseClient();
   const scope = String(req.query.scope || 'open');
@@ -64,20 +73,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     const now = Date.now();
-    const complianceByTalent = new Map<string, any>();
-    await Promise.all(talentIds.map(async (talentId) => {
-      const result = await getTalentComplianceStatus(String(talentId));
-      complianceByTalent.set(String(talentId), result.ok && result.data
-        ? { pendingMandatoryDocuments: result.data.outstanding.map((doc: any) => ({ id: doc.id, name: doc.name || doc.type || 'Required document' })) }
-        : { pendingMandatoryDocuments: null, complianceStatusError: result.error || 'Could not load required-document status.' });
-    }));
-
     return res.status(200).json({
       offers: rows.map((offer: any) => ({
         ...offer,
         talentName: talentName.get(String(offer.talent_id)) || 'Unknown candidate',
         clientName: orgForUser.get(String(offer.client_id)) || 'Unknown company',
-        ...(complianceByTalent.get(String(offer.talent_id)) || { pendingMandatoryDocuments: [] }),
         isOverdue:
           offer.status === 'sent_to_talent' &&
           offer.talent_response_deadline &&

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   createTicket,
+  requirePermission,
   getRequestUser,
   listTickets,
   replyToTicket,
@@ -17,6 +18,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn('[api/support] refused ' + actor.kind + ' ' + actor.userId);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:support' : 'support.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
   if (req.method === 'GET') {
     const result = await listTickets(actor);
     if (!result.ok) return res.status(result.status).json({ error: result.error });

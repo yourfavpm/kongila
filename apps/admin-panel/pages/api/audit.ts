@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, readAuditLog } from '@kongila/database';
-import { canAccessTab } from '@kongila/auth';
+import { requirePermission, getRequestUser, readAuditLog } from '@kongila/database';
 
 /**
  * Reading the audit log.
@@ -18,9 +17,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
-  if (!canAccessTab(actor.role, 'audit')) {
-    return res.status(403).json({ error: 'Not authorised' });
-  }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'view:audit');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
 
   const { actorUserId, entityType, entityId, action, since, until, limit } = req.query;
 

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
-import { hasOfferCapacity, requestedHeadcount } from '@kongila/workflows';
+import { getRequestUser, getSupabaseClient, complianceGate, setOfferMilestones } from '@kongila/database';
+import { hasOfferCapacity, requestedHeadcount, serviceLineOf, milestonePlanProblem } from '@kongila/workflows';
 import { requestTitle } from '@kongila/shared-types';
 
 /**
@@ -80,7 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     paymentPeriod,
     paymentDueDay,
     clientNote,
-    entryPoint
+    entryPoint,
+    projectFeeUsd,
+    milestones
   } = req.body || {};
 
   if (!requestId || !matchId || !talentId || !Number.isFinite(Number(proposedRateUsd)) || Number(proposedRateUsd) <= 0) {
@@ -147,6 +149,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(409).json({ error: 'A completed interview is required before an offer can be created' });
     }
 
+    // Validate compliance only after confirming the caller owns this
+    // request and candidate association, so this endpoint cannot be used to
+    // probe another candidate's compliance state.
+    const refusal = await complianceGate('extend_offer', String(talentId));
+    if (refusal) return res.status(409).json({ error: refusal });
+
     const roleTitle = requestTitle({
       ...(request.payload || {}),
       title: request.payload?.title || request.title
@@ -154,6 +162,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const serviceType = request.payload?.serviceType || request.service_type;
     if (!roleTitle || !serviceType) {
       return res.status(422).json({ error: 'The role request is missing its title or service type' });
+    }
+
+    // A project is bought as a set of deliverables, so its plan is part of
+    // the offer rather than something operations works out afterwards. It is
+    // checked here, before anything is written, so a project offer cannot
+    // exist without one.
+    const isProject = serviceLineOf(serviceType) === 'project';
+    const projectFee = isProject
+      ? Number(projectFeeUsd ?? proposedRateUsd)
+      : 0;
+
+    if (isProject) {
+      const plan = Array.isArray(milestones) ? milestones : [];
+      const problem = milestonePlanProblem(plan, projectFee);
+      if (problem) return res.status(422).json({ error: problem });
     }
 
     if (requestId) {
@@ -198,45 +221,79 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
+    const insertRow: Record<string, any> = {
+      request_id: request.id,
+      match_id: match.id,
+      client_id: request.client_id,
+      talent_id: talentId,
+      initiated_by: actor.kind === 'admin' ? 'admin' : 'client',
+      entry_point: entryPoint || 'matched_talent_page',
+      // A client submits for approval. Operations can send their own
+      // directly, since they are the ones who would approve it.
+      status: actor.kind === 'admin' ? 'admin_approved' : 'submitted',
+      role_title: roleTitle,
+      service_type: serviceType,
+      engagement_type: engagementType || null,
+      hours_per_week: hoursPerWeek || null,
+      proposed_start_date: proposedStartDate || null,
+      contract_duration_type: contractDurationType || null,
+      contract_months: contractMonths || null,
+      payment_model: paymentModel || 'flat_rate',
+      payment_period: paymentPeriod || 'monthly',
+      payment_due_day: paymentDueDay || null,
+      proposed_rate_usd: proposedRateUsd,
+      project_fee_usd: isProject ? projectFee : null,
+      client_note_to_admin: clientNote || null
+    };
+
     const { data: offer, error } = await supabase
       .from('offers')
-      .insert({
-        request_id: request.id,
-        match_id: match.id,
-        client_id: request.client_id,
-        talent_id: talentId,
-        initiated_by: actor.kind === 'admin' ? 'admin' : 'client',
-        entry_point: entryPoint || 'matched_talent_page',
-        // A client submits for approval. Operations can send their own
-        // directly, since they are the ones who would approve it.
-        status: actor.kind === 'admin' ? 'admin_approved' : 'submitted',
-        role_title: roleTitle,
-        service_type: serviceType,
-        engagement_type: engagementType || null,
-        hours_per_week: hoursPerWeek || null,
-        proposed_start_date: proposedStartDate || null,
-        contract_duration_type: contractDurationType || null,
-        contract_months: contractMonths || null,
-        payment_model: paymentModel || 'flat_rate',
-        payment_period: paymentPeriod || 'monthly',
-        payment_due_day: paymentDueDay || null,
-        proposed_rate_usd: proposedRateUsd,
-        client_note_to_admin: clientNote || null
-      })
+      .insert(insertRow)
       .select()
       .single();
 
     if (error) {
-      console.error('[api/offers] insert failed:', error.message);
-      if (error.code === '23503' && String(error.message).includes('offers_request_id_fkey')) {
-        return res.status(503).json({
-          error: 'Offer storage is still linked to the legacy request table. Apply the offers request-reference database migration, then retry.'
+      // project_fee_usd arrives with the 2026-11-20 migration. Without it a
+      // project offer still carries its fee in proposed_rate_usd, so retry
+      // rather than refusing the offer outright.
+      if (isProject && /project_fee_usd/.test(String(error.message))) {
+        const { data: retried, error: retryError } = await supabase
+          .from('offers')
+          .insert({ ...insertRow, project_fee_usd: undefined })
+          .select()
+          .single();
+        if (retryError) {
+          console.error('[api/offers] insert failed:', retryError.message);
+          return res.status(500).json({ error: `Could not create the offer: ${retryError.message}` });
+        }
+        return res.status(201).json({
+          ok: true,
+          offer: retried,
+          warnings: ['This database has not had the 2026-11-20 offer milestones migration run, so '
+            + 'the delivery plan was not saved with the offer.']
         });
       }
+      console.error('[api/offers] insert failed:', error.message);
       return res.status(500).json({ error: `Could not create the offer: ${error.message}` });
     }
 
-    return res.status(201).json({ ok: true, offer });
+    const warnings: string[] = [];
+
+    if (isProject && offer?.id) {
+      // The offer exists, so a plan that fails to save is a warning rather
+      // than a failure: operations can set it during review, and losing the
+      // offer would mean the client re-entering everything.
+      const saved = await setOfferMilestones(actor, {
+        offerId: String(offer.id),
+        milestones: Array.isArray(milestones) ? milestones : []
+      });
+      if (!saved.ok) {
+        console.error('[api/offers] milestone plan not saved:', saved.error);
+        warnings.push(`The offer was created but its delivery plan was not saved: ${saved.error}`);
+      }
+    }
+
+    return res.status(201).json({ ok: true, offer, warnings });
   } catch (error: any) {
     console.error('[api/offers] unexpected failure:', error);
     return res.status(500).json({ error: error.message || 'Could not create the offer' });

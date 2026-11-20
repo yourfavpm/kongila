@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scopeDbForUser } from './scope.ts';
+import { scopeDbForUser, filterDbByPermissions } from './scope.ts';
 
 test('talent interview scope includes profile-id and auth-user-id records only', () => {
   const db = {
@@ -139,4 +139,45 @@ test('a client never receives a way to contact a candidate directly', () => {
   assert.equal(talent.githubUrl, 'https://github.com/ada');
   assert.equal(talent.portfolioUrl, 'https://ada.dev');
   assert.equal(talent.bio, 'Six years on payment systems.');
+});
+
+// ─── Filtering the snapshot by permission ────────────────────────────────────
+
+test('a snapshot keeps only the collections the permissions allow', () => {
+  const db = {
+    talents: [{ id: 't1' }],
+    invoices: [{ id: 'i1' }],
+    interviews: [{ id: 'iv1' }],
+    skills: [{ id: 's1' }],
+    users: [{ id: 'u1', name: 'A', email: 'a@b.c', role: 'finance', password_hash: 'x' }]
+  };
+
+  const finance = filterDbByPermissions(db, ['view:finance', 'view:overview']);
+  assert.deepEqual(finance.invoices, [{ id: 'i1' }]);
+  assert.deepEqual(finance.talents, [], 'finance has no candidate screens');
+  assert.deepEqual(finance.interviews, []);
+  // Reference data is not permissioned.
+  assert.deepEqual(finance.skills, [{ id: 's1' }]);
+});
+
+test('the operator list keeps names for labelling but drops everything else', () => {
+  const db = { users: [{ id: 'u1', name: 'A', email: 'a@b.c', role: 'finance', password_hash: 'x', status: 'active' }] };
+
+  const withoutManage = filterDbByPermissions(db, ['view:overview']);
+  assert.deepEqual(withoutManage.users, [{ id: 'u1', name: 'A', email: 'a@b.c', role: 'finance' }]);
+
+  const withManage = filterDbByPermissions(db, ['users.manage']);
+  assert.equal(withManage.users[0].password_hash, 'x');
+});
+
+test('no permissions means no permissioned collections', () => {
+  const db = { talents: [{ id: 't1' }], invoices: [{ id: 'i1' }] };
+  const nothing = filterDbByPermissions(db, undefined);
+  assert.deepEqual(nothing.talents, []);
+  assert.deepEqual(nothing.invoices, []);
+});
+
+test('filtering does not remove a key, so callers that filter it still work', () => {
+  const filtered = filterDbByPermissions({ talents: [{ id: 't1' }] }, []);
+  assert.ok(Array.isArray(filtered.talents));
 });

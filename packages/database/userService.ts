@@ -101,11 +101,53 @@ export interface InviteOperatorInput {
   email: string;
   name?: string;
   role: AdminRole;
+  /**
+   * How they get in.
+   *
+   * 'link' emails a single-use setup link and they choose their own
+   * password, which is the safer default: no password ever exists outside
+   * the person's own head.
+   *
+   * 'password' creates the account with a password now. It exists because
+   * invitation emails do not always arrive, and an operator who is sitting
+   * in the room needs to be working in the next minute rather than the next
+   * support ticket. They are made to change it the first time they sign in.
+   */
+  method?: 'link' | 'password';
+  /** For method 'password'. One is generated when this is left out. */
+  password?: string;
+}
+
+/** The character set avoids the pairs that get misread when read aloud. */
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+/** A password strong enough to be temporary and short enough to read out. */
+export function generateTemporaryPassword(length = 14): string {
+  const bytes = new Uint8Array(length);
+  // Available in Node 18+ and in the browser. Math.random is not acceptable
+  // for anything that opens an account.
+  (globalThis.crypto as Crypto).getRandomValues(bytes);
+  let password = '';
+  for (let i = 0; i < length; i += 1) {
+    password += PASSWORD_ALPHABET[bytes[i] % PASSWORD_ALPHABET.length];
+  }
+  return password;
+}
+
+/** What a password has to be before it opens an admin account. */
+export function passwordProblem(password: string): string | null {
+  const value = String(password || '');
+  if (value.length < 10) return 'Use at least 10 characters.';
+  if (!/[a-z]/.test(value)) return 'Include a lower-case letter.';
+  if (!/[A-Z]/.test(value)) return 'Include an upper-case letter.';
+  if (!/[0-9]/.test(value)) return 'Include a number.';
+  return null;
 }
 
 /**
- * Invites an operator with a Supabase-generated, single-use setup link
- * delivered through Kongila's branded Resend template.
+ * Invites an operator, either with a Supabase-generated single-use setup
+ * link delivered through Kongila's branded Resend template, or with a
+ * password set now and changed on first sign-in.
  */
 export async function inviteOperator(
   actor: Actor,
@@ -137,6 +179,11 @@ export async function inviteOperator(
 
   const adminBaseUrl = adminAppUrl();
   if (!adminBaseUrl) return fail(503, 'Admin activation URL is not configured. Set NEXT_PUBLIC_ADMIN_URL on the admin deployment and try again.');
+
+  if (input.method === 'password') {
+    return createOperatorWithPassword(actor, { ...input, email, role: role as AdminRole }, adminBaseUrl);
+  }
+
   const setupUrl = `${adminBaseUrl}/set-password`;
   const { data: invited, error: inviteError } = await supabase.auth.admin.generateLink({
     type: 'invite',
@@ -203,6 +250,117 @@ export async function inviteOperator(
     ok: true,
     status: 201,
     data: { id: userId, email, role, emailSent: emailResult.success, ...(!emailResult.success ? { setupLink: actionLink } : {}) },
+    warnings
+  };
+}
+
+/**
+ * Creates the account with a password, rather than emailing a setup link.
+ *
+ * Three things are deliberate here.
+ *
+ * The password is never in the email. It goes back to the super admin who
+ * typed it, once, to pass on however they already pass things on. An email
+ * that contains a working password sits in two mailboxes for ever and gets
+ * forwarded.
+ *
+ * must_change_password is set in the auth user's metadata, not in a column.
+ * The admin portal reads it from the session and sends them to /set-password
+ * before anything else loads, and clearing it is part of saving the new one.
+ *
+ * The account row is written straight after the auth user. If that write
+ * fails the auth user exists with no role, which is an account that can sign
+ * in and see nothing, so it is reported as a failure rather than a success.
+ */
+async function createOperatorWithPassword(
+  actor: Actor,
+  input: InviteOperatorInput & { email: string; role: AdminRole },
+  adminBaseUrl: string
+): Promise<UserServiceResult> {
+  const supabase = getSupabaseClient();
+  const generated = !input.password;
+  const password = input.password || generateTemporaryPassword();
+
+  const problem = passwordProblem(password);
+  if (problem) return fail(400, `That password will not do. ${problem}`);
+
+  const { data: created, error: createError } = await supabase.auth.admin.createUser({
+    email: input.email,
+    password,
+    // Confirmed, because a super admin typing the address is the
+    // confirmation. Leaving it unconfirmed means they cannot sign in at all
+    // and the only fix is an email they were not sent.
+    email_confirm: true,
+    user_metadata: {
+      full_name: input.name || '',
+      role: input.role,
+      must_change_password: true
+    }
+  });
+
+  if (createError) {
+    return fail(500, `The account could not be created: ${createError.message}`);
+  }
+
+  const userId = created?.user?.id;
+  if (!userId) return fail(500, 'The account was created without an id.');
+
+  const { error: rowError } = await supabase.from('users').insert({
+    id: userId,
+    email: input.email,
+    name: input.name || input.email.split('@')[0],
+    role: input.role,
+    status: 'active',
+    password_hash: 'auth_managed',
+    created_at: new Date().toISOString()
+  });
+
+  if (rowError) {
+    return fail(500,
+      `${input.email} was created in authentication but their account row could not be written ` +
+      `(${rowError.message}). They will be able to sign in and see nothing until this is fixed.`);
+  }
+
+  await recordAudit(actor, {
+    action: 'Create Operator',
+    details: `Created ${input.email} as ${ROLE_LABELS[input.role]} with a temporary password.`,
+    entityType: 'user',
+    entityId: userId
+  });
+
+  const content = buildNotification('operator_account_created', {
+    recipientName: input.name || undefined,
+    companyName: 'Kongila',
+    inviterName: actor.email || 'Your Kongila administrator',
+    roleTitle: ROLE_LABELS[input.role],
+    actionUrl: `${adminBaseUrl}/`
+  });
+  const emailResult = await sendEmail({
+    to: input.email,
+    subject: content.subject,
+    body: content.body
+  });
+
+  const warnings = emailResult.success
+    ? []
+    : [`The account was created, but the "your account is ready" email was not sent: ` +
+       `${emailResult.error || 'Resend rejected the message'}. Tell them yourself, and give them the password below.`];
+
+  return {
+    ok: true,
+    status: 201,
+    data: {
+      id: userId,
+      email: input.email,
+      role: input.role,
+      emailSent: emailResult.success,
+      // Returned once, never stored, never emailed. The screen shows it and
+      // then it is gone.
+      temporaryPassword: password,
+      passwordWasGenerated: generated,
+      mustChangePassword: true,
+      signInUrl: `${adminBaseUrl}/`
+    },
     warnings
   };
 }
@@ -366,6 +524,71 @@ export async function setOperatorStatus(
   }
 
   return { ok: true, status: 200, data: { id: input.userId, status: input.status }, warnings };
+}
+
+/**
+ * Sets a new password on an existing operator account.
+ *
+ * For the case the setup link cannot solve: the operator is locked out, the
+ * email never arrives, and somebody needs them working today. They are made
+ * to change it again the moment they sign in, so what is handed over is a
+ * way in rather than their password.
+ */
+export async function setOperatorPassword(
+  actor: Actor,
+  input: { userId: string; password?: string }
+): Promise<UserServiceResult> {
+  const refused = guard(actor);
+  if (refused) return refused;
+  if (!input.userId) return fail(400, 'userId is required.');
+
+  const supabase = getSupabaseClient();
+  const { data: target, error: targetError } = await supabase
+    .from('users')
+    .select('id, email, name, role')
+    .eq('id', input.userId)
+    .maybeSingle();
+
+  if (targetError) return fail(500, `The operator could not be loaded: ${targetError.message}`);
+  if (!target) return fail(404, 'That user does not exist.');
+
+  const generated = !input.password;
+  const password = input.password || generateTemporaryPassword();
+  const problem = passwordProblem(password);
+  if (problem) return fail(400, `That password will not do. ${problem}`);
+
+  const { error } = await supabase.auth.admin.updateUserById(String(target.id), {
+    password,
+    user_metadata: {
+      full_name: target.name || '',
+      role: storableRole(target.role),
+      must_change_password: true
+    }
+  });
+
+  if (error) return fail(500, `The password could not be set: ${error.message}`);
+
+  await recordAudit(actor, {
+    action: 'Reset Operator Password',
+    details: `Set a temporary password for ${target.email}.`,
+    entityType: 'user',
+    entityId: String(target.id)
+  });
+
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      id: target.id,
+      email: target.email,
+      temporaryPassword: password,
+      passwordWasGenerated: generated,
+      mustChangePassword: true
+    },
+    warnings: [
+      'The password is shown once and is not emailed. Pass it on the way you would pass on any other credential.'
+    ]
+  };
 }
 
 /** Sends a fresh setup link through Resend for an invitation that expired or never arrived. */

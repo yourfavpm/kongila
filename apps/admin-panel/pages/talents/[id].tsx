@@ -70,6 +70,8 @@ export default function TalentProfileView() {
   const { id, return: returnTo } = router.query;
   const [talent, setTalent] = useState<any>(null);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [complianceDocuments, setComplianceDocuments] = useState<any[]>([]);
+  const [complianceSummary, setComplianceSummary] = useState<any>(null);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingManager, setSavingManager] = useState(false);
@@ -94,6 +96,8 @@ export default function TalentProfileView() {
       const payload = await detailRes.json();
       setTalent(payload.talent);
       setDocuments(payload.documents || []);
+      setComplianceDocuments(payload.complianceDocuments || []);
+      setComplianceSummary(payload.complianceSummary || null);
 
       const [
         { data: { session } },
@@ -469,20 +473,26 @@ export default function TalentProfileView() {
                 </div>
 
                 <div style={{ marginTop: '16px' }}>
-                  <div style={{ color: 'var(--text-muted)', marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase' }}>Mandatory Compliance Documents</div>
-                  {documents.filter(d => !d.userId && d.isMandatory && !d.isHidden).map(doc => {
-                    const isSigned = doc.signedByTalentIds?.includes(talent.id);
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--text-muted)', marginBottom: '8px', fontSize: '11px', textTransform: 'uppercase' }}>
+                    <span>Mandatory Compliance Documents</span>
+                    {complianceSummary && <strong style={{ color: complianceSummary.compliant ? '#047857' : '#B45309' }}>{complianceSummary.signedCount}/{complianceSummary.requiredCount} signed · {complianceSummary.compliant ? 'Compliant' : 'Action required'}</strong>}
+                  </div>
+                  {complianceDocuments.map((doc: any) => {
+                    const isSigned = Boolean(doc.isSigned);
                     return (
                       <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px', background: 'var(--bg-tertiary)', borderRadius: '6px', marginBottom: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                            <span style={{ fontSize: '16px' }}>⚖️</span>
                            <span style={{ fontSize: '12px', fontWeight: 600 }}>{doc.name}</span>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {doc.file_url && <a href={doc.file_url} target="_blank" rel="noreferrer" style={{ color: 'var(--kongila-blue)', fontSize: 11 }}>View PDF</a>}
                         <span style={{ fontSize: '11px', fontWeight: 700, color: isSigned ? 'var(--accent-green)' : 'var(--accent-magenta)', background: isSigned ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>{isSigned ? 'Signed' : 'Pending Signature'}</span>
+                        </div>
                       </div>
                     )
                   })}
-                  {documents.filter(d => !d.userId && d.isMandatory && !d.isHidden).length === 0 && (
+                  {complianceDocuments.length === 0 && (
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>No mandatory compliance documents found.</div>
                   )}
                 </div>

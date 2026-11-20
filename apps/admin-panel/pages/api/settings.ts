@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, listSettings, updateSetting } from '@kongila/database';
+import { requirePermission, getRequestUser, listSettings, updateSetting } from '@kongila/database';
 
 /**
  * Platform settings.
@@ -12,6 +12,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
   if (actor.kind !== 'admin') return res.status(403).json({ error: 'Not authorised' });
+
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:settings' : 'settings.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
 
   if (req.method === 'GET') {
     const result = await listSettings(actor);

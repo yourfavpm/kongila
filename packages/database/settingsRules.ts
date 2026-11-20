@@ -17,6 +17,7 @@
  */
 export const SETTING_DEFAULTS: Record<string, any> = {
   platform_fee_rate: null,
+  placement_guarantee_months: 4,
   default_currency: 'USD',
   payout_day_of_month: 25,
   vetting_grade_thresholds: { 'A+': 85, A: 75, B: 65 },
@@ -51,6 +52,12 @@ export function validateSetting(key: string, value: any): string | null {
       if (!Number.isInteger(day) || day < 1 || day > 28) {
         return 'Pick a day between 1 and 28, so the run happens in every month.';
       }
+      return null;
+    }
+
+    case 'placement_guarantee_months': {
+      const months = Number(value);
+      if (!Number.isInteger(months) || months < 1 || months > 24) return 'Choose a guarantee window between 1 and 24 months.';
       return null;
     }
 

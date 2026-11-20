@@ -6,7 +6,8 @@ import {
   getSignatures,
   getContractDocument,
   myComplianceStatus,
-  clientIpFrom
+  clientIpFrom,
+  signDbFileUrls
 } from '@kongila/database';
 
 /**
@@ -31,7 +32,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.query.view === 'compliance') {
       const status = await myComplianceStatus(actor);
       if (!status.ok) return res.status(status.status).json({ error: status.error });
-      return res.status(200).json(status.data);
+      const signed = await signDbFileUrls({ documents: status.data.documents });
+      return res.status(200).json({ ...status.data, documents: signed.documents });
     }
 
     const contractId = String(req.query.contractId || '');

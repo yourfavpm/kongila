@@ -164,7 +164,7 @@ export function getSupabaseClient() {
 // route turns that into a 401. Never trust a user id from a request body.
 
 export type { RequestActor } from './scope';
-export { scopeDbForUser, filterWritableDb, SCOPED_RESOURCES, isScopedResource } from './scope';
+export { scopeDbForUser, filterWritableDb, filterDbByPermissions, SCOPED_RESOURCES, isScopedResource } from './scope';
 export type { ScopedResource } from './scope';
 export { parseStorageUrl, clearSignedUrlCache } from './signedUrls';
 
@@ -181,16 +181,14 @@ export async function signDbFileUrls(db: any): Promise<any> {
 
 import type { RequestActor as Actor } from './scope';
 
-const ADMIN_PORTAL_ROLES = new Set([
-  'super_admin',
-  'superadmin',
-  'admin',
-  'account_manager',
-  'operations_manager',
-  'ops_manager',
-  'talent_manager',
-  'finance'
-]);
+// Which roles sign in to the admin portal.
+//
+// This was a hand-written list, and it left out skill_assessor entirely —
+// so an assessor could be invited, could set a password, and then could not
+// authenticate at all. isAdminRole is the same list the rest of the product
+// uses and it understands the legacy spellings, so there is now one answer
+// to the question instead of two that disagree.
+import { isAdminRole, effectivePermissions, permissionDefinition } from '@kongila/auth';
 
 function normalizeRoleValue(role: any): string {
   return String(role || '')
@@ -252,7 +250,7 @@ export async function getRequestUser(req: { headers?: any }): Promise<Actor | nu
   if (!role) return null;
 
   let kind: Actor['kind'];
-  if (ADMIN_PORTAL_ROLES.has(role)) kind = 'admin';
+  if (isAdminRole(role)) kind = 'admin';
   else if (role === 'client') kind = 'client';
   else if (role === 'talent') kind = 'talent';
   else return null;
@@ -278,14 +276,72 @@ export async function getRequestUser(req: { headers?: any }): Promise<Actor | nu
     talentProfileId = tp?.id ?? null;
   }
 
+  // What this operator may do, with the super admin's edits applied.
+  //
+  // Imported here rather than at the top of the file because
+  // rolePermissionsService reads getSupabaseClient from this module, and a
+  // static import either way round is a cycle. Resolved once per request so
+  // every route downstream checks a list it already holds.
+  let permissions: string[] = [];
+  if (kind === 'admin') {
+    try {
+      const { permissionsForRole } = await import('./rolePermissionsService');
+      permissions = await permissionsForRole(role);
+    } catch (error: any) {
+      // Falling back to the shipped defaults rather than to nothing: an
+      // operator locked out of every screen by a transient read failure is
+      // worse than one running on the permissions the release came with.
+      console.warn(`[auth] could not resolve permissions, using defaults: ${error?.message}`);
+      permissions = effectivePermissions(role);
+    }
+  }
+
   return {
     userId,
     email: userRow?.email ?? authData.user.email ?? null,
     role,
     kind,
     organizationId,
-    talentProfileId
+    talentProfileId,
+    permissions
   };
+}
+
+/**
+ * Refuses a request the caller has no permission for.
+ *
+ * Returns null when it is allowed, so a route reads:
+ *
+ *     const refused = requirePermission(actor, 'offers.approve');
+ *     if (refused) return res.status(refused.status).json({ error: refused.error });
+ *
+ * The check is on the permission, not on the role. A role is only a bundle,
+ * and the bundle is editable from the Operators screen — so a route that
+ * checks a role name is checking something the super admin thought they had
+ * already changed.
+ */
+export function requirePermission(
+  actor: Actor | null,
+  permission: string
+): { status: number; error: string } | null {
+  if (!actor) return { status: 401, error: 'Not authenticated.' };
+  if (actor.kind !== 'admin') return { status: 403, error: 'Not authorised.' };
+
+  const held = Array.isArray(actor.permissions) ? actor.permissions : effectivePermissions(actor.role);
+  if (held.includes(permission)) return null;
+
+  const definition = permissionDefinition(permission);
+  return {
+    status: 403,
+    error: definition
+      ? `Your role cannot ${definition.label.toLowerCase()}. Ask a super admin if you need it.`
+      : 'Your role does not have permission to do that.'
+  };
+}
+
+/** True when the caller holds the permission. For a branch rather than a refusal. */
+export function actorCan(actor: Actor | null, permission: string): boolean {
+  return requirePermission(actor, permission) === null;
 }
 
 // ─── Targeted vetting access ─────────────────────────────────────────────────
@@ -1269,6 +1325,12 @@ export async function readDbAsync(): Promise<Schema> {
       const org = organizations.find(o => o.id === clientProfile?.organizationId);
       return {
         id: c.id,
+        offerId: c.offer_id || undefined,
+        clientContractBody: c.client_contract_body || '',
+        serviceType: c.service_type || undefined,
+        roleTitle: c.role_title || undefined,
+        placementFeeUsd: c.placement_fee_usd == null ? undefined : Number(c.placement_fee_usd),
+        placementFeeInvoicedAt: c.placement_fee_invoiced_at || undefined,
         matchId: c.match_id || `match_${c.talent_id}`,
         clientId: c.client_id,
         clientName: org?.name || '',
@@ -1988,6 +2050,30 @@ export * from './notify';
 // at all, and only a super admin can change who has access.
 export * from './audit';
 export * from './userService';
+export * from './rolePermissionsService';
+
+// -- Commercial terms ---------------------------------
+// Margins per service line, overridden per client, and locked onto the
+// contract when it is generated so a later change cannot reprice a signed
+// engagement.
+export * from './billingTermsService';
+
+// -- Project milestones -------------------------------
+// A project is billed against what has been delivered, not on a date.
+export * from './milestoneService';
+export * from './offerMilestoneService';
+export * from './contractDocumentService';
+export * from './feeRuleService';
+
+// -- Engagements --------------------------------------
+// The operational record behind a signed contract: who is working, for
+// whom, under whose supervision, from when.
+export * from './engagementService';
+
+// -- Generating a contract from an accepted offer -----
+// The documents, the figures and the invoice, from the one thing already
+// agreed. An operator used to retype all of it into an empty form.
+export * from './contractGeneration';
 
 // ─── Support and settings ────────────────────────────
 export * from './supportService';
@@ -2014,6 +2100,7 @@ export * from './payrollService';
 // Numbering, due dates from contract terms, the PDF, sending, and
 // the nightly pass that moves a sent invoice to overdue.
 export * from './invoiceDelivery';
+export * from './invoiceAccess';
 
 // -- Document versions and expiry ---------------------
 export * from './documentService';

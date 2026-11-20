@@ -10,8 +10,8 @@ import { matchingProgressStatus } from '@kongila/workflows';
  * that operations had merely drafted showed to the candidate as a placement
  * they had agreed to.
  *
- * On acceptance a contract is created. That is the only path that creates one
- * from an offer, so a contract always has a candidate who said yes behind it.
+ * Acceptance queues the offer for an operator. The contract is created from
+ * the accepted offer after an operator reviews its terms and templates.
  */
 
 const RESPONDABLE = new Set(['sent_to_talent']);
@@ -215,42 +215,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }, { sourceRecordId: String(offer.id) });
     warnings.push(...notice.warnings, ...opsNotice.warnings);
 
-    // The contract exists because a candidate accepted, never before.
-    const { data: contract, error: contractError } = await supabase
-      .from('contracts')
-      .insert({
-        offer_id: offer.id,
-        talent_id: offer.talent_id,
-        client_id: offer.client_id,
-        service_type: offer.service_type,
-        rate_type: offer.payment_model === 'hourly' ? 'Hourly' : 'Monthly',
-        rate_amount: offer.proposed_rate_usd,
-        start_date: offer.proposed_start_date,
-        // 'pending' is not a signing state. The enum models the two parties
-        // signing — pending_signatures → client_signed / talent_signed →
-        // fully_signed — and a contract written as 'pending' never appeared
-        // to either of them as something waiting for their signature, so
-        // every placement needed an operator to chase it by hand.
-        status: 'pending_signatures',
-        entry_point: offer.entry_point || null,
-        auto_generated: true
-      })
-      .select()
-      .single();
-
-    if (contractError) {
-      // The acceptance stands. Operations can issue the contract manually.
-      console.error('[offers/respond] contract creation failed:', contractError.message);
-      warnings.push(`Your acceptance was recorded, but the contract was not created: ${contractError.message}`);
-    } else {
-      const { error: linkError } = await supabase
-        .from('offers')
-        .update({ status: 'contract_active', updated_at: new Date().toISOString() })
-        .eq('id', offerId);
-      if (linkError) warnings.push(`Contract created, but the offer status did not update: ${linkError.message}`);
-    }
-
-    return res.status(200).json({ ok: true, status: 'accepted', contract: contract || null, warnings });
+    // The accepted offer remains the source record. An operator generates and sends its contract separately.
+    return res.status(200).json({ ok: true, status: 'accepted', warnings });
   } catch (error: any) {
     console.error('[offers/respond] unexpected failure:', error);
     return res.status(500).json({ error: error.message || 'Could not record your response' });

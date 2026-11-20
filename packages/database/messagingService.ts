@@ -41,8 +41,44 @@ function newId(prefix: string): string {
     || `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export type ConversationType = 'talent_admin' | 'client_admin' | 'placement';
+export type ConversationType = 'talent_admin' | 'client_admin' | 'placement' | 'engagement';
 const REQUEST_CONTEXT_TYPES = new Set(['request', 'service_request', 'talent_request']);
+
+async function engagementConversationParticipants(actor: Actor, assignmentId: string, otherPartyId: string) {
+  const supabase = getSupabaseClient();
+  const { data: assignment, error } = await supabase.from('assignments')
+    .select('id, talent_id, status, kongila_supervisor_id, account_manager_id, contracts!inner(client_id, talent_id, status)')
+    .eq('id', assignmentId).maybeSingle();
+  if (error) return { ids: [], error: `Could not load the engagement: ${error.message}`, status: 500 };
+  if (!assignment) return { ids: [], error: 'This engagement does not exist.', status: 404 };
+  if (!['active', 'pending_start', 'paused'].includes(String(assignment.status))) {
+    return { ids: [], error: 'Messaging is available only for a current engagement.', status: 409 };
+  }
+  const contract = Array.isArray(assignment.contracts) ? assignment.contracts[0] : assignment.contracts;
+  const talentId = String(assignment.talent_id || contract?.talent_id || '');
+  const clientId = String(contract?.client_id || '');
+  const { data: talent } = await supabase.from('talent_profiles').select('id, user_id').eq('id', talentId).maybeSingle();
+  const talentUserId = String(talent?.user_id || '');
+  const allowedContactIds = [clientId, assignment.kongila_supervisor_id, assignment.account_manager_id]
+    .filter(Boolean).map(String);
+  if (!talentUserId || !clientId) return { ids: [], error: 'The engagement contacts could not be resolved.', status: 409 };
+  if (!allowedContactIds.includes(otherPartyId)) return { ids: [], error: 'That person is not a contact for this engagement.', status: 403 };
+  if (actor.kind === 'talent' && (String(actor.userId) !== talentUserId && String(actor.talentProfileId) !== talentId)) {
+    return { ids: [], error: 'This is not your engagement.', status: 403 };
+  }
+  if (actor.kind === 'client' && String(actor.userId) !== clientId) {
+    const { data: profile } = await supabase.from('client_profiles').select('organization_id').eq('user_id', clientId).maybeSingle();
+    const { data: actorProfile } = await supabase.from('client_profiles').select('organization_id').eq('user_id', actor.userId).maybeSingle();
+    if (!profile?.organization_id || String(profile.organization_id) !== String(actorProfile?.organization_id)) {
+      return { ids: [], error: 'This engagement is not part of your organisation.', status: 403 };
+    }
+  }
+  if (actor.kind === 'admin' && ![assignment.kongila_supervisor_id, assignment.account_manager_id].filter(Boolean).map(String).includes(String(actor.userId))) {
+    return { ids: [], error: 'You are not assigned to this engagement.', status: 403 };
+  }
+  const expectedRecipient = actor.kind === 'talent' ? otherPartyId : talentUserId;
+  return { ids: [talentUserId, expectedRecipient], status: 200 };
+}
 
 function rowToConversation(row: any) {
   return {
@@ -267,6 +303,7 @@ export async function startConversation(
     || (actor.kind === 'talent' ? 'talent_admin' : 'client_admin');
   const contextType = String(input.contextType || '').trim().toLowerCase();
   const requestScoped = REQUEST_CONTEXT_TYPES.has(contextType);
+  const engagementScoped = contextType === 'engagement' || input.type === 'engagement';
 
   if (requestScoped && type !== 'client_admin') {
     return fail(400, 'Role request conversations must be client-to-Kongila conversations.');
@@ -274,7 +311,24 @@ export async function startConversation(
 
   let participantIds: string[];
   let request: any;
-  if (requestScoped) {
+  let engagementContextId = '';
+  if (engagementScoped) {
+    if (type !== 'engagement' || !input.contextId || !input.otherPartyId) {
+      return fail(400, 'An engagement and a contact are required for this conversation.');
+    }
+    engagementContextId = `${String(input.contextId)}:${String(input.otherPartyId)}`;
+    const resolved = await engagementConversationParticipants(actor, String(input.contextId), String(input.otherPartyId));
+    if (resolved.error) return fail(resolved.status || 500, resolved.error);
+    participantIds = resolved.ids;
+    const supabase = getSupabaseClient();
+    const { data: existing, error } = await supabase.from('conversations').select('*')
+      .eq('type', 'engagement').eq('context_type', 'engagement').eq('context_id', engagementContextId).maybeSingle();
+    if (error) return fail(500, `The engagement conversation could not be loaded: ${error.message}`);
+    if (existing) {
+      if (!(existing.participant_ids || []).map(String).includes(String(actor.userId))) return fail(403, 'You are not a participant in this conversation.');
+      return { ok: true, status: 200, data: rowToConversation(existing) };
+    }
+  } else if (requestScoped) {
     const requestId = String(input.contextId || '').trim();
     if (!requestId) return fail(400, 'A role request is required for this conversation.');
     const resolved = await requestConversationParticipants(actor, requestId);
@@ -335,8 +389,8 @@ export async function startConversation(
     // NOT NULL, and the client portal never set it, so every insert failed.
     type,
     participant_ids: participantIds,
-    context_type: requestScoped ? 'request' : input.contextType || null,
-    context_id: requestScoped ? String(request.id) : input.contextId || null,
+    context_type: requestScoped ? 'request' : engagementScoped ? 'engagement' : input.contextType || null,
+    context_id: requestScoped ? String(request.id) : engagementScoped ? engagementContextId : input.contextId || null,
     created_at: now,
     updated_at: now
   };

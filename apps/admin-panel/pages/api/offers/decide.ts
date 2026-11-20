@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { requirePermission, getRequestUser, getSupabaseClient, complianceGate, notifyUsers, talentPortalUrl } from '@kongila/database';
 
 /**
  * Operations approving, sending, declining or returning a client's offer.
@@ -32,6 +32,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[offers/decide] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'offers.approve');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   const { offerId, action, note, responseDays } = req.body || {};
   if (!offerId || !ALLOWED_FROM[String(action)]) {
@@ -45,7 +51,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { data: offer, error: loadError } = await supabase
       .from('offers')
-      .select('id, status, talent_id')
+      .select('id, status, talent_id, role_title, proposed_rate_usd, payment_period')
       .eq('id', offerId)
       .maybeSingle();
 
@@ -61,16 +67,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const now = new Date().toISOString();
     const patch: Record<string, any> = { updated_at: now };
+    let responseWindowDays = DEFAULT_RESPONSE_DAYS;
 
     if (action === 'approve') {
       patch.status = 'admin_approved';
     } else if (action === 'send') {
-      // Mandatory documents are enforced when the candidate accepts. They
-      // should not prevent the client/admin from completing the offer flow.
-      const days = Number(responseDays) > 0 ? Number(responseDays) : DEFAULT_RESPONSE_DAYS;
+      // Sending the offer is the moment it reaches the candidate, so this is
+      // the last point the compliance gate can stop it.
+      const refusal = await complianceGate('extend_offer', String(offer.talent_id));
+      if (refusal) return res.status(409).json({ error: refusal });
+
+      responseWindowDays = Number(responseDays) > 0 ? Number(responseDays) : DEFAULT_RESPONSE_DAYS;
       patch.status = 'sent_to_talent';
       patch.sent_to_talent_at = now;
-      patch.talent_response_deadline = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+      patch.talent_response_deadline = new Date(Date.now() + responseWindowDays * 24 * 60 * 60 * 1000).toISOString();
     } else if (action === 'request_revision') {
       patch.status = 'revision_requested';
       patch.loop_count = (offer as any).loop_count ? (offer as any).loop_count + 1 : 1;
@@ -94,11 +104,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
     if (auditError) console.warn('[offers/decide] audit entry not written:', auditError.message);
 
+    const warnings: string[] = [];
+    if (action === 'send') {
+      const amount = Number((offer as any).proposed_rate_usd);
+      const formattedAmount = Number.isFinite(amount)
+        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount)
+        : '';
+      const rateSummary = formattedAmount
+        ? `Proposed rate: ${formattedAmount}${(offer as any).payment_period ? ` per ${(offer as any).payment_period}` : ''}.`
+        : undefined;
+      const notification = await notifyUsers(String(offer.talent_id), 'offer_extended', {
+        roleTitle: (offer as any).role_title || 'the role',
+        rateSummary,
+        expiresIn: `${responseWindowDays} days`,
+        actionUrl: talentPortalUrl('/?section=opportunities')
+      }, { sourceRecordId: String(offer.id) });
+      warnings.push(...notification.warnings);
+    }
+
     return res.status(200).json({
       ok: true,
       from,
       to: patch.status,
-      respondBy: patch.talent_response_deadline || null
+      respondBy: patch.talent_response_deadline || null,
+      warnings
     });
   } catch (error: any) {
     console.error('[offers/decide] unexpected failure:', error);

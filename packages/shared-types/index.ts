@@ -810,6 +810,16 @@ export interface Contract {
   status: 'draft' | 'pending_signatures' | 'client_signed' | 'talent_signed' | 'active' | 'completed' | 'terminated' | 'Pending' | 'Signed' | 'Expired' | 'Voided';
   performance_score?: number;
   clientMonthlyFeeUsd?: number;
+  offerId?: string;
+  clientContractBody?: string;
+  serviceType?: string;
+  roleTitle?: string;
+  placementFeeUsd?: number;
+  projectFeeUsd?: number;
+  placementFeeInvoicedAt?: string;
+  placementInvoiceId?: string;
+  clientFeePctSnapshot?: number | null;
+  talentCommissionPctSnapshot?: number | null;
   performanceScore?: number;
   rating?: number;
   rateAmount?: number;
@@ -1111,7 +1121,18 @@ export interface Assignment {
   role: string;
   startDate: string;
   endDate: string;
-  status: 'active' | 'completed' | 'paused';
+  status: 'pending_start' | 'active' | 'paused' | 'ended' | 'completed';
+  serviceLine?: 'placement' | 'outsourcing' | 'managed_workforce' | 'project';
+  managementMode?: 'client_managed' | 'kongila_managed' | 'hybrid';
+  kongilaSupervisorId?: string | null;
+  accountManagerId?: string | null;
+  engagementGroupId?: string | null;
+  workingPattern?: string | null;
+  endedReason?: 'completed' | 'terminated' | 'converted' | 'replaced' | null;
+  guaranteeMonths?: number | null;
+  guaranteeEndDate?: string | null;
+  managementPremiumPct?: number | null;
+  activatedAt?: string | null;
 }
 
 export interface Invoice {
@@ -1122,6 +1143,7 @@ export interface Invoice {
   subtotalUsd?: number;
   taxAmountUsd?: number;
   totalUsd?: number;
+  platformMarginUsd?: number;
   status: 'draft' | 'sent' | 'paid' | 'overdue' | 'void';
   dueDate: string;
   isDisputed?: boolean;

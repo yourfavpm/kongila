@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
+import { requirePermission, getRequestUser, getSupabaseClient, complianceGate } from '@kongila/database';
 import {
   canTransitionRequest,
   coerceRequestStatus,
@@ -38,8 +38,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[contracts/sign] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, 'contracts.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
 
-  const { contractId, activate } = req.body || {};
+
+  const { contractId } = req.body || {};
   if (!contractId) return res.status(400).json({ error: 'contractId is required' });
 
   const supabase = getSupabaseClient();
@@ -67,7 +73,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (refusal) return res.status(409).json({ error: refusal });
 
     const now = new Date().toISOString();
-    const nextStatus = activate ? 'active' : SIGNED_STATUS;
+    // Administrative acknowledgement records legal signature only. Work
+    // starts through the explicit engagement activation workflow.
+    const nextStatus = SIGNED_STATUS;
 
     const { error: updateError } = await supabase
       .from('contracts')
@@ -158,7 +166,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { error: auditError } = await supabase.from('audit_logs').insert({
       actor: actor.email || actor.userId,
-      action: activate ? 'Activate Contract' : 'Sign Contract',
+      action: 'Sign Contract',
       details:
         `Contract ${contractId} set to ${nextStatus}` +
         (requestMoved ? `; request moved ${requestMoved.from} to ${requestMoved.to}` : ''),

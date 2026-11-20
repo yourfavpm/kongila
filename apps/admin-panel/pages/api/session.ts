@@ -13,7 +13,13 @@ import { getRequestUser } from '@kongila/database';
  * the project, reads the row, refuses a suspended account whose token has
  * not expired yet, and normalises the role. This just returns the result.
  *
- * GET -> { userId, email, role, kind, organizationId, talentProfileId }
+ * It also answers with the permissions the role holds, so the portal can
+ * build its navigation from what the caller may actually do rather than
+ * from a copy of the rules kept in the browser. The copy was the problem:
+ * a super admin changing what Finance can see had no effect until the next
+ * deploy, because the browser was reading a list compiled into the bundle.
+ *
+ * GET -> { userId, email, role, kind, permissions, organizationId, talentProfileId }
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -33,6 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     email: actor.email,
     role: actor.role,
     kind: actor.kind,
+    permissions: actor.permissions || [],
     organizationId: actor.organizationId,
     talentProfileId: actor.talentProfileId
   });

@@ -27,7 +27,7 @@ import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { notifyUsers, talentPortalUrl } from './notify';
 import { calculateCompositeVettingGrade, vettingScoreState, validatePostedPipeline } from '@kongila/matching-engine';
-import { canTransitionTalent } from '@kongila/workflows';
+import { canTransitionTalent, TALENT_STATUSES } from '@kongila/workflows';
 import { getVettingStageAdvancement } from './vettingAdvancement';
 export { getVettingStageAdvancement } from './vettingAdvancement';
 
@@ -46,6 +46,11 @@ function fail(status: number, error: string): VettingResult {
 function canVet(actor: Actor): boolean {
   return actor.kind === 'admin'
     && ['super_admin', 'talent_manager', 'ops_manager', 'skill_assessor'].includes(String(actor.role));
+}
+
+function canonicalTalentStatus(value: unknown): string {
+  const raw = String(value || 'Applied');
+  return TALENT_STATUSES.find(status => status.toLowerCase() === raw.toLowerCase()) || raw;
 }
 
 // ─── The bio envelope ────────────────────────────────────────────────────────
@@ -163,7 +168,7 @@ export async function recordVettingScores(
   // through Review on the way: the table has no Applied to Vetted edge,
   // and refusing the save outright would mean nobody could ever be vetted
   // from a first assessment.
-  const current = String(talent.vetting_status || 'Applied');
+  const current = canonicalTalentStatus(talent.vetting_status);
   const steps = current === 'Applied' && nextStatus === 'Vetted'
     ? ['Review', 'Vetted']
     : [nextStatus];
@@ -336,10 +341,30 @@ export async function updateVettingPipeline(
   const patch: Record<string, unknown> = {};
 
   if (input.vettingStatus) {
-    const current = String(talent.vetting_status || 'Applied');
+    const current = canonicalTalentStatus(talent.vetting_status);
     const next = String(input.vettingStatus);
-    if (current !== next && !canTransitionTalent(current as any, next as any)) {
-      return fail(409, `A candidate who is ${current} cannot be moved to ${next}.`);
+    if (next === 'Vetted') {
+      const allStagesSettled = input.pipeline.every((stage: any) => ['passed', 'skipped'].includes(String(stage?.status || '').toLowerCase()));
+      const scoreState = vettingScoreState(input.scores || {});
+      if (!allStagesSettled || !scoreState.isFullyScored || scoreState.grade === 'Reject') {
+        return fail(409, 'A candidate can be marked Vetted only after all vetting stages are complete and the completed assessment meets the passing grade.');
+      }
+    }
+
+    // The legacy status graph has no direct Applied -> Vetted edge. Finishing
+    // the full vetting pipeline is a valid path through Review, just like
+    // recording a complete score set in recordVettingScores. Existing talent
+    // rows can remain Applied even after their pipeline is complete, so the
+    // final stage must be allowed to reconcile that stale status.
+    const transitions = current === 'Applied' && next === 'Vetted'
+      ? ['Review', 'Vetted']
+      : [next];
+    let walked = current;
+    for (const step of transitions) {
+      if (walked !== step && !canTransitionTalent(walked as any, step as any)) {
+        return fail(409, `A candidate who is ${current} cannot be moved to ${next}.`);
+      }
+      walked = step;
     }
     patch.vetting_status = next;
   }

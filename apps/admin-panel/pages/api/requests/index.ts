@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getRequestUser, getSupabaseClient } from '@kongila/database';
+import { requirePermission, getRequestUser, getSupabaseClient } from '@kongila/database';
 import { coerceRequestStatus, normalizeRequestStatus } from '@kongila/workflows';
 import { canAccessRequest, visibleRequestsForActor } from '@kongila/database';
 
@@ -46,6 +46,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn(`[admin api/requests] refused ${actor.kind} ${actor.userId}`);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:hiring-requests' : 'requests.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
 
   res.setHeader('Cache-Control', 'private, no-store');
   const supabase = getSupabaseClient();

@@ -12,11 +12,48 @@ import { isAdminRole } from '@kongila/auth';
 export default function App({ Component, pageProps }: AppProps) {
   return (
     <ToastProvider>
+      <ForcePasswordChange />
       <ProtectedAdminRoute>
         <Component {...pageProps} />
       </ProtectedAdminRoute>
     </ToastProvider>
   );
+}
+
+/**
+ * An account created with a temporary password changes it before anything
+ * else.
+ *
+ * This sits outside the route guard on purpose. The sign-in screen is '/',
+ * which the guard treats as public, so a check that only ran on protected
+ * routes would let someone work the whole dashboard on a password their
+ * administrator chose and still knows.
+ */
+function ForcePasswordChange() {
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (router.pathname === '/set-password') return;
+
+    let active = true;
+
+    const check = async (session: any) => {
+      if (!active || !session?.user) return;
+      if (!session.user.user_metadata?.must_change_password) return;
+      void router.replace('/set-password');
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      void check(session);
+    });
+
+    void supabase.auth.getSession().then(({ data }) => check(data.session));
+
+    return () => { active = false; subscription.unsubscribe(); };
+  }, [router.isReady, router.pathname, router]);
+
+  return null;
 }
 
 function ProtectedAdminRoute({ children }: { children: ReactNode }) {

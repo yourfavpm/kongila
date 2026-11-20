@@ -12,11 +12,13 @@
  * `audit_logs` has RLS on and no policy, so none of them were written.
  */
 
-import { getSupabaseClient } from './index';
+import { getSupabaseClient, isUndefinedColumn } from './index';
 import type { RequestActor as Actor } from './scope';
 import { recordAudit } from './audit';
 import { notifyUsers } from './notify';
 import { contractTransition, normaliseContractStatus } from '@kongila/workflows';
+import { billingModelFor, scheduleProblem, type PaymentSchedule } from '@kongila/workflows';
+import { termsForNewContract } from './billingTermsService';
 
 export interface ContractStatusResult<T = any> {
   ok: boolean;
@@ -205,6 +207,22 @@ export async function createContract(
     engagementModel?: string | null;
     currency?: string | null;
     templateId?: string | null;
+
+    /**
+     * The commercial terms, where this contract differs from the client's
+     * standard ones. Anything left out is taken from the client's terms,
+     * and failing that from the service line's.
+     */
+    annualSalaryUsd?: unknown;
+    placementFeePct?: unknown;
+    placementFeeUsd?: unknown;
+    projectFeeUsd?: unknown;
+    clientFeePct?: unknown;
+    talentCommissionPct?: unknown;
+    managementPremiumPct?: unknown;
+    paymentTermsDays?: unknown;
+    paymentSchedule?: PaymentSchedule | null;
+    seats?: unknown;
   }
 ): Promise<ContractStatusResult> {
   if (!actor) return fail(401, 'Not authenticated.');
@@ -288,10 +306,103 @@ export async function createContract(
 
   if (input.templateId) row.template_version_id = String(input.templateId);
 
+  // ── The commercial terms ─────────────────────────────────────────────────
+  //
+  // Resolved now and written onto the contract, never looked up again. A
+  // margin changed in six months must not reprice an engagement somebody
+  // already signed, and copying the numbers here is the only way to
+  // guarantee that.
+  //
+  // The organisation is needed to find a client-specific override, and the
+  // id that arrived may have been either a user or an organisation, so it is
+  // resolved from the client profile rather than from the input.
+  const { data: clientProfile } = await supabase
+    .from('client_profiles').select('organization_id').eq('user_id', clientId).maybeSingle();
+
+  const resolved = await termsForNewContract(
+    clientProfile?.organization_id || input.organizationId || null,
+    row.service_type as string
+  );
+
+  const warnings: string[] = [...(resolved.warnings || [])];
+
+  if (!resolved.ok) {
+    // Refused rather than drafted at no margin. A contract created without
+    // one bills at cost, and nobody finds out until the month is counted.
+    return { ok: false, status: resolved.status, error: resolved.error };
+  }
+
+  Object.assign(row, resolved.data!.columns);
+
+  // Anything typed on the form overrides what was inherited, for this
+  // contract only. This is the per-client edit, at the moment it matters.
+  const overrideFraction = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return parsed >= 1 ? parsed / 100 : parsed;
+  };
+
+  const overrides: [string, number | null][] = [
+    ['client_fee_pct_snapshot', overrideFraction(input.clientFeePct)],
+    ['talent_commission_pct_snapshot', overrideFraction(input.talentCommissionPct)],
+    ['placement_fee_pct', overrideFraction(input.placementFeePct)],
+    ['management_premium_pct', overrideFraction(input.managementPremiumPct)]
+  ];
+  for (const [column, value] of overrides) {
+    if (value !== null) row[column] = value;
+  }
+
+  const numeric = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  };
+
+  const annualSalary = numeric(input.annualSalaryUsd);
+  if (annualSalary !== null) row.annual_salary_usd = annualSalary;
+  const placementFee = numeric(input.placementFeeUsd);
+  if (placementFee !== null) row.placement_fee_usd = placementFee;
+  const projectFee = numeric(input.projectFeeUsd);
+  if (projectFee !== null) row.project_fee_usd = projectFee;
+  const termsDays = numeric(input.paymentTermsDays);
+  if (termsDays !== null) row.payment_terms_days = termsDays;
+  const seats = numeric(input.seats);
+  if (seats !== null && seats >= 1) row.seats = Math.trunc(seats);
+
+  if (input.paymentSchedule !== undefined) {
+    const problem = scheduleProblem(input.paymentSchedule);
+    if (problem) return fail(422, `The payment schedule cannot be used: ${problem}`);
+    row.payment_schedule = input.paymentSchedule;
+  }
+
+  // The billing model, so every downstream reader knows how this one is
+  // sold without re-deriving it from the service type.
+  const model = billingModelFor(row.service_type as string);
+  if (model) row.billing_model = model;
+
+  // Said now rather than discovered at the first billing run.
+  if (model === 'placement_fee'
+      && row.placement_fee_usd == null
+      && row.placement_fee_pct == null) {
+    warnings.push('This placement has neither a fee percentage nor a flat fee, so it cannot be '
+      + 'invoiced yet. Set one before sending the contract.');
+  }
+  if (model === 'project_fee' && row.project_fee_usd == null) {
+    warnings.push('This project has no agreed fee, so it cannot be invoiced yet.');
+  }
+
   const { data: contract, error } = await supabase
     .from('contracts').insert(row).select('*').maybeSingle();
 
-  if (error) return fail(500, `That contract was not created: ${error.message}`);
+  if (error) {
+    if (isUndefinedColumn(error)) {
+      return fail(503,
+        'This database has not had the 2026-11-19 billing terms migration run against it yet, '
+        + 'so a contract cannot carry its margins. Run it and try again.');
+    }
+    return fail(500, `That contract was not created: ${error.message}`);
+  }
 
   await recordAudit(actor, {
     action: 'Draft Contract',
@@ -300,7 +411,7 @@ export async function createContract(
     entityId: String(contract?.id)
   });
 
-  return { ok: true, status: 201, data: contract };
+  return { ok: true, status: 201, data: contract, warnings };
 }
 
 /**

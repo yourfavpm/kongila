@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  requirePermission,
   getRequestUser,
+  raiseContractInvoice,
   updateContractStatus,
   sendSignatureReminder,
-  createContract
 } from '@kongila/database';
 
 /**
@@ -26,14 +27,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const actor = await getRequestUser(req);
   if (!actor) return res.status(401).json({ error: 'Not authenticated' });
-
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
   const body = (req.body || {}) as Record<string, any>;
+  const invoiceRefusal = body.action === 'raiseInvoice' ? requirePermission(actor, 'invoices.manage') : null;
+  const financeRefusal = body.action === 'raiseInvoice' ? requirePermission(actor, 'finance.manage') : null;
+  const refused = body.action === 'raiseInvoice'
+    ? (invoiceRefusal && financeRefusal ? invoiceRefusal : null)
+    : requirePermission(actor, 'contracts.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
 
-  const result = body.action === 'create'
-    ? await createContract(actor, { ...body, talentId: String(body.talentId || '') })
-   
-    : body.action === 'remind'
+  if (body.action === 'create') {
+    return res.status(410).json({ error: 'Contracts are created from accepted offers. Select an accepted offer in the contract queue.' });
+  }
+  const result = body.action === 'remind'
     ? await sendSignatureReminder(actor, { contractId: body.contractId })
+    : body.action === 'raiseInvoice'
+    ? await raiseContractInvoice(actor, String(body.contractId || ''))
     : await updateContractStatus(actor, {
         contractId: body.contractId,
         status: body.status,

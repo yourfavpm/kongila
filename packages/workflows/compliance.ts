@@ -30,6 +30,7 @@ export interface ComplianceDocument {
   isMandatory?: boolean;
   isTemplate?: boolean;
   userId?: string | null;
+  isHidden?: boolean;
 }
 
 export interface DocumentSignature {
@@ -58,6 +59,7 @@ export interface ComplianceStatus {
 export function mandatoryTemplates(documents: ComplianceDocument[]): ComplianceDocument[] {
   return (documents || []).filter(doc => {
     if (!doc) return false;
+    if (doc.isHidden) return false;
     if (doc.isTemplate) return true;
     // Fall back to the shape a template has, for rows written before the
     // is_template column existed.

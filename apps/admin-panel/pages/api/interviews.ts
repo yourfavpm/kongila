@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   readDbAsync,
   writeDbAsync,
+  requirePermission,
   getRequestUser,
   getSupabaseClient,
   scheduleInterview,
@@ -118,6 +119,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.warn('[api/interviews] refused ' + actor.kind + ' ' + actor.userId);
     return res.status(403).json({ error: 'Not authorised' });
   }
+  // What this operator may do, checked against the permission the super
+  // admin granted the role rather than against the role's name. Hiding a
+  // tab is not access control; this is where the refusal happens.
+  const refused = requirePermission(actor, req.method === 'GET' ? 'view:interviews' : 'interviews.manage');
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
   const auditActor = actor.email || actor.userId;
 
   if (req.method === 'GET') {
