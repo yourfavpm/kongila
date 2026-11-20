@@ -138,6 +138,8 @@ export interface GenerateInput {
   /** Anything the operator changed on the review screen before saving. */
   overrides?: {
     rateAmount?: number;
+    placementFeeUsd?: number;
+    projectFeeUsd?: number;
     roleTitle?: string;
     annualSalaryUsd?: number;
     startDate?: string;
@@ -272,9 +274,11 @@ export async function previewContractFromOffer(
     ? Number(overrides.annualSalaryUsd ?? (rate * 12))
     : null;
   const placementFeePct = overrides.placementFeePct ?? terms.placementFeePct;
-  const placementFee = line === 'placement' && annualSalary && placementFeePct
-    ? money(annualSalary * placementFeePct)
-    : null;
+  const placementFee = line === 'placement' && Number(overrides.placementFeeUsd) > 0
+    ? money(Number(overrides.placementFeeUsd))
+    : line === 'placement' && annualSalary && placementFeePct
+      ? money(annualSalary * placementFeePct)
+      : null;
 
   if (line === 'placement' && placementFee === null) {
     warnings.push('No placement fee percentage is configured, so the fee cannot be worked out. '
@@ -326,7 +330,7 @@ export async function previewContractFromOffer(
     }
   }
 
-  const projectFee = line === 'project' ? projectFeeOf(offer) : 0;
+  const projectFee = line === 'project' ? Number(overrides.projectFeeUsd ?? projectFeeOf(offer)) : 0;
 
   /** The milestone schedule as it reads in a contract. */
   const describeMilestones = (): string => {
@@ -693,6 +697,151 @@ export async function generateContractFromOffer(
     data: { id: contract.id, contract, plan, repairedExisting: Boolean(existing) },
     warnings
   };
+}
+
+/**
+ * Revises an unsigned offer-based contract and both signature documents as
+ * one preparation step. The offer remains unchanged; these are contract-only
+ * negotiated terms. Sent documents and existing invoices are immutable here.
+ */
+export async function updateContractTerms(
+  actor: Actor,
+  input: {
+    contractId: string;
+    serviceLine?: string;
+    roleTitle: string;
+    rateAmount: unknown;
+    rateType?: string;
+    startDate: string;
+    endDate?: string | null;
+    placementFeeUsd?: unknown;
+    projectFeeUsd?: unknown;
+  }
+): Promise<GenerationResult> {
+  if (!actor) return fail(401, 'Not authenticated.');
+  const held = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (!held.includes('contracts.manage')) return fail(403, 'Your role cannot change contract terms.');
+  const contractId = String(input.contractId || '').trim();
+  if (!contractId) return fail(400, 'Which contract?');
+
+  const supabase = getSupabaseClient();
+  const { data: contract, error: readError } = await supabase
+    .from('contracts').select('*').eq('id', contractId).maybeSingle();
+  if (readError) return fail(500, `The contract could not be read: ${readError.message}`);
+  if (!contract) return fail(404, 'That contract does not exist.');
+  if (actor.role === 'account_manager' && !(await isAssignedAccountManager(actor, String(contract.client_id || '')))) {
+    return fail(403, 'You can change terms only for client accounts assigned to you.');
+  }
+  if (!contract.offer_id) return fail(409, 'This contract was not generated from an accepted offer. Its terms cannot be revised here.');
+  if (!['pending', 'pending_signatures'].includes(String(contract.status || '').toLowerCase())) {
+    return fail(409, 'Contract terms can be revised only before either party signs or the engagement starts.');
+  }
+
+  const { data: docs, error: docsError } = await supabase
+    .from('contract_documents').select('id, audience, status')
+    .eq('contract_id', contractId);
+  if (docsError && !/does not exist|schema cache/i.test(String(docsError.message || ''))) {
+    return fail(500, `The signature documents could not be checked: ${docsError.message}`);
+  }
+  if ((docs || []).some((doc: any) => !['draft', 'voided'].includes(String(doc.status || '').toLowerCase()))) {
+    return fail(409, 'A contract document has already been sent or signed. Void and regenerate the contract to change its terms.');
+  }
+  const { count: invoiceCount, error: invoiceError } = await supabase
+    .from('invoices').select('id', { count: 'exact', head: true }).eq('contract_id', contractId);
+  if (invoiceError && !/does not exist|schema cache/i.test(String(invoiceError.message || ''))) {
+    return fail(500, `Existing invoices could not be checked: ${invoiceError.message}`);
+  }
+  if (invoiceCount) return fail(409, 'An invoice already exists for this contract. Update it separately in Finance before changing the contract terms.');
+
+  const amount = Number(input.rateAmount);
+  const roleTitle = String(input.roleTitle || '').trim();
+  const startDate = String(input.startDate || '').trim();
+  const endDate = String(input.endDate || '').trim() || null;
+  if (!Number.isFinite(amount) || amount <= 0) return fail(422, 'Enter a rate above zero.');
+  if (!roleTitle) return fail(422, 'Enter the role or function for this contract.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate))) {
+    return fail(422, 'Enter valid contract dates.');
+  }
+  if (endDate && endDate < startDate) return fail(422, 'The end date is before the start date.');
+  if (String(input.rateType || 'Monthly') !== 'Monthly') return fail(422, 'Offer-based contracts currently use a monthly rate.');
+
+  const line = serviceLineOf(contract.service_type);
+  const requestedLine = serviceLineOf(input.serviceLine || contract.service_type);
+  if (!line || requestedLine !== line) return fail(422, 'The service line cannot be changed on an existing contract. Generate a new contract from the correct accepted offer.');
+
+  const preview = await previewContractFromOffer(actor, {
+    offerId: String(contract.offer_id),
+    overrides: {
+      rateAmount: amount,
+      roleTitle,
+      annualSalaryUsd: line === 'placement' ? Number(contract.annual_salary_usd || amount * 12) : undefined,
+      startDate,
+      endDate: endDate || undefined,
+      placementFeeUsd: line === 'placement' ? Number(input.placementFeeUsd) : undefined,
+      projectFeeUsd: line === 'project' ? Number(input.projectFeeUsd) : undefined,
+      placementFeePct: contract.placement_fee_pct == null ? undefined : Number(contract.placement_fee_pct),
+      clientFeePct: contract.client_fee_pct_snapshot == null ? undefined : Number(contract.client_fee_pct_snapshot),
+      talentCommissionPct: contract.talent_commission_pct_snapshot == null ? undefined : Number(contract.talent_commission_pct_snapshot),
+      managementPremiumPct: contract.management_premium_pct == null ? undefined : Number(contract.management_premium_pct),
+      paymentTermsDays: contract.payment_terms_days == null ? undefined : Number(contract.payment_terms_days),
+      paymentSchedule: contract.payment_schedule || undefined,
+      seats: contract.seats == null ? undefined : Number(contract.seats),
+      talentPayFrequency: contract.talent_pay_frequency || undefined,
+      talentPaydayDay: contract.talent_payday_day == null ? undefined : Number(contract.talent_payday_day),
+      clientTemplateId: contract.client_template_id || undefined,
+      talentTemplateId: contract.talent_template_id || undefined
+    }
+  });
+  if (!preview.ok) return preview;
+  const plan: any = preview.data;
+  const now = new Date().toISOString();
+  const updates: Record<string, any> = {
+    role_title: plan.roleTitle,
+    rate_type: 'Monthly',
+    rate_amount: plan.money.rate,
+    monthly_rate: plan.money.rate,
+    monthly_rate_usd: plan.money.rate,
+    start_date: plan.schedule.startDate,
+    end_date: plan.schedule.endDate,
+    annual_salary_usd: plan.money.annualSalary,
+    placement_fee_usd: plan.money.placementFee,
+    placement_fee_pct: plan.terms.placementFeePct,
+    project_fee_usd: line === 'project' ? plan.projectFee : null,
+    client_fee_pct_snapshot: plan.terms.clientFeePct,
+    talent_commission_pct_snapshot: plan.terms.talentCommissionPct,
+    management_premium_pct: plan.terms.managementPremiumPct,
+    payment_terms_days: plan.terms.paymentTermsDays,
+    payment_schedule: plan.terms.paymentSchedule,
+    talent_pay_frequency: plan.schedule.payFrequency,
+    talent_payday_day: plan.schedule.paydayDay,
+    talent_pay_amount: plan.money.talentReceives,
+    client_contract_body: plan.documents.clientBody,
+    talent_contract_body: plan.documents.talentBody || null,
+    client_template_id: plan.documents.clientTemplateId,
+    talent_template_id: plan.documents.talentTemplateId,
+    updated_at: now
+  };
+  const { data: updated, error: updateError } = await supabase
+    .from('contracts').update(updates).eq('id', contractId).select('*').maybeSingle();
+  if (updateError) return fail(500, `The contract terms were not saved: ${updateError.message}`);
+  if (!updated) return fail(409, 'The contract changed while it was being edited. Reload and try again.');
+
+  for (const doc of docs || []) {
+    const body = doc.audience === 'client' ? plan.documents.clientBody : plan.documents.talentBody;
+    if (!body) continue;
+    const templateId = doc.audience === 'client' ? plan.documents.clientTemplateId : plan.documents.talentTemplateId;
+    const { error: docUpdateError } = await supabase.from('contract_documents').update({
+      body, template_id: templateId, document_hash: hashBody(body), updated_at: now
+    }).eq('id', doc.id);
+    if (docUpdateError) return fail(500, `Contract terms saved, but the ${doc.audience} draft document did not update: ${docUpdateError.message}`);
+  }
+
+  await recordAudit(actor, {
+    action: 'Update Contract Terms',
+    details: `${roleTitle}: rate ${amount}, start ${startDate}${endDate ? `, end ${endDate}` : ''}.`,
+    entityType: 'contract', entityId: contractId
+  });
+  return { ok: true, status: 200, data: updated, warnings: preview.warnings || [] };
 }
 
 /**

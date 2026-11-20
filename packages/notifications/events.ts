@@ -111,6 +111,12 @@ export type NotificationEvent =
   | 'vetting_complete'
   | 'profile_rereview_required'
   | 'certification_expiring'
+  // Support
+  | 'support_ticket_opened'
+  | 'support_ticket_opened_for_ops'
+  | 'support_ticket_reply'
+  | 'support_ticket_reply_for_ops'
+  | 'support_ticket_resolved'
   // ── Opportunities, talent side ────────────────────────────────────────
   | 'submitted_to_client'
   | 'talent_hired'
@@ -129,7 +135,7 @@ export type NotificationEvent =
 
 export type NotificationModule =
   | 'account' | 'requests' | 'matches' | 'interviews'
-  | 'offers' | 'contracts' | 'vetting' | 'finance';
+  | 'offers' | 'contracts' | 'vetting' | 'finance' | 'support';
 
 export interface NotificationContent {
   subject: string;
@@ -151,6 +157,8 @@ export interface NotificationContext {
   roleTitle?: string;
   companyName?: string;
   talentName?: string;
+  talentId?: string;
+  clientId?: string;
   clientName?: string;
   signerName?: string;
   bothParties?: boolean;
@@ -1126,6 +1134,46 @@ export function buildNotification(
         inApp: `${ctx.talentName || 'A candidate'} needs re-review after a profile change.`
       };
 
+    case 'support_ticket_opened':
+      return {
+        module: 'support', alsoInApp: true,
+        subject: `We received your support request: ${role}`,
+        body: withAction(`${hi}\n\nYour support request has been received.` + (ctx.reason ? `\n\n${ctx.reason}` : ''), ctx, 'View support requests') + `\n\n${SIGN_OFF}`,
+        inApp: `Support request received: ${role}.`
+      };
+
+    case 'support_ticket_opened_for_ops':
+      return {
+        module: 'support', alsoInApp: true,
+        subject: `New support request: ${role}`,
+        body: withAction(`${hi}\n\n${ctx.talentName || ctx.clientName || 'A user'} opened a support request.` + (ctx.reason ? `\n\n${ctx.reason}` : ''), ctx, 'Open support') + `\n\n${SIGN_OFF}`,
+        inApp: `New support request: ${role}.`
+      };
+
+    case 'support_ticket_reply':
+      return {
+        module: 'support', alsoInApp: true,
+        subject: `${role} — new reply`,
+        body: withAction(`${hi}\n\nThere is a new reply on your support request.` + (ctx.reason ? `\n\n${ctx.reason}` : ''), ctx, 'View reply') + `\n\n${SIGN_OFF}`,
+        inApp: `New reply on ${role}.`
+      };
+
+    case 'support_ticket_reply_for_ops':
+      return {
+        module: 'support', alsoInApp: true,
+        subject: `${role} — requester replied`,
+        body: withAction(`${hi}\n\n${ctx.talentName || ctx.clientName || 'The requester'} replied to a support ticket.` + (ctx.reason ? `\n\n${ctx.reason}` : ''), ctx, 'Open support') + `\n\n${SIGN_OFF}`,
+        inApp: `Requester replied to ${role}.`
+      };
+
+    case 'support_ticket_resolved':
+      return {
+        module: 'support', alsoInApp: true,
+        subject: `${role} — resolved`,
+        body: withAction(`${hi}\n\nYour support request has been marked resolved. Reply to the ticket if you still need help.`, ctx, 'View support requests') + `\n\n${SIGN_OFF}`,
+        inApp: `${role} was resolved.`
+      };
+
     case 'certification_expiring':
       return {
         module: 'vetting',
@@ -1428,6 +1476,8 @@ export const ALL_NOTIFICATION_EVENTS: NotificationEvent[] = [
   'work_simulation_assigned', 'work_simulation_marked',
   'vetting_stage_result', 'vetting_complete',
   'profile_rereview_required', 'certification_expiring',
+  'support_ticket_opened', 'support_ticket_opened_for_ops', 'support_ticket_reply',
+  'support_ticket_reply_for_ops', 'support_ticket_resolved',
   'submitted_to_client', 'talent_hired', 'talent_not_selected',
   'invoice_issued', 'invoice_overdue', 'invoice_paid',
   'payout_sent', 'payout_failed',

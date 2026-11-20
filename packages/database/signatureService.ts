@@ -714,3 +714,27 @@ export async function myComplianceStatus(actor: Actor): Promise<SignatureResult>
     }
   };
 }
+
+/** Compliance status for an explicitly resolved talent profile, used by the
+ * offer-acceptance route after it verifies the offer belongs to that talent. */
+export async function getTalentComplianceStatus(talentId: string): Promise<SignatureResult> {
+  const id = String(talentId || '').trim();
+  if (!id) return fail(400, 'Which candidate?');
+  const supabase = getSupabaseClient();
+  const [{ data: documents, error: documentError }, { data: signed, error: signatureError }] = await Promise.all([
+    supabase.from('documents').select('id, name, type, is_mandatory, is_template, user_id'),
+    supabase.from('document_signatures').select('document_id, signed_at').eq('talent_id', id)
+  ]);
+  if (documentError) return fail(500, `Required documents could not be checked: ${documentError.message}`);
+  if (signatureError) return fail(500, `Document signatures could not be checked: ${signatureError.message}`);
+
+  const status = complianceStatus(
+    id,
+    (documents || []).map((document: any) => ({
+      id: document.id, name: document.name, type: document.type,
+      isMandatory: document.is_mandatory, isTemplate: document.is_template, userId: document.user_id
+    })),
+    (signed || []).map((signature: any) => ({ documentId: signature.document_id, talentId: id, signedAt: signature.signed_at }))
+  );
+  return { ok: true, status: 200, data: status };
+}

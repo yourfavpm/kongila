@@ -35,7 +35,7 @@ import {
   type ContractDocumentRow
 } from '@kongila/workflows';
 
-export interface DocumentResult<T = any> {
+export interface ContractDocumentResult<T = any> {
   ok: boolean;
   status: number;
   error?: string;
@@ -43,7 +43,7 @@ export interface DocumentResult<T = any> {
   warnings?: string[];
 }
 
-function fail(status: number, error: string): DocumentResult {
+function fail(status: number, error: string): ContractDocumentResult {
   return { ok: false, status, error };
 }
 
@@ -106,7 +106,7 @@ export async function createContractDocuments(
     clientTemplateId?: string | null;
     talentTemplateId?: string | null;
   }
-): Promise<DocumentResult> {
+): Promise<ContractDocumentResult> {
   if (!input.contractId) return fail(400, 'Which contract?');
 
   const supabase = getSupabaseClient();
@@ -178,7 +178,7 @@ export async function createContractDocuments(
 export async function listContractDocuments(
   actor: Actor,
   contractId: string
-): Promise<DocumentResult> {
+): Promise<ContractDocumentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
   if (!contractId) return fail(400, 'Which contract?');
 
@@ -322,7 +322,7 @@ export async function syncContractStatus(contractId: string): Promise<string | n
 export async function sendContractDocument(
   actor: Actor,
   input: { contractId: string; audience: DocumentAudience; resend?: boolean }
-): Promise<DocumentResult> {
+): Promise<ContractDocumentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
   if (actor.kind !== 'admin') return fail(403, 'Only Kongila sends a contract out.');
   const held = Array.isArray(actor.permissions) ? actor.permissions : [];
@@ -435,7 +435,7 @@ export async function sendContractDocument(
 export async function viewContractDocument(
   actor: Actor,
   input: { contractId: string; audience?: DocumentAudience }
-): Promise<DocumentResult> {
+): Promise<ContractDocumentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
   if (!input.contractId) return fail(400, 'Which contract?');
 
@@ -510,7 +510,7 @@ export async function viewContractDocument(
 export async function voidContractDocument(
   actor: Actor,
   input: { contractId: string; audience: DocumentAudience; reason: string }
-): Promise<DocumentResult> {
+): Promise<ContractDocumentResult> {
   if (!actor) return fail(401, 'Not authenticated.');
   if (actor.kind !== 'admin') return fail(403, 'Only Kongila withdraws a contract document.');
   const held = Array.isArray(actor.permissions) ? actor.permissions : [];
@@ -568,7 +568,7 @@ export async function voidContractDocument(
 export async function getContractDocumentPdf(
   actor: Actor,
   input: { contractId: string; audience?: DocumentAudience }
-): Promise<DocumentResult<{ filename: string; pdf: Buffer }>> {
+): Promise<ContractDocumentResult<{ filename: string; pdf: Buffer }>> {
   if (!actor) return fail(401, 'Not authenticated.');
   if (!input.contractId) return fail(400, 'Which contract?');
 

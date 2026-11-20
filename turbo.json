@@ -13,7 +13,8 @@
         "EMAIL_LOGO_URL",
         "NEXT_PUBLIC_SITE_URL",
         "NEXT_PUBLIC_ADMIN_URL",
-        "OTP_HASH_SECRET"
+        "OTP_HASH_SECRET",
+        "OPENAI_API_KEY"
       ]
     },
     "dev": {
